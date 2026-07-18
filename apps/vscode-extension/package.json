@@ -1,0 +1,197 @@
+{
+  "name": "interlis-language-tools",
+  "displayName": "INTERLIS Language Tools",
+  "description": "Java-free INTERLIS language intelligence and synchronized diagrams.",
+  "version": "0.1.0-next.0",
+  "publisher": "edigonzales",
+  "license": "MIT",
+  "icon": "images/ililogo.png",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Formatters",
+    "Visualization"
+  ],
+  "keywords": [
+    "INTERLIS",
+    "ILI",
+    "LSP",
+    "geodata"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/edigonzales/interlis-language-tools.git"
+  },
+  "type": "module",
+  "main": "./dist/extension-node.js",
+  "browser": "./dist/extension-browser.js",
+  "activationEvents": [
+    "onLanguage:interlis"
+  ],
+  "files": [
+    "dist",
+    "images",
+    "syntaxes",
+    "themes",
+    "language-configuration.json",
+    "README.md",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "scripts": {
+    "build": "tsc -b tsconfig.build.json",
+    "typecheck": "tsc -b tsconfig.json --pretty false",
+    "test": "vitest run --passWithNoTests",
+    "test:coverage": "vitest run --coverage --passWithNoTests",
+    "vscode:prepublish": "pnpm build"
+  },
+  "dependencies": {
+    "@ilic/language-server": "workspace:*",
+    "@ilic/language-service": "workspace:*",
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.96.0"
+  },
+  "contributes": {
+    "languages": [
+      {
+        "id": "interlis",
+        "aliases": [
+          "INTERLIS",
+          "interlis"
+        ],
+        "extensions": [
+          ".ili"
+        ],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./images/ililogo.svg",
+          "dark": "./images/ililogo.svg"
+        }
+      }
+    ],
+    "grammars": [
+      {
+        "language": "interlis",
+        "scopeName": "source.interlis",
+        "path": "./syntaxes/interlis.tmLanguage.json"
+      }
+    ],
+    "themes": [
+      {
+        "label": "INTERLIS Light",
+        "uiTheme": "vs",
+        "path": "./themes/interlis-color-theme-light.json"
+      },
+      {
+        "label": "INTERLIS Dark",
+        "uiTheme": "vs-dark",
+        "path": "./themes/interlis-color-theme-dark.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "interlisLanguageTools.compile",
+        "title": "INTERLIS: Compile Model"
+      },
+      {
+        "command": "interlisLanguageTools.template.new",
+        "title": "INTERLIS: New from Template"
+      },
+      {
+        "command": "interlisLanguageTools.diagram.show",
+        "title": "INTERLIS: Show Diagram"
+      },
+      {
+        "command": "interlisLanguageTools.docx.export",
+        "title": "INTERLIS: Export Documentation (DOCX)"
+      },
+      {
+        "command": "interlisLanguageTools.snippet.nextPlaceholder",
+        "title": "INTERLIS: Next Snippet Placeholder"
+      },
+      {
+        "command": "interlisLanguageTools.snippet.cursorMove",
+        "title": "INTERLIS: Leave Snippet and Move Cursor"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "interlisLanguageTools.snippet.nextPlaceholder",
+        "key": "tab",
+        "when": "editorLangId == interlis && inSnippetMode"
+      },
+      {
+        "command": "interlisLanguageTools.snippet.nextPlaceholder",
+        "key": "enter",
+        "when": "editorLangId == interlis && inSnippetMode"
+      }
+    ],
+    "configurationDefaults": {
+      "[interlis]": {
+        "editor.formatOnType": true,
+        "editor.fontLigatures": true
+      }
+    },
+    "configuration": {
+      "title": "INTERLIS Language Tools",
+      "properties": {
+        "interlisLanguageTools.modelRepositories": {
+          "type": "string",
+          "default": "%ILI_DIR;https://models.interlis.ch;%JAR_DIR",
+          "markdownDescription": "INTERLIS model repositories separated by commas or semicolons."
+        },
+        "interlisLanguageTools.template.url": {
+          "type": "string",
+          "default": "https://geo.so.ch/models/AGI/SO_AGI_Modellvorlage_20260324.ili",
+          "markdownDescription": "Template URL used by `INTERLIS: New from Template`."
+        },
+        "interlisLanguageTools.autoShowOutputOnStart": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show the compiler output when the extension activates without stealing editor focus."
+        },
+        "interlisLanguageTools.diagram.autoOpenBeside": {
+          "type": "boolean",
+          "default": true
+        },
+        "interlisLanguageTools.diagram.layout.edgeRouting": {
+          "type": "string",
+          "enum": [
+            "ORTHOGONAL",
+            "POLYLINE",
+            "SPLINES"
+          ],
+          "default": "POLYLINE"
+        },
+        "interlisLanguageTools.uml.attributeMode": {
+          "type": "string",
+          "enum": [
+            "OWN",
+            "NONE",
+            "OWN_AND_INHERITED"
+          ],
+          "default": "OWN"
+        },
+        "interlisLanguageTools.uml.deemphasizeAbstractTypes": {
+          "type": "boolean",
+          "default": true
+        },
+        "interlisLanguageTools.uml.showAssociationNames": {
+          "type": "boolean",
+          "default": true
+        },
+        "interlisLanguageTools.uml.showRoleCardinalities": {
+          "type": "boolean",
+          "default": true
+        },
+        "interlisLanguageTools.uml.showLocalEnumerationValues": {
+          "type": "boolean",
+          "default": true
+        }
+      }
+    }
+  }
+}

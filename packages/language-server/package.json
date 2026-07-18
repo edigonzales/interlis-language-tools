@@ -1,0 +1,42 @@
+{
+  "name": "@ilic/language-server",
+  "version": "0.1.0-next.0",
+  "description": "Node.js and browser-worker LSP adapters for INTERLIS.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "default": "./dist/node.js"
+    },
+    "./browser": {
+      "types": "./dist/browser.d.ts",
+      "default": "./dist/browser.js"
+    },
+    "./protocol": {
+      "types": "./dist/protocol.d.ts",
+      "default": "./dist/protocol.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -b tsconfig.build.json",
+    "typecheck": "tsc -b tsconfig.json --pretty false",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@ilic/language-service": "workspace:*",
+    "vscode-languageserver": "^9.0.1"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
