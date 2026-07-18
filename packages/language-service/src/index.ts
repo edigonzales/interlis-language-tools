@@ -15,6 +15,25 @@ export type {
   TextEdit,
 } from "./features.js";
 export { contains, contextAt, toEditorRange } from "./features.js";
+export {
+  DEFAULT_TEMPLATE_TIMEOUT_MS,
+  DEFAULT_TEMPLATE_URL,
+  OFFLINE_TEMPLATE,
+  OutputBuffer,
+  fetchTemplate,
+  isBlankInterlisDocument,
+  resolveTemplateUrl,
+  snippetKeyAction,
+  suggestionActivation,
+} from "./interactions.js";
+export type {
+  OutputEntry,
+  SnippetAction,
+  SnippetKey,
+  SnippetPlaceholder,
+  SuggestionActivation,
+  SuggestionReason,
+} from "./interactions.js";
 export type {
   AnalysisEvent,
   CompilerBackend,

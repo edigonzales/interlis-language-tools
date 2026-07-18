@@ -8,6 +8,7 @@ export default defineConfig({
         "src/cache.ts",
         "src/compiler.ts",
         "src/features.ts",
+        "src/interactions.ts",
         "src/repository.ts",
         "src/service.ts",
         "src/workspace.ts",

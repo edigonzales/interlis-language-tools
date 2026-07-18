@@ -1,0 +1,14 @@
+{
+  "name": "Interlis Default Colors (dark)",
+  "type": "dark",
+  "include": "./dark_vs.json",
+  "colors": {},
+  "tokenColors": [
+    {
+      "scope": "comment.line.meta-attribute.interlis",
+      "settings": {
+        "foreground": "#d19a66"
+      }
+    }
+  ]
+}
