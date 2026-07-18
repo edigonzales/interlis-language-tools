@@ -47,6 +47,7 @@
     "vscode:prepublish": "pnpm build"
   },
   "dependencies": {
+    "@ilic/diagram": "workspace:*",
     "@ilic/language-server": "workspace:*",
     "@ilic/language-service": "workspace:*",
     "vscode-languageclient": "^9.0.1"
@@ -103,6 +104,10 @@
       {
         "command": "interlisLanguageTools.diagram.show",
         "title": "INTERLIS: Show Diagram"
+      },
+      {
+        "command": "interlisLanguageTools.diagram.refresh",
+        "title": "INTERLIS: Refresh / Auto-layout Diagram"
       },
       {
         "command": "interlisLanguageTools.docx.export",

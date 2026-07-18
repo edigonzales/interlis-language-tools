@@ -2,6 +2,7 @@ import {
   createWasmCompilerBackend,
   LanguageService,
 } from "@ilic/language-service";
+import { generateDocx } from "@ilic/docx";
 import {
   BrowserMessageReader,
   BrowserMessageWriter,
@@ -17,6 +18,14 @@ export async function startBrowserLanguageServer(
     new BrowserMessageWriter(scope),
   );
   const service = new LanguageService(await createWasmCompilerBackend());
-  bindLanguageServer(connection, service);
+  bindLanguageServer(connection, service, {
+    exportDocx: async (params) => {
+      let result = service.getSemanticSnapshot();
+      if (!result?.value) result = await service.analyzeNow(params.uri);
+      if (!result?.value)
+        throw new Error("No semantic INTERLIS snapshot is available");
+      return generateDocx(result.value);
+    },
+  });
   connection.listen();
 }

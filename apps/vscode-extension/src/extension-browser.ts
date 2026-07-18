@@ -8,6 +8,7 @@ import {
   registerClientWorkflows,
 } from "./common.js";
 import type { PendingSelection } from "./common.js";
+import { registerDiagramWorkflows } from "./diagram-view.js";
 
 let client: LanguageClient | undefined;
 
@@ -50,6 +51,7 @@ export async function activate(
   });
   registerClientWorkflows(context, client, output, debug, pending);
   await client.start();
+  registerDiagramWorkflows(context, client);
 }
 
 export async function deactivate(): Promise<void> {

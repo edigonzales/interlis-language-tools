@@ -1,3 +1,5 @@
+import type { SemanticSnapshot } from "@ilic/language-service";
+
 export const InterlisProtocol = {
   onTypeEdit: "interlis/onTypeEdit",
   diagramSnapshot: "interlis/diagramSnapshot",
@@ -15,6 +17,11 @@ export interface OnTypeEditParams {
 
 export interface DiagramSnapshotParams {
   readonly uri: string;
+}
+export interface DiagramSnapshotResult {
+  readonly freshness: "fresh" | "stale" | "cancelled";
+  readonly generation: number;
+  readonly snapshot: SemanticSnapshot;
 }
 export interface CompileParams {
   readonly roots?: readonly string[];

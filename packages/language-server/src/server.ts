@@ -149,10 +149,17 @@ export function bindLanguageServer(
     (params: OnTypeEditParams) =>
       service.onTypeEdit(params.uri, params.position, params.character),
   );
-  connection.onRequest(
-    InterlisProtocol.diagramSnapshot,
-    () => service.getSemanticSnapshot()?.value?.diagram ?? null,
-  );
+  connection.onRequest(InterlisProtocol.diagramSnapshot, async () => {
+    let result = service.getSemanticSnapshot();
+    if (!result?.value) result = await service.analyzeNow();
+    return result?.value
+      ? {
+          freshness: result.freshness,
+          generation: result.generation,
+          snapshot: result.value,
+        }
+      : null;
+  });
   connection.onRequest(InterlisProtocol.compile, (params: CompileParams) =>
     service.compile(params.roots ? [...params.roots] : undefined),
   );

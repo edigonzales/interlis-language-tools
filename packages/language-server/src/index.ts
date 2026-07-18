@@ -4,6 +4,7 @@ export { InterlisProtocol } from "./protocol.js";
 export type {
   CompileParams,
   DiagramSnapshotParams,
+  DiagramSnapshotResult,
   ExportDocxParams,
   OnTypeEditParams,
 } from "./protocol.js";

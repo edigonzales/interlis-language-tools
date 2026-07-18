@@ -53,6 +53,8 @@ export { MemoryWorkspaceFileSystem } from "./workspace.js";
 export type {
   CompilationResult,
   Diagnostic,
+  DiagramEdge,
+  DiagramNode,
   SemanticSnapshot,
   SourceRange,
   SyntaxSnapshot,
