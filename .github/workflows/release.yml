@@ -1,0 +1,90 @@
+name: Release packages and extension
+
+on:
+  workflow_dispatch:
+    inputs:
+      npm_tag:
+        description: npm distribution tag
+        required: true
+        default: next
+        type: choice
+        options: [next, latest]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      VSCE_PAT: ${{ secrets.VSCE_PAT }}
+      OVSX_PAT: ${{ secrets.OVSX_PAT }}
+    steps:
+      - name: Checkout language tools
+        uses: actions/checkout@v6
+        with:
+          path: interlis-language-tools
+          persist-credentials: false
+      - name: Checkout compiler packages
+        uses: actions/checkout@v6
+        with:
+          repository: edigonzales/ilic-fork
+          path: ilic-fork
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.14.0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: interlis-language-tools/pnpm-lock.yaml
+          registry-url: https://registry.npmjs.org
+      - name: Install and verify release inputs
+        working-directory: interlis-language-tools
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm check
+          pnpm --filter @ilic/language-service test:coverage
+          pnpm pack:verify
+          pnpm package:vsix
+          pnpm licenses:check
+          pnpm security:check
+      - name: Upload release candidates
+        uses: actions/upload-artifact@v6
+        with:
+          name: interlis-language-tools-release-${{ github.sha }}
+          path: |
+            interlis-language-tools/artifacts/*.vsix
+            interlis-language-tools/artifacts/npm/*.tgz
+          if-no-files-found: error
+      - name: Publish npm packages
+        if: env.NPM_TOKEN != ''
+        working-directory: interlis-language-tools
+        env:
+          NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for package in language-service language-server monaco-adapter diagram docx; do
+            npm publish "artifacts/npm/ilic-${package}-"*.tgz --access public --tag "${{ inputs.npm_tag }}"
+          done
+      - name: Skip npm publication without credentials
+        if: env.NPM_TOKEN == ''
+        run: echo "NPM_TOKEN is not configured; verified npm tarballs remain available as artifacts."
+      - name: Publish to VS Code Marketplace
+        if: env.VSCE_PAT != ''
+        working-directory: interlis-language-tools
+        run: pnpm exec vsce publish --packagePath artifacts/interlis-language-tools.vsix --pat "$VSCE_PAT"
+      - name: Skip Marketplace publication without credentials
+        if: env.VSCE_PAT == ''
+        run: echo "VSCE_PAT is not configured; the verified VSIX remains available as an artifact."
+      - name: Publish to Open VSX
+        if: env.OVSX_PAT != ''
+        working-directory: interlis-language-tools
+        run: pnpm exec ovsx publish artifacts/interlis-language-tools.vsix --pat "$OVSX_PAT"
+      - name: Skip Open VSX publication without credentials
+        if: env.OVSX_PAT == ''
+        run: echo "OVSX_PAT is not configured; the verified VSIX remains available as an artifact."

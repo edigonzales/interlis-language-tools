@@ -36,11 +36,12 @@
     "syntaxes",
     "themes",
     "language-configuration.json",
+    "LICENSE.md",
     "README.md",
     "THIRD_PARTY_NOTICES.md"
   ],
   "scripts": {
-    "build": "tsc -b tsconfig.build.json",
+    "build": "node ../../scripts/build-extension.mjs",
     "typecheck": "tsc -b tsconfig.json --pretty false",
     "test": "vitest run --passWithNoTests",
     "test:coverage": "vitest run --coverage --passWithNoTests",

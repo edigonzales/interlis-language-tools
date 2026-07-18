@@ -26,7 +26,7 @@ export async function activate(
     "dist",
     "server-browser.js",
   );
-  const worker = new Worker(workerUri.toString(true));
+  const worker = new Worker(workerUri.toString(true), { type: "module" });
   const pending = new Map<string, PendingSelection>();
   const clientOptions: LanguageClientOptions = {
     documentSelector: documentSelector(),

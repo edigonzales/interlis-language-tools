@@ -2,5 +2,13 @@ packages:
   - packages/*
   - apps/*
 
+allowBuilds:
+  "@vscode/vsce-sign": false
+  esbuild: true
+  keytar: false
+
 onlyBuiltDependencies:
   - esbuild
+
+overrides:
+  "@ilic/compiler-wasm": file:../ilic-fork/packages/compiler-wasm

@@ -3,20 +3,38 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    ignores: ["**/dist/**", "**/coverage/**", "**/*.d.ts", "eslint.config.js"],
+    ignores: [
+      "**/dist/**",
+      "**/coverage/**",
+      "artifacts/**",
+      "**/*.d.ts",
+      "eslint.config.js",
+    ],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
   {
     languageOptions: {
       parserOptions: {
-        projectService: true,
+        projectService: {
+          allowDefaultProject: ["scripts/*.mjs"],
+        },
         tsconfigRootDir: import.meta.dirname,
       },
     },
     rules: {
       "@typescript-eslint/consistent-type-imports": "error",
       "@typescript-eslint/no-explicit-any": "off",
+    },
+  },
+  {
+    files: ["scripts/**/*.mjs"],
+    ...tseslint.configs.disableTypeChecked,
+    languageOptions: {
+      ...tseslint.configs.disableTypeChecked.languageOptions,
+      globals: {
+        process: "readonly",
+      },
     },
   },
 );

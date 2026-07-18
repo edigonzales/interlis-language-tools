@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "codex/**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout language tools
+        uses: actions/checkout@v6
+        with:
+          path: interlis-language-tools
+          persist-credentials: false
+      - name: Checkout compiler packages
+        uses: actions/checkout@v6
+        with:
+          repository: edigonzales/ilic-fork
+          path: ilic-fork
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.14.0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: interlis-language-tools/pnpm-lock.yaml
+      - name: Install locked dependencies
+        working-directory: interlis-language-tools
+        run: pnpm install --frozen-lockfile
+      - name: Lint, typecheck, test and build
+        working-directory: interlis-language-tools
+        run: pnpm check
+      - name: Enforce core coverage thresholds
+        working-directory: interlis-language-tools
+        run: pnpm --filter @ilic/language-service test:coverage
+      - name: Verify npm tarball consumers
+        working-directory: interlis-language-tools
+        run: pnpm pack:verify
+      - name: Build and inspect universal VSIX
+        working-directory: interlis-language-tools
+        run: pnpm package:vsix
+      - name: Check production licenses and vulnerabilities
+        working-directory: interlis-language-tools
+        run: pnpm licenses:check && pnpm security:check
+      - name: Upload installable artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: interlis-language-tools-${{ github.sha }}
+          path: |
+            interlis-language-tools/artifacts/*.vsix
+            interlis-language-tools/artifacts/npm/*.tgz
+          if-no-files-found: error
+          retention-days: 14

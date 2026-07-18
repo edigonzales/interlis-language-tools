@@ -21,7 +21,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@ilic/compiler-wasm": "file:../../../ilic-fork/packages/compiler-wasm"
+    "@ilic/compiler-wasm": "^0.10.0-0"
   },
   "publishConfig": {
     "access": "public"
