@@ -7,6 +7,7 @@ export default defineConfig({
       include: [
         "src/cache.ts",
         "src/compiler.ts",
+        "src/features.ts",
         "src/repository.ts",
         "src/service.ts",
         "src/workspace.ts",

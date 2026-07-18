@@ -33,4 +33,15 @@ describe("createWasmCompilerBackend", () => {
     expect(compiler.parse(uri).documentVersion).toBe(3);
     expect(compiler.removeSource(uri)).toBe(true);
   });
+
+  it("keeps INTERLIS 2.3 and 2.4 on the same snapshot contract", async () => {
+    compiler = await createWasmCompilerBackend();
+    for (const version of ["2.3", "2.4"] as const) {
+      const modelUri = `memory:///Version${version.replace(".", "")}.ili`;
+      const model = `INTERLIS ${version};\nMODEL Version${version.replace(".", "")} AT "https://example.invalid/ilic" VERSION "1" =\nEND Version${version.replace(".", "")}.\n`;
+      compiler.putSource(modelUri, model, 1);
+      expect(compiler.parse(modelUri).iliVersion).toBe(version);
+      expect(compiler.analyze({ roots: [modelUri] }).success).toBe(true);
+    }
+  });
 });

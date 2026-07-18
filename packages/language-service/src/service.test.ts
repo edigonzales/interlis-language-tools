@@ -59,6 +59,27 @@ function backend(overrides: Partial<CompilerBackend> = {}): CompilerBackend {
 }
 
 describe("LanguageService", () => {
+  it("returns safe empty feature results before a document is available", () => {
+    const service = new LanguageService(backend(), {
+      semanticDebounceMs: 10_000,
+    });
+    const position = { line: 0, character: 0 };
+    expect(service.completion("memory:///Missing.ili", position)).toEqual([]);
+    expect(service.definition("memory:///Missing.ili", position)).toEqual([]);
+    expect(service.references("memory:///Missing.ili", position)).toEqual([]);
+    expect(service.prepareRename("memory:///Missing.ili", position)).toBeNull();
+    expect(
+      service.rename("memory:///Missing.ili", position, "Name"),
+    ).toBeNull();
+    expect(service.symbols("memory:///Missing.ili")).toEqual([]);
+    expect(service.hover("memory:///Missing.ili", position)).toBeNull();
+    expect(service.formatting("memory:///Missing.ili")).toEqual([]);
+    expect(
+      service.onTypeEdit("memory:///Missing.ili", position, "\n"),
+    ).toBeNull();
+    service.dispose();
+  });
+
   it("treats unsaved content as authoritative and parses every version", async () => {
     const compiler = backend();
     const service = new LanguageService(compiler, {
@@ -208,6 +229,133 @@ describe("LanguageService", () => {
     service.changeDocument("memory:///Model.ili", "still broken", 3);
     expect(service.getSemanticSnapshot()?.value?.success).toBe(true);
     expect(service.getSemanticSnapshot(false)?.freshness).toBe("stale");
+    service.dispose();
+  });
+
+  it("exposes protocol-neutral editor features and a versioned compile cache", async () => {
+    const uri = "memory:///Model.ili";
+    const sourceRange = {
+      uri,
+      start: { line: 0, character: 6, byteOffset: 6 },
+      end: { line: 0, character: 11, byteOffset: 11 },
+    };
+    const base = backend();
+    const compile = vi.fn(() => ({
+      schemaVersion: 1 as const,
+      abiVersion: 1 as const,
+      compilerVersion: "test",
+      kind: "compilation" as const,
+      success: true,
+      cancelled: false,
+      errorCount: 0,
+      warningCount: 0,
+      missingModels: [],
+      models: [],
+      diagnostics: [],
+      logs: [],
+    }));
+    const compiler = backend({
+      parse: () => ({
+        ...base.parse(uri),
+        tokens: [
+          {
+            kind: "MODEL",
+            text: "MODEL",
+            channel: 0,
+            range: {
+              ...sourceRange,
+              start: { ...sourceRange.start, character: 0 },
+            },
+          },
+          { kind: "NAME", text: "Model", channel: 0, range: sourceRange },
+          {
+            kind: "EQUAL",
+            text: "=",
+            channel: 0,
+            range: {
+              ...sourceRange,
+              start: { ...sourceRange.start, character: 12 },
+              end: { ...sourceRange.end, character: 13 },
+            },
+          },
+        ],
+        contexts: [{ kind: "modelDef", range: sourceRange }],
+      }),
+      analyze: (request) => ({
+        ...base.analyze(request),
+        symbols: [
+          {
+            id: "model",
+            name: "Model",
+            qualifiedName: "Model",
+            kind: "Model",
+            containerId: "",
+            range: sourceRange,
+            abstract: false,
+          },
+        ],
+        references: [
+          {
+            sourceId: "model",
+            targetId: "model",
+            kind: "name",
+            range: {
+              ...sourceRange,
+              start: { ...sourceRange.start, line: 1 },
+              end: { ...sourceRange.end, line: 1 },
+            },
+          },
+        ],
+      }),
+      compile,
+      format: () => ({
+        schemaVersion: 1,
+        abiVersion: 1,
+        compilerVersion: "test",
+        kind: "formatting",
+        success: true,
+        applicable: true,
+        changed: true,
+        text: "formatted",
+        diagnostics: [],
+      }),
+    });
+    const service = new LanguageService(compiler, {
+      semanticDebounceMs: 10_000,
+    });
+    service.openDocument(uri, "MODEL Model =", 1);
+    expect(service.diagnostics("memory:///missing")).toEqual([]);
+    await service.analyzeNow();
+    expect(
+      service
+        .completion(uri, { line: 0, character: 7 })
+        .map((item) => item.label),
+    ).toContain("Model");
+    expect(service.definition(uri, { line: 1, character: 7 })).toHaveLength(1);
+    expect(
+      service.references(uri, { line: 0, character: 7 }, false),
+    ).toHaveLength(1);
+    expect(
+      service.prepareRename(uri, { line: 0, character: 7 })?.placeholder,
+    ).toBe("Model");
+    expect(
+      service.rename(uri, { line: 0, character: 7 }, "Renamed")?.changes[uri],
+    ).toHaveLength(2);
+    expect(
+      service.rename(uri, { line: 0, character: 7 }, "not valid"),
+    ).toBeNull();
+    expect(service.symbols(uri)[0]?.name).toBe("Model");
+    expect(service.hover(uri, { line: 0, character: 7 })?.markdown).toContain(
+      "Model",
+    );
+    expect(service.formatting(uri)[0]?.newText).toBe("formatted");
+    expect(
+      service.onTypeEdit(uri, { line: 0, character: 14 }, "\n")?.edits,
+    ).toHaveLength(1);
+    expect(service.onTypeEdit(uri, { line: 0, character: 14 }, ";")).toBeNull();
+    expect(service.compile().success).toBe(true);
+    expect(service.compile().success).toBe(true);
+    expect(compile).toHaveBeenCalledOnce();
     service.dispose();
   });
 });

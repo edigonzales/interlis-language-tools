@@ -4,6 +4,18 @@ export type { RepositoryResolver, ResolvedModel } from "./repository.js";
 export { WorkspaceRepositoryResolver } from "./repository.js";
 export { LanguageService } from "./service.js";
 export type {
+  CompletionItem,
+  DocumentSymbol,
+  EditorPosition,
+  EditorRange,
+  HoverResult,
+  Location,
+  RenameResult,
+  TemplateEdit,
+  TextEdit,
+} from "./features.js";
+export { contains, contextAt, toEditorRange } from "./features.js";
+export type {
   AnalysisEvent,
   CompilerBackend,
   LanguageServiceOptions,
