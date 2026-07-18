@@ -36,6 +36,12 @@ importers:
         specifier: ^4.0.16
         version: 4.1.10(@types/node@22.20.1)(@vitest/coverage-v8@4.1.10)(vite@8.1.5(@types/node@22.20.1))
 
+  packages/language-service:
+    dependencies:
+      '@ilic/compiler-wasm':
+        specifier: file:../../../ilic-fork/packages/compiler-wasm
+        version: file:../ilic-fork/packages/compiler-wasm
+
 packages:
 
   '@babel/helper-string-parser@7.29.7':
@@ -184,6 +190,10 @@ packages:
   '@humanwhocodes/retry@0.4.3':
     resolution: {integrity: sha512-bV0Tgo9K4hfPCek+aMAn81RppFKv2ySDQeMoSZuvTASywNTnVJCArCZE2FWqpvIatKu7VMRLWlR1EazvVhDyhQ==}
     engines: {node: '>=18.18'}
+
+  '@ilic/compiler-wasm@file:../ilic-fork/packages/compiler-wasm':
+    resolution: {directory: ../ilic-fork/packages/compiler-wasm, type: directory}
+    engines: {node: '>=18'}
 
   '@inquirer/external-editor@1.0.3':
     resolution: {integrity: sha512-RWbSrDiYmO4LbejWY7ttpxczuwQyZLBUyygsA9Nsv95hpzUWwnNTVQmAq3xuh7vNwCp07UTmE5i11XAEExx4RA==}
@@ -1532,6 +1542,8 @@ snapshots:
   '@humanwhocodes/module-importer@1.0.1': {}
 
   '@humanwhocodes/retry@0.4.3': {}
+
+  '@ilic/compiler-wasm@file:../ilic-fork/packages/compiler-wasm': {}
 
   '@inquirer/external-editor@1.0.3(@types/node@22.20.1)':
     dependencies:
