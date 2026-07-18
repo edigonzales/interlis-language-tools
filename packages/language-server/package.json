@@ -1,8 +1,25 @@
 {
   "name": "@ilic/language-server",
-  "version": "0.1.0-next.0",
+  "version": "1.0.0-rc.1",
   "description": "Node.js and browser-worker LSP adapters for INTERLIS.",
   "license": "MIT",
+  "author": "edigonzales",
+  "keywords": [
+    "interlis",
+    "lsp",
+    "language-server",
+    "vscode",
+    "theia"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/edigonzales/interlis-language-tools.git",
+    "directory": "packages/language-server"
+  },
+  "homepage": "https://github.com/edigonzales/interlis-language-tools#readme",
+  "bugs": {
+    "url": "https://github.com/edigonzales/interlis-language-tools/issues"
+  },
   "type": "module",
   "exports": {
     ".": {
@@ -38,6 +55,10 @@
     "vscode-languageserver": "^9.0.1"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }

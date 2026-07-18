@@ -33,6 +33,17 @@ jobs:
           node-version: "22"
           cache: pnpm
           cache-dependency-path: interlis-language-tools/pnpm-lock.yaml
+      - name: Build pinned compiler WASM
+        shell: bash
+        working-directory: ilic-fork
+        run: |
+          set -euo pipefail
+          emscripten_version=$(tr -d '[:space:]' < .emscripten-version)
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
+          "$RUNNER_TEMP/emsdk/emsdk" install "$emscripten_version"
+          "$RUNNER_TEMP/emsdk/emsdk" activate "$emscripten_version"
+          source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
+          ./scripts/build-wasm.sh
       - name: Install locked dependencies
         working-directory: interlis-language-tools
         run: pnpm install --frozen-lockfile

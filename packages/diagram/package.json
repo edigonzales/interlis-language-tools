@@ -1,8 +1,25 @@
 {
   "name": "@ilic/diagram",
-  "version": "0.1.0-next.0",
+  "version": "1.0.0-rc.1",
   "description": "Sprotty/ELK live UML diagrams for INTERLIS semantic snapshots.",
   "license": "MIT",
+  "author": "edigonzales",
+  "keywords": [
+    "interlis",
+    "diagram",
+    "sprotty",
+    "elk",
+    "svg"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/edigonzales/interlis-language-tools.git",
+    "directory": "packages/diagram"
+  },
+  "homepage": "https://github.com/edigonzales/interlis-language-tools#readme",
+  "bugs": {
+    "url": "https://github.com/edigonzales/interlis-language-tools/issues"
+  },
   "type": "module",
   "exports": {
     ".": {
@@ -27,6 +44,10 @@
     "sprotty-protocol": "^1.4.0"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }

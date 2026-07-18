@@ -21,6 +21,7 @@ jobs:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
       VSCE_PAT: ${{ secrets.VSCE_PAT }}
       OVSX_PAT: ${{ secrets.OVSX_PAT }}
+      VSIX_PRE_RELEASE: ${{ inputs.npm_tag == 'next' && '1' || '0' }}
     steps:
       - name: Checkout language tools
         uses: actions/checkout@v6
@@ -42,6 +43,17 @@ jobs:
           cache: pnpm
           cache-dependency-path: interlis-language-tools/pnpm-lock.yaml
           registry-url: https://registry.npmjs.org
+      - name: Build pinned compiler WASM
+        shell: bash
+        working-directory: ilic-fork
+        run: |
+          set -euo pipefail
+          emscripten_version=$(tr -d '[:space:]' < .emscripten-version)
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
+          "$RUNNER_TEMP/emsdk/emsdk" install "$emscripten_version"
+          "$RUNNER_TEMP/emsdk/emsdk" activate "$emscripten_version"
+          source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
+          ./scripts/build-wasm.sh
       - name: Install and verify release inputs
         working-directory: interlis-language-tools
         run: |

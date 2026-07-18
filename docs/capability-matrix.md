@@ -1,32 +1,56 @@
 # INTERLIS capability matrix
 
-Baseline: `interlis-lsp@a7878913b479150f9832d8bf4bd5c210d9db0a28`.
+Parity baseline: `interlis-lsp@a7878913b479150f9832d8bf4bd5c210d9db0a28`,
+including the audited client code below `client/`.
 
-Legend: ✅ implemented and tested, 🟡 intentionally partial, ⬜ pending,
-— out of scope.
+Legend: ✅ implemented, 🟡 deliberately limited or awaiting an external-host
+smoke test, — not applicable/out of scope. “Automated test” names the strongest
+current evidence; detailed commands are in [testing.md](testing.md).
 
-| Capability                                | Legacy server | Legacy client | Shared core | VS Code Desktop | VS Code Web | Theia | Monaco IDE | Automated test |
-| ----------------------------------------- | ------------: | ------------: | ----------: | --------------: | ----------: | ----: | ---------: | -------------: |
-| Live and save diagnostics                 |            ✅ |            ✅ |          ⬜ |              ⬜ |          ⬜ |    ⬜ |         ⬜ |             ⬜ |
-| Import/repository completion              |            ✅ |            ✅ |          ⬜ |              ⬜ |          ⬜ |    ⬜ |         ⬜ |             ⬜ |
-| Definition and references                 |            ✅ |            ✅ |          ⬜ |              ⬜ |          ⬜ |    ⬜ |         ⬜ |             ⬜ |
-| Prepare rename and rename                 |            ✅ |            ✅ |          ⬜ |              ⬜ |          ⬜ |    ⬜ |         ⬜ |             ⬜ |
-| Document symbols and outline              |            ✅ |            ✅ |          ⬜ |              ⬜ |          ⬜ |    ⬜ |         ⬜ |             ⬜ |
-| Full/on-type formatting                   |            ✅ |            ✅ |          ⬜ |              ⬜ |          ⬜ |    ⬜ |         ⬜ |             ⬜ |
-| Autoclosing and templates                 |            ✅ |            ✅ |          ⬜ |              ⬜ |          ⬜ |    ⬜ |         ⬜ |             ⬜ |
-| Structured suggestion activation          |             — |            ✅ |          ⬜ |              ⬜ |          ⬜ |    ⬜ |         ⬜ |             ⬜ |
-| Snippet and caret workflow                |             — |            ✅ |          ⬜ |              ⬜ |          ⬜ |    ⬜ |         ⬜ |             ⬜ |
-| Compile command and logs                  |            ✅ |            ✅ |          ⬜ |              ⬜ |          ⬜ |    ⬜ |         ⬜ |             ⬜ |
-| TextMate grammar/editor configuration     |             — |            ✅ |           — |              ⬜ |          ⬜ |    ⬜ |         ⬜ |             ⬜ |
-| New document from remote/offline template |             — |            ✅ |          ⬜ |              ⬜ |          ⬜ |    ⬜ |         ⬜ |             ⬜ |
-| Live diagram and last-good snapshot       |            ✅ |            ✅ |          ⬜ |              ⬜ |          ⬜ |    ⬜ |         ⬜ |             ⬜ |
-| Diagram settings and source navigation    |            ✅ |            ✅ |          ⬜ |              ⬜ |          ⬜ |    ⬜ |         ⬜ |             ⬜ |
-| Anchor-aware viewport persistence         |             — |            ✅ |           — |              ⬜ |          ⬜ |    ⬜ |         ⬜ |             ⬜ |
-| Semantic full/viewport SVG export         |            ✅ |            ✅ |          ⬜ |              ⬜ |          ⬜ |    ⬜ |         ⬜ |             ⬜ |
-| DOCX export                               |            ✅ |            ✅ |          ⬜ |              ⬜ |          ⬜ |    ⬜ |         ⬜ |             ⬜ |
-| OPFS/local-folder/ZIP workspace           |             — |             — |           — |               — |           — |     — |         ⬜ |             ⬜ |
-| Local Git clone/status/diff/commit        |             — |             — |           — |               — |           — |     — |         ⬜ |             ⬜ |
-| INTERLIS 1 compile/syntax diagnostics     |            ✅ |            ✅ |          ⬜ |              ⬜ |          ⬜ |    ⬜ |         ⬜ |             ⬜ |
-| Mermaid/PlantUML/GraphML/HTML             |            ✅ |            ✅ |           — |               — |           — |     — |          — |              — |
+| Capability                                               | legacy-server | legacy-client | shared-core | VS Code Desktop | VS Code Web | Theia | Monaco IDE |                                                        automated-test |
+| -------------------------------------------------------- | ------------: | ------------: | ----------: | --------------: | ----------: | ----: | ---------: | --------------------------------------------------------------------: |
+| Live and save diagnostics                                |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                  ✅ unit/contract/E2E |
+| Import and repository-model completion                   |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                      ✅ unit/contract |
+| Definition and references                                |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                       ✅ unit/adapter |
+| Prepare rename and rename                                |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                       ✅ unit/adapter |
+| Document symbols and outline                             |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                       ✅ unit/adapter |
+| Hover information                                        |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                       ✅ unit/adapter |
+| Full-document and on-type formatting                     |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                ✅ native/unit/adapter |
+| Autoclosing and structured templates                     |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                  ✅ unit/manifest/E2E |
+| Parser-context suggestion activation                     |             — |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                           ✅ unit/E2E |
+| Snippet key and final-caret contract                     |             — |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                       ✅ unit/adapter |
+| Compile command, cache and structured logs               |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                ✅ native/contract/E2E |
+| Output channels, blank guards and focus preservation     |             — |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                 ✅ extension/unit/E2E |
+| TextMate grammar, comments, brackets, folding and colors |             — |            ✅ |           — |              ✅ |          ✅ |    ✅ |         ✅ |                                                       ✅ manifest/E2E |
+| Remote and offline “New from Template”                   |             — |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                           ✅ unit/E2E |
+| `file:`, `untitled:`, web VFS and OPFS documents         |       🟡 file |       🟡 file |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                       ✅ contract/E2E |
+| Node and browser-worker LSP exports                      |             — |             — |          ✅ |              ✅ |          ✅ |    ✅ |          — |                                                 ✅ pack/VSIX contract |
+| Java-extension conflict detection                        |             — |             — |           — |              ✅ |          ✅ |    ✅ |          — |                                                      ✅ manifest/unit |
+| Live diagram and last-good snapshot                      |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                       ✅ unit/DOM/E2E |
+| Diagram settings and source navigation                   |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                       ✅ unit/DOM/E2E |
+| Anchor-aware viewport restoration                        |             — |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                               ✅ unit |
+| Semantic full/viewport SVG export                        |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                         ✅ golden/E2E |
+| DOCX export                                              |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                       ✅ ZIP/unit/E2E |
+| OPFS workspace and unsaved recovery                      |             — |             — |           — |               — |           — |     — |         ✅ |                                        ✅ Chromium/Firefox/WebKit E2E |
+| Local Folder / reconnect state                           |             — |             — |           — |               — |           — |     — |         ✅ |                                                       ✅ Chromium E2E |
+| ZIP import/export fallback                               |             — |             — |           — |               — |           — |     — |         ✅ |                                                  ✅ three-browser E2E |
+| Local Git clone/status/diff/stage/commit                 |             — |             — |           — |               — |           — |     — |         ✅ |                                             ✅ unit/three-browser E2E |
+| Offline PWA after first load                             |             — |             — |           — |               — |           — |     — |         ✅ | 🟡 Chromium/Firefox navigation; WebKit runner CacheStorage limitation |
+| INTERLIS 1 compile and syntax diagnostics                |            ✅ |            ✅ |          🟡 |              🟡 |          🟡 |    🟡 |         🟡 |                                                      ✅ native/golden |
+| INTERLIS 1 semantic editor features                      |            🟡 |            🟡 |          🟡 |              🟡 |          🟡 |    🟡 |         🟡 |                                                 — visibly unsupported |
+| Mermaid / PlantUML / GraphML / HTML                      |            ✅ |            ✅ |           — |               — |           — |     — |          — |                                                            — excluded |
+| Java/JRE settings and GLSP WebSocket reconnect           |            ✅ |            ✅ |           — |               — |           — |     — |          — |                                                   — replaced/excluded |
 
-Stable 1.0 is allowed only when every in-scope INTERLIS 2.3/2.4 cell is green.
+## Release interpretation
+
+INTERLIS 2.3 and 2.4 functional cells are implemented in the common core and
+all target adapters. The remaining yellow test cell is a Playwright WebKit
+driver limitation: WebKit requires a persistent context for OPFS, but that
+context does not expose CacheStorage/offline navigation correctly. OPFS,
+recovery, ZIP, Git and the live language tools are still exercised in WebKit;
+offline navigation is exercised in Chromium and Firefox.
+
+The Java extension is not removed or disabled. Stable `1.0.0` remains gated on
+Marketplace/Open VSX credentials and final installation smoke tests in the
+external VS Code Web and Theia hosts. `1.0.0-rc.1` is therefore intentionally a
+release candidate rather than `latest`.

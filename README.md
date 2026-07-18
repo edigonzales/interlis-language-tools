@@ -1,18 +1,79 @@
 # INTERLIS Language Tools
 
-Java-free INTERLIS language tooling shared by VS Code, VS Code Web, Theia and
-browser-based Monaco editors.
+Java-free INTERLIS 2.3/2.4 language tooling for VS Code Desktop, VS Code Web,
+Theia and browser-based Monaco IDEs. Version `1.0.0-rc.1` is the first release
+candidate based on the versioned snapshot API in `@ilic/compiler-wasm@0.10`.
 
-The repository is a pnpm workspace. Its packages are intentionally split at
-host boundaries: the language service contains business logic, while LSP and
-Monaco packages only translate host APIs.
+## Architecture
+
+The LSP is an adapter, not the business-logic boundary:
+
+```text
+@ilic/compiler-wasm
+        ↓
+@ilic/language-service
+   ↙          ↘
+LSP adapter   Monaco adapter
+   ↓              ↓
+VS Code/Theia   Browser IDE
+```
+
+Unsaved buffers are authoritative. Syntax snapshots are refreshed for every
+document version; semantic work is debounced, dependency-aware and protected by
+generation/version gates. Navigation and diagrams may use the last successful
+semantic snapshot, explicitly marked as stale.
+
+## Published packages
+
+| Package                  | Purpose                                                                                                        |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| `@ilic/language-service` | Runtime-neutral lifecycle, diagnostics, completion, navigation, rename, formatting, compile and snapshot state |
+| `@ilic/language-server`  | Node and browser-worker LSP transports plus versioned INTERLIS protocol extensions                             |
+| `@ilic/monaco-adapter`   | Direct Monaco providers without JSON-RPC or a second language server                                           |
+| `@ilic/diagram`          | Sprotty-compatible semantic model, `elkjs` layout, last-good state, anchored viewport and SVG export           |
+| `@ilic/docx`             | Browser/Node DOCX generation from the semantic snapshot                                                        |
+
+The universal extension has the permanent identity
+`edigonzales.interlis-language-tools`. It contains Node and browser entry
+points, the WASM compiler, language assets, themes and the existing INTERLIS
+icon. If `edigonzales.interlis-editor` is active, it reports the conflict and
+does not start a second server.
 
 ## Development
 
-```sh
-corepack pnpm install
-corepack pnpm check
+The three repositories are expected as siblings:
+
+```text
+ilic-fork/
+interlis-language-tools/
+interlis-web-ide/
 ```
 
-See [the architecture decision](docs/adr/0001-repository-and-runtime-boundaries.md)
-and [the capability matrix](docs/capability-matrix.md).
+Build the pinned compiler WASM once, then install and verify this workspace:
+
+```sh
+cd ../ilic-fork
+./scripts/build-wasm.sh
+
+cd ../interlis-language-tools
+corepack pnpm install
+corepack pnpm check
+corepack pnpm --filter @ilic/language-service test:coverage
+corepack pnpm pack:verify
+corepack pnpm package:vsix
+```
+
+`pack:verify` installs the five generated tarballs and the compiler tarball in
+a clean consumer. Tarballs and VSIX files are written below `artifacts/` and
+are never committed.
+
+## Release
+
+CI always produces verified npm tarballs and a universal VSIX. Publication is
+independently enabled by `NPM_TOKEN`, `VSCE_PAT` and `OVSX_PAT`; a missing secret
+skips only its external publish step. See [release process](docs/release.md),
+[test strategy](docs/testing.md), [capability matrix](docs/capability-matrix.md)
+and [Java-LSP migration](docs/migration-from-java-lsp.md).
+
+Mermaid, PlantUML, GraphML and HTML generation, Java/JRE configuration and the
+legacy GLSP WebSocket transport are intentionally out of scope.

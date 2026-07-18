@@ -2,7 +2,7 @@
   "name": "interlis-language-tools",
   "displayName": "INTERLIS Language Tools",
   "description": "Java-free INTERLIS language intelligence and synchronized diagrams.",
-  "version": "0.1.0-next.0",
+  "version": "0.1.0",
   "publisher": "edigonzales",
   "license": "MIT",
   "icon": "images/ililogo.png",
@@ -24,6 +24,11 @@
     "type": "git",
     "url": "https://github.com/edigonzales/interlis-language-tools.git"
   },
+  "homepage": "https://github.com/edigonzales/interlis-language-tools#readme",
+  "bugs": {
+    "url": "https://github.com/edigonzales/interlis-language-tools/issues"
+  },
+  "preview": true,
   "type": "module",
   "main": "./dist/extension-node.js",
   "browser": "./dist/extension-browser.js",

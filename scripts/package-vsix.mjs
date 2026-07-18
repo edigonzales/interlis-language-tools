@@ -14,11 +14,15 @@ const binary = resolve(
 );
 
 await mkdir(artifacts, { recursive: true });
-const result = spawnSync(
-  binary,
-  ["package", "--no-dependencies", "--out", target],
-  { cwd: extension, encoding: "utf8", stdio: "pipe" },
-);
+const packageArguments = ["package"];
+if (process.env.VSIX_PRE_RELEASE !== "0")
+  packageArguments.push("--pre-release");
+packageArguments.push("--no-dependencies", "--out", target);
+const result = spawnSync(binary, packageArguments, {
+  cwd: extension,
+  encoding: "utf8",
+  stdio: "pipe",
+});
 if (result.status !== 0)
   throw new Error(`VSIX packaging failed\n${result.stdout}\n${result.stderr}`);
 
@@ -40,6 +44,21 @@ for (const file of [
 ])
   assert.ok(files.has(file), `VSIX is missing ${file}`);
 
+const vsixManifest = spawnSync(
+  "unzip",
+  ["-p", target, "extension.vsixmanifest"],
+  {
+    encoding: "utf8",
+    stdio: "pipe",
+  },
+);
+if (vsixManifest.status !== 0) throw new Error(vsixManifest.stderr);
+if (process.env.VSIX_PRE_RELEASE !== "0")
+  assert.match(
+    vsixManifest.stdout,
+    /Microsoft\.VisualStudio\.Code\.PreRelease" Value="true"/u,
+  );
+
 const manifest = JSON.parse(
   await readFile(resolve(extension, "package.json"), "utf8"),
 );
@@ -47,4 +66,5 @@ assert.equal(
   `${manifest.publisher}.${manifest.name}`,
   "edigonzales.interlis-language-tools",
 );
+assert.equal(manifest.version, "0.1.0");
 process.stdout.write(`${target}\n`);

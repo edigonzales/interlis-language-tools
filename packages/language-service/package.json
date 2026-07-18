@@ -1,8 +1,24 @@
 {
   "name": "@ilic/language-service",
-  "version": "0.1.0-next.0",
+  "version": "1.0.0-rc.1",
   "description": "Shared INTERLIS language intelligence for LSP and Monaco clients.",
   "license": "MIT",
+  "author": "edigonzales",
+  "keywords": [
+    "interlis",
+    "language-service",
+    "compiler",
+    "lsp"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/edigonzales/interlis-language-tools.git",
+    "directory": "packages/language-service"
+  },
+  "homepage": "https://github.com/edigonzales/interlis-language-tools#readme",
+  "bugs": {
+    "url": "https://github.com/edigonzales/interlis-language-tools/issues"
+  },
   "type": "module",
   "exports": {
     ".": {
@@ -24,6 +40,10 @@
     "@ilic/compiler-wasm": "^0.10.0-0"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }
