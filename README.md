@@ -1,8 +1,9 @@
 # INTERLIS Language Tools
 
 Java-free INTERLIS 2.3/2.4 language tooling for VS Code Desktop, VS Code Web,
-Theia and browser-based Monaco IDEs. Version `1.0.0-rc.1` is the first release
-candidate based on the versioned snapshot API in `@ilic/compiler-wasm@0.10`.
+Theia and browser-based Monaco IDEs. The public packages start on the
+`0.1.0-SNAPSHOT.<UTC timestamp>` line and use the versioned snapshot API in
+`@ilic/compiler-wasm@0.9.9-SNAPSHOT.<UTC timestamp>`.
 
 ## Architecture
 
@@ -63,15 +64,17 @@ corepack pnpm pack:verify
 corepack pnpm package:vsix
 ```
 
-`pack:verify` installs the five generated tarballs and the compiler tarball in
-a clean consumer. Tarballs and VSIX files are written below `artifacts/` and
-are never committed.
+`pack:verify` installs all five language-tool packages plus `@ilic/tools` and
+`@ilic/compiler-wasm` in a clean consumer. Published manifests pin every
+internal dependency to one immutable timestamped version. Tarballs and VSIX
+files are written below `artifacts/` and are never committed.
 
 ## Release
 
-CI always produces verified npm tarballs and a universal VSIX. Publication is
-independently enabled by `NPM_TOKEN`, `VSCE_PAT` and `OVSX_PAT`; a missing secret
-skips only its external publish step. See [release process](docs/release.md),
+CI always produces verified npm tarballs and a universal VSIX. npm publication
+uses GitHub OIDC trusted publishing and has no repository secret. Marketplace
+publication uses only `VSCE_PAT` and `OVSX_PAT`; a missing secret skips only its
+external publish step. See [release process](docs/release.md),
 [test strategy](docs/testing.md), [capability matrix](docs/capability-matrix.md)
 and [Java-LSP migration](docs/migration-from-java-lsp.md).
 

@@ -1,6 +1,6 @@
 {
   "name": "@ilic/docx",
-  "version": "1.0.0-rc.1",
+  "version": "0.1.0",
   "description": "DOCX documentation generation from INTERLIS semantic snapshots.",
   "license": "MIT",
   "author": "edigonzales",

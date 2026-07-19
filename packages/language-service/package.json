@@ -1,6 +1,6 @@
 {
   "name": "@ilic/language-service",
-  "version": "1.0.0-rc.1",
+  "version": "0.1.0",
   "description": "Shared INTERLIS language intelligence for LSP and Monaco clients.",
   "license": "MIT",
   "author": "edigonzales",
@@ -37,7 +37,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@ilic/compiler-wasm": "^0.10.0-0"
+    "@ilic/compiler-wasm": "0.9.9-SNAPSHOT"
   },
   "publishConfig": {
     "access": "public",

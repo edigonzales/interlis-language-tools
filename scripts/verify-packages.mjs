@@ -1,19 +1,14 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { prepareNpmSnapshot } from "./prepare-npm-snapshot.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const artifacts = resolve(root, "artifacts/npm");
 const consumer = resolve(artifacts, "consumer");
-const packages = [
-  ["@ilic/compiler-wasm", resolve(root, "../ilic-fork/packages/compiler-wasm")],
-  ["@ilic/language-service", resolve(root, "packages/language-service")],
-  ["@ilic/language-server", resolve(root, "packages/language-server")],
-  ["@ilic/monaco-adapter", resolve(root, "packages/monaco-adapter")],
-  ["@ilic/diagram", resolve(root, "packages/diagram")],
-  ["@ilic/docx", resolve(root, "packages/docx")],
-];
+const timestamp = process.env.SNAPSHOT_TIMESTAMP ?? "20260101000000";
+const compilerVersion = process.env.COMPILER_VERSION;
 
 function run(command, args, cwd = root) {
   const result = spawnSync(command, args, {
@@ -21,47 +16,122 @@ function run(command, args, cwd = root) {
     encoding: "utf8",
     stdio: "pipe",
   });
-  if (result.status !== 0)
+  if (result.status !== 0) {
     throw new Error(
       `${command} ${args.join(" ")} failed\n${result.stdout}\n${result.stderr}`,
     );
+  }
   return result.stdout;
 }
 
-await rm(artifacts, { recursive: true, force: true });
+function manifestFromTarball(path) {
+  return JSON.parse(run("tar", ["-xOf", path, "package/package.json"]));
+}
+
+const result = await prepareNpmSnapshot({
+  projectRoot: root,
+  outputRoot: artifacts,
+  timestamp,
+  ...(compilerVersion ? { compilerVersion } : {}),
+});
 await mkdir(consumer, { recursive: true });
 
+const expectedVersions = new Map([
+  ["@ilic/tools", result.compilerVersion],
+  ["@ilic/compiler-wasm", result.compilerVersion],
+  ["@ilic/language-service", result.snapshotVersion],
+  ["@ilic/monaco-adapter", result.snapshotVersion],
+  ["@ilic/diagram", result.snapshotVersion],
+  ["@ilic/docx", result.snapshotVersion],
+  ["@ilic/language-server", result.snapshotVersion],
+]);
+const expectedInternalDependencies = new Map([
+  ["@ilic/language-service", { "@ilic/compiler-wasm": result.compilerVersion }],
+  [
+    "@ilic/monaco-adapter",
+    { "@ilic/language-service": result.snapshotVersion },
+  ],
+  ["@ilic/diagram", { "@ilic/language-service": result.snapshotVersion }],
+  ["@ilic/docx", { "@ilic/language-service": result.snapshotVersion }],
+  [
+    "@ilic/language-server",
+    {
+      "@ilic/docx": result.snapshotVersion,
+      "@ilic/language-service": result.snapshotVersion,
+    },
+  ],
+]);
+
 const tarballs = [];
-for (const [expectedName, directory] of packages) {
-  const isCompiler = expectedName === "@ilic/compiler-wasm";
-  const packed = JSON.parse(
-    run(
-      isCompiler ? "npm" : "pnpm",
-      ["pack", "--json", "--pack-destination", artifacts],
-      directory,
-    ),
+for (const [name, expectedVersion] of expectedVersions) {
+  const packageResult = result.packages[name];
+  assert.ok(packageResult, `missing staged package ${name}`);
+  tarballs.push(packageResult.tarball);
+  const manifest = manifestFromTarball(packageResult.tarball);
+  assert.equal(manifest.name, name);
+  assert.equal(manifest.version, expectedVersion);
+  assert.equal(manifest.license, "MIT");
+  assert.equal(
+    manifest.repository?.url,
+    name === "@ilic/tools" || name === "@ilic/compiler-wasm"
+      ? "https://github.com/edigonzales/ilic-fork.git"
+      : "https://github.com/edigonzales/interlis-language-tools.git",
   );
-  const result = Array.isArray(packed) ? packed[0] : packed;
-  assert.equal(result.name, expectedName);
-  assert.ok(result.files.some((file) => file.path === "package.json"));
-  assert.ok(result.files.some((file) => file.path === "LICENSE"));
-  tarballs.push(resolve(artifacts, result.filename));
+  const entries = run("tar", ["-tf", packageResult.tarball]);
+  assert.match(entries, /package\/LICENSE\n/);
+
+  for (const [dependency, version] of Object.entries(
+    expectedInternalDependencies.get(name) ?? {},
+  )) {
+    assert.equal(
+      manifest.dependencies?.[dependency],
+      version,
+      `${name} -> ${dependency}`,
+    );
+  }
+  for (const [dependency, version] of Object.entries(
+    manifest.dependencies ?? {},
+  )) {
+    if (expectedVersions.has(dependency)) {
+      assert.match(
+        version,
+        /^\d+\.\d+\.\d+-SNAPSHOT\.\d{14}$/,
+        `${name} contains moving internal dependency ${dependency}@${version}`,
+      );
+    }
+  }
 }
+
+const snapshotManifest = JSON.parse(
+  await readFile(resolve(artifacts, "snapshot-manifest.json"), "utf8"),
+);
+assert.equal(snapshotManifest.snapshotVersion, result.snapshotVersion);
+assert.equal(snapshotManifest.compilerVersion, result.compilerVersion);
 
 await writeFile(
   resolve(consumer, "package.json"),
-  `${JSON.stringify({ name: "interlis-language-tools-pack-smoke", private: true, type: "module" }, null, 2)}\n`,
+  `${JSON.stringify(
+    {
+      name: "interlis-language-tools-pack-smoke",
+      private: true,
+      type: "module",
+    },
+    null,
+    2,
+  )}\n`,
 );
 await writeFile(
   resolve(consumer, "smoke.mjs"),
   `import assert from "node:assert/strict";
 import { createCompiler } from "@ilic/compiler-wasm";
+import { BrowserCache } from "@ilic/tools/browser";
 import { LanguageService, MemoryWorkspaceFileSystem, createWasmCompilerBackend } from "@ilic/language-service";
 import { InterlisProtocol } from "@ilic/language-server";
 import { MonacoLanguageAdapter } from "@ilic/monaco-adapter";
 import { DiagramController } from "@ilic/diagram";
 import { siblingDocxUri } from "@ilic/docx";
 
+assert.equal(typeof BrowserCache, "function");
 assert.equal(typeof LanguageService, "function");
 assert.equal(typeof MemoryWorkspaceFileSystem, "function");
 assert.equal(typeof MonacoLanguageAdapter, "function");
@@ -94,14 +164,8 @@ run(
 );
 run(process.execPath, ["smoke.mjs"], consumer);
 
-const manifests = await Promise.all(
-  packages.slice(1).map(async ([name, directory]) => {
-    const manifest = JSON.parse(
-      await readFile(resolve(directory, "package.json"), "utf8"),
-    );
-    assert.equal(manifest.publishConfig?.access, "public", name);
-    assert.equal(manifest.license, "MIT", name);
-    return `${name}@${manifest.version}`;
-  }),
+process.stdout.write(
+  `Verified timestamped npm consumers: ${[...expectedVersions]
+    .map(([name, version]) => `${name}@${version}`)
+    .join(", ")}\n`,
 );
-process.stdout.write(`Verified npm consumers: ${manifests.join(", ")}\n`);

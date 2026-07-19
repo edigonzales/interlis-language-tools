@@ -1,6 +1,6 @@
 {
   "name": "@ilic/monaco-adapter",
-  "version": "1.0.0-rc.1",
+  "version": "0.1.0",
   "description": "Direct Monaco providers for @ilic/language-service.",
   "license": "MIT",
   "author": "edigonzales",

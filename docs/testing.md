@@ -23,9 +23,12 @@ pnpm security:check
 ```
 
 The core thresholds are 90% statements, lines and functions and 85% branches.
-`pack:verify` installs all public package tarballs in a clean consumer and runs
-the WASM compiler. `package:vsix` unpacks the extension and asserts its identity,
-license, icon, WASM binary and Node/browser client and server entry points.
+`check` includes deterministic version/rewrite tests using a fixed UTC
+timestamp. `pack:verify` stages and installs all seven public package tarballs
+in a clean consumer, runs the WASM compiler, and rejects moving internal
+dependency specifications. `package:vsix` unpacks the extension and asserts its
+identity, license, icon, WASM binary and Node/browser client and server entry
+points.
 
 ## Web IDE
 
@@ -49,7 +52,8 @@ WebKit workflows remain active.
 ## Required release evidence
 
 - all local gates above pass;
-- npm tarballs install without workspace links;
+- npm tarballs install without workspace links and contain only exact internal
+  snapshot dependencies;
 - the VSIX installs in VS Code Desktop and VS Code Web;
 - the same server package starts in a compatible Theia host;
 - Marketplace/Open VSX metadata retains

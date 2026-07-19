@@ -52,7 +52,7 @@ export function bindLanguageServer(
         moreTriggerCharacter: ["="],
       },
     },
-    serverInfo: { name: "@ilic/language-server", version: "1.0.0-rc.1" },
+    serverInfo: { name: "@ilic/language-server", version: "0.1.0" },
   }));
 
   connection.onDidOpenTextDocument((params) => {

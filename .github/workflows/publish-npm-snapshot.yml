@@ -1,0 +1,144 @@
+name: Publish npm snapshot
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-npm-snapshot
+  cancel-in-progress: false
+
+jobs:
+  resolve-compiler:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.compiler.outputs.version }}
+      git_head: ${{ steps.compiler.outputs.git_head }}
+    steps:
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Install OIDC-capable npm
+        run: npm install --global npm@11.18.0
+      - name: Resolve immutable compiler snapshot
+        id: compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(npm view @ilic/compiler-wasm@snapshot version)
+          tools_version=$(npm view @ilic/tools@snapshot version)
+          git_head=$(npm view "@ilic/compiler-wasm@$version" gitHead)
+          if [[ ! "$version" =~ ^0\.9\.9-SNAPSHOT\.[0-9]{14}$ ]]; then
+            echo "Unexpected compiler snapshot: $version" >&2
+            exit 1
+          fi
+          if [[ "$tools_version" != "$version" ]]; then
+            echo "Compiler and tools snapshot versions differ" >&2
+            exit 1
+          fi
+          if [[ ! "$git_head" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Unexpected compiler gitHead: $git_head" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "git_head=$git_head" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: resolve-compiler
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout language tools
+        uses: actions/checkout@v6
+        with:
+          path: interlis-language-tools
+          persist-credentials: false
+      - name: Checkout exact published compiler source
+        uses: actions/checkout@v6
+        with:
+          repository: edigonzales/ilic-fork
+          ref: ${{ needs.resolve-compiler.outputs.git_head }}
+          path: ilic-fork
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.14.0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Install pinned npm
+        run: npm install --global npm@11.18.0
+      - name: Build exact compiler WASM
+        shell: bash
+        working-directory: ilic-fork
+        run: |
+          set -euo pipefail
+          emscripten_version=$(tr -d '[:space:]' < .emscripten-version)
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
+          "$RUNNER_TEMP/emsdk/emsdk" install "$emscripten_version"
+          "$RUNNER_TEMP/emsdk/emsdk" activate "$emscripten_version"
+          source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
+          ./scripts/build-wasm.sh
+      - name: Verify sources and local package consumers
+        working-directory: interlis-language-tools
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm check
+          pnpm --filter @ilic/language-service test:coverage
+          pnpm licenses:check
+          pnpm security:check
+      - name: Stage and verify immutable release snapshots
+        id: stage
+        working-directory: interlis-language-tools
+        env:
+          COMPILER_VERSION: ${{ needs.resolve-compiler.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          timestamp=$(date -u +%Y%m%d%H%M%S)
+          SNAPSHOT_TIMESTAMP="$timestamp" pnpm pack:verify
+          echo "snapshot_version=0.1.0-SNAPSHOT.$timestamp" >> "$GITHUB_OUTPUT"
+          echo "compiler_version=$COMPILER_VERSION" >> "$GITHUB_OUTPUT"
+      - name: Upload verified snapshot artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: interlis-language-tools-npm-${{ steps.stage.outputs.snapshot_version }}
+          path: |
+            interlis-language-tools/artifacts/npm/*.tgz
+            interlis-language-tools/artifacts/npm/snapshot-manifest.json
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: interlis-language-tools-npm-*
+          path: artifacts/npm
+          merge-multiple: true
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Install OIDC-capable npm
+        run: npm install --global npm@11.18.0
+      - name: Publish packages in dependency order
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm publish artifacts/npm/ilic-language-service-snapshot.tgz --access public --tag snapshot
+          npm publish artifacts/npm/ilic-monaco-adapter-snapshot.tgz --access public --tag snapshot
+          npm publish artifacts/npm/ilic-diagram-snapshot.tgz --access public --tag snapshot
+          npm publish artifacts/npm/ilic-docx-snapshot.tgz --access public --tag snapshot
+          npm publish artifacts/npm/ilic-language-server-snapshot.tgz --access public --tag snapshot

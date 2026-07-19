@@ -50,7 +50,8 @@ context does not expose CacheStorage/offline navigation correctly. OPFS,
 recovery, ZIP, Git and the live language tools are still exercised in WebKit;
 offline navigation is exercised in Chromium and Firefox.
 
-The Java extension is not removed or disabled. Stable `1.0.0` remains gated on
-Marketplace/Open VSX credentials and final installation smoke tests in the
-external VS Code Web and Theia hosts. `1.0.0-rc.1` is therefore intentionally a
-release candidate rather than `latest`.
+The Java extension is not removed or disabled. The public packages remain on
+the `0.1.0-SNAPSHOT.*` line and the extension remains a `0.1.0` pre-release
+until Marketplace/Open VSX credentials and final installation smoke tests in
+external VS Code Web and Theia hosts have completed. npm snapshots use only the
+`snapshot` dist-tag; `latest` remains untouched.

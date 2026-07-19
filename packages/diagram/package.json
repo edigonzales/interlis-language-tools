@@ -1,6 +1,6 @@
 {
   "name": "@ilic/diagram",
-  "version": "1.0.0-rc.1",
+  "version": "0.1.0",
   "description": "Sprotty/ELK live UML diagrams for INTERLIS semantic snapshots.",
   "license": "MIT",
   "author": "edigonzales",
