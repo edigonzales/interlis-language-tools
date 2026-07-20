@@ -40,6 +40,7 @@ for (const file of [
   "extension/dist/server-node.js",
   "extension/dist/server-browser.js",
   "extension/dist/ilic.wasm",
+  "extension/dist/terminateProcess.sh",
   "extension/images/ililogo.png",
 ])
   assert.ok(files.has(file), `VSIX is missing ${file}`);

@@ -1,4 +1,4 @@
-import { copyFile, mkdir, rm } from "node:fs/promises";
+import { chmod, copyFile, mkdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { build } from "esbuild";
 
@@ -20,18 +20,31 @@ const shared = {
   target: "es2022",
 };
 
+const nodeRuntimeBanner = [
+  'import { createRequire as __ilicCreateRequire } from "node:module";',
+  'import { fileURLToPath as __ilicFileURLToPath } from "node:url";',
+  'import { dirname as __ilicDirname } from "node:path";',
+  "const require = __ilicCreateRequire(import.meta.url);",
+  "const __filename = __ilicFileURLToPath(import.meta.url);",
+  "const __dirname = __ilicDirname(__filename);",
+].join("\n");
+
+const node = {
+  ...shared,
+  banner: { js: nodeRuntimeBanner },
+  platform: "node",
+};
+
 await Promise.all([
   build({
-    ...shared,
+    ...node,
     entryPoints: [resolve(extension, "src/extension-node.ts")],
     outfile: resolve(dist, "extension-node.js"),
-    platform: "node",
   }),
   build({
-    ...shared,
+    ...node,
     entryPoints: [resolve(extension, "src/server-node.ts")],
     outfile: resolve(dist, "server-node.js"),
-    platform: "node",
   }),
   build({
     ...shared,
@@ -47,4 +60,14 @@ await Promise.all([
   }),
 ]);
 
-await copyFile(resolve(compiler, "ilic.wasm"), resolve(dist, "ilic.wasm"));
+const terminateProcess = resolve(
+  extension,
+  "node_modules/vscode-languageclient/lib/node/terminateProcess.sh",
+);
+const bundledTerminateProcess = resolve(dist, "terminateProcess.sh");
+
+await Promise.all([
+  copyFile(resolve(compiler, "ilic.wasm"), resolve(dist, "ilic.wasm")),
+  copyFile(terminateProcess, bundledTerminateProcess),
+]);
+await chmod(bundledTerminateProcess, 0o755);
