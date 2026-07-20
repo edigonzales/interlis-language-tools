@@ -13,13 +13,20 @@ The coordinated development versions are:
 
 The source manifests contain only the base versions `0.9.9` and `0.1.0`.
 Staging writes timestamped versions into disposable directories below
-`artifacts/`; it never edits a tracked manifest. npm snapshots always use the
-dist-tag `snapshot`, never `latest` or `next`:
+`artifacts/`; it never edits a tracked manifest. npm snapshots are published
+through the dist-tag `snapshot` and installed explicitly through that channel:
 
 ```sh
 npm install @ilic/language-server@snapshot
 npm install @ilic/monaco-adapter@snapshot
 ```
+
+On the first publish of a new package, npm also creates the `latest` dist-tag.
+That tag cannot be removed completely, only moved to another version. Until the
+first stable release, `latest` is therefore synchronized to the current
+`snapshot` after every publication. Once a stable release exists, `latest`
+points to that stable version and `snapshot` remains the prerelease channel.
+See the [npm dist-tag documentation](https://docs.npmjs.com/cli/dist-tag/).
 
 The tag is a user-facing alias only. Every dependency between published
 `@ilic/*` packages is an exact `*-SNAPSHOT.<timestamp>` version. A packed
@@ -105,17 +112,75 @@ After one successful OIDC publication, set publishing access to **Require
 two-factor authentication and disallow tokens**, revoke obsolete npm tokens
 and remove any old `NPM_TOKEN` repository secret.
 
+## Synchronize `latest` after npm publication
+
+Trusted publishing authorizes `npm publish` or `npm stage publish`, but not
+`npm dist-tag add`. The GitHub workflow therefore remains token-free and only
+moves `snapshot`. After every successful `Publish npm snapshot` run, validate
+all five versions before changing any tag, then move `latest` locally with 2FA:
+
+```sh
+language_packages=(
+  @ilic/language-service
+  @ilic/monaco-adapter
+  @ilic/diagram
+  @ilic/docx
+  @ilic/language-server
+)
+
+language_snapshot_version=$(
+  npm view @ilic/language-service@snapshot version
+)
+
+for package_name in "${language_packages[@]}"; do
+  package_snapshot_version=$(npm view "$package_name@snapshot" version)
+
+  if [[ "$package_snapshot_version" != "$language_snapshot_version" ]]; then
+    echo "$package_name has a different snapshot version" >&2
+    exit 1
+  fi
+done
+
+for package_name in "${language_packages[@]}"; do
+  npm dist-tag add \
+    "$package_name@$language_snapshot_version" \
+    latest \
+    --auth-type=web
+done
+```
+
+The same command applies after the interactive bootstrap. npm creates `latest`
+automatically during the first publish, so the initial run only confirms the
+selected policy. This step can move into GitHub Actions only after npm permits
+trusted publishers to modify dist-tags; progress is tracked in the open
+[npm CLI issue #8547](https://github.com/npm/cli/issues/8547).
+
+Verify that both tags resolve to the same coordinated version:
+
+```sh
+for package_name in \
+  @ilic/language-service \
+  @ilic/monaco-adapter \
+  @ilic/diagram \
+  @ilic/docx \
+  @ilic/language-server
+do
+  npm dist-tag ls "$package_name"
+done
+```
+
 ## Ordering and recovery
 
 1. Publish matching `@ilic/tools` and `@ilic/compiler-wasm` snapshots from
    `ilic-fork`.
 2. Run `Publish npm snapshot` in this repository. It pins the exact compiler
    snapshot and creates one timestamp for all five language packages.
-3. Run `Publish VS Code extension` only when the extension manifest version has
+3. Synchronize `latest` to the new `snapshot` locally with 2FA.
+4. Run `Publish VS Code extension` only when the extension manifest version has
    not already been published.
-4. Build the Web IDE from the same verified local tarballs or a committed
+5. Build the Web IDE from the same verified local tarballs or a committed
    lockfile resolving the identical registry versions.
-5. Record Marketplace, Open VSX, VS Code Web and Theia smoke results in the
+6. Record Marketplace, Open VSX, VS Code Web and Theia smoke results in the
    capability matrix before a future stable promotion.
 
 npm does not offer a transaction spanning several packages. All builds and
