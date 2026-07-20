@@ -37,6 +37,9 @@ being declaration-only.
 - Desktop uses a Node LSP transport. VS Code Web uses the browser-worker entry.
 - The Monaco IDE calls the same language service directly and has no JSON-RPC
   loopback server.
+- Workspace and repository imports are resolved transitively. Ctrl-click opens
+  downloaded models as read-only cache files on Desktop or virtual documents in
+  browser hosts; these files are excluded from Rename and Save.
 - Diagrams use TypeScript, Sprotty-compatible semantic models and `elkjs`; GLSP
   reconnect settings no longer apply.
 - Mermaid, PlantUML, GraphML and HTML export are intentionally not migrated.

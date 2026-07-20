@@ -5,6 +5,7 @@ import type {
   SemanticSnapshot,
   SyntaxSnapshot,
 } from "@ilic/compiler-wasm";
+import type { ModelRepository } from "./repository.js";
 
 export type ResultFreshness = "fresh" | "stale" | "cancelled";
 
@@ -45,4 +46,11 @@ export interface LanguageServiceOptions {
   readonly semanticDebounceMs?: number;
   readonly onAnalysis?: (event: AnalysisEvent) => void;
   readonly onError?: (error: unknown) => void;
+  readonly modelRepository?: ModelRepository;
+}
+
+export interface WorkspaceSource {
+  readonly uri: string;
+  readonly text: string;
+  readonly version?: number;
 }

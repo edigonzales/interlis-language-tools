@@ -21,6 +21,14 @@ export interface MonacoEditor {
   setSelection(selection: unknown): void;
 }
 
+export interface MonacoLanguageAdapterOptions {
+  readonly ensureModel?: (uri: string) => Promise<void>;
+}
+
+export interface AttachModelOptions {
+  readonly readOnly?: boolean;
+}
+
 export interface MonacoApi {
   readonly languages: {
     register(language: {
@@ -86,6 +94,7 @@ export class MonacoLanguageAdapter implements Disposable {
   constructor(
     private readonly monaco: MonacoApi,
     private readonly service: LanguageService,
+    private readonly options: MonacoLanguageAdapterOptions = {},
   ) {
     monaco.languages.register({
       id: "interlis",
@@ -95,9 +104,16 @@ export class MonacoLanguageAdapter implements Disposable {
     this.#registerProviders();
   }
 
-  attachModel(model: MonacoModel): Disposable {
+  attachModel(
+    model: MonacoModel,
+    options: AttachModelOptions = {},
+  ): Disposable {
     const uri = model.uri.toString();
     const update = () => {
+      if (options.readOnly) {
+        this.#publishMarkers(model);
+        return;
+      }
       const version = model.getVersionId();
       if (this.service.getDocument(uri))
         this.service.changeDocument(uri, model.getValue(), version);
@@ -110,7 +126,8 @@ export class MonacoLanguageAdapter implements Disposable {
       dispose: () => {
         listener.dispose();
         this.#models.delete(uri);
-        if (this.service.getDocument(uri)) this.service.closeDocument(uri);
+        if (!options.readOnly && this.service.getDocument(uri))
+          this.service.closeDocument(uri);
       },
     };
     this.#models.get(uri)?.dispose();
@@ -157,60 +174,86 @@ export class MonacoLanguageAdapter implements Disposable {
     this.#registrations.push(
       languages.registerCompletionItemProvider("interlis", {
         triggerCharacters: [" ", ".", "=", "(", "*", "@"],
-        provideCompletionItems: (
+        provideCompletionItems: async (
           model: MonacoModel,
           value: { lineNumber: number; column: number },
         ) => ({
-          suggestions: this.service
-            .completion(model.uri.toString(), position(value))
-            .map((item) => ({
-              ...item,
-              insertText: item.insertText ?? item.label,
-              insertTextRules: item.insertTextFormat === "snippet" ? 4 : 0,
-            })),
+          suggestions: (
+            await this.service.completion(model.uri.toString(), position(value))
+          ).map((item) => ({
+            ...item,
+            insertText: item.insertText ?? item.label,
+            insertTextRules: item.insertTextFormat === "snippet" ? 4 : 0,
+          })),
         }),
       }),
       languages.registerDefinitionProvider("interlis", {
-        provideDefinition: (
+        provideDefinition: async (
           model: MonacoModel,
           value: { lineNumber: number; column: number },
-        ) =>
-          this.service
-            .definition(model.uri.toString(), position(value))
-            .map((location) => ({
-              uri: this.monaco.Uri.parse(location.uri),
-              range: this.#range(location.range),
-            })),
+        ) => {
+          const locations = this.service.definition(
+            model.uri.toString(),
+            position(value),
+          );
+          const ensureModel = this.options.ensureModel;
+          if (ensureModel)
+            await Promise.all(
+              locations.map((location) => ensureModel(location.uri)),
+            );
+          return locations.map((location) => ({
+            uri: this.monaco.Uri.parse(location.uri),
+            range: this.#range(location.range),
+          }));
+        },
       }),
       languages.registerReferenceProvider("interlis", {
-        provideReferences: (
+        provideReferences: async (
           model: MonacoModel,
           value: { lineNumber: number; column: number },
           context: { includeDeclaration: boolean },
-        ) =>
-          this.service
-            .references(
-              model.uri.toString(),
-              position(value),
-              context.includeDeclaration,
-            )
-            .map((location) => ({
-              uri: this.monaco.Uri.parse(location.uri),
-              range: this.#range(location.range),
-            })),
+        ) => {
+          const locations = this.service.references(
+            model.uri.toString(),
+            position(value),
+            context.includeDeclaration,
+          );
+          const ensureModel = this.options.ensureModel;
+          if (ensureModel)
+            await Promise.all(
+              locations.map((location) => ensureModel(location.uri)),
+            );
+          return locations.map((location) => ({
+            uri: this.monaco.Uri.parse(location.uri),
+            range: this.#range(location.range),
+          }));
+        },
       }),
       languages.registerRenameProvider("interlis", {
         resolveRenameLocation: (
           model: MonacoModel,
           value: { lineNumber: number; column: number },
         ) => {
+          const editorPosition = position(value);
           const result = this.service.prepareRename(
             model.uri.toString(),
-            position(value),
+            editorPosition,
           );
-          return result
-            ? { range: this.#range(result.range), text: result.placeholder }
-            : { rejectReason: "No INTERLIS symbol at cursor." };
+          if (result)
+            return {
+              range: this.#range(result.range),
+              text: result.placeholder,
+            };
+          const repositorySymbol =
+            this.service.isReadOnlyUri(model.uri.toString()) ||
+            this.service
+              .definition(model.uri.toString(), editorPosition)
+              .some((location) => this.service.isReadOnlyUri(location.uri));
+          return {
+            rejectReason: repositorySymbol
+              ? "Repository models are read-only and cannot be renamed."
+              : "No INTERLIS symbol at cursor.",
+          };
         },
         provideRenameEdits: (
           model: MonacoModel,
@@ -337,6 +380,7 @@ export class MonacoLanguageAdapter implements Disposable {
 export function registerInterlisMonaco(
   monaco: MonacoApi,
   service: LanguageService,
+  options: MonacoLanguageAdapterOptions = {},
 ): MonacoLanguageAdapter {
-  return new MonacoLanguageAdapter(monaco, service);
+  return new MonacoLanguageAdapter(monaco, service, options);
 }

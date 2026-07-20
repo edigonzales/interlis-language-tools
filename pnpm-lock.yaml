@@ -6,6 +6,7 @@ settings:
 
 overrides:
   '@ilic/compiler-wasm': file:../ilic-fork/packages/compiler-wasm
+  '@ilic/tools': file:../ilic-fork/packages/tools
 
 importers:
 
@@ -103,6 +104,9 @@ importers:
       '@ilic/language-service':
         specifier: workspace:*
         version: link:../language-service
+      '@ilic/tools':
+        specifier: file:../../../ilic-fork/packages/tools
+        version: file:../ilic-fork/packages/tools
       vscode-languageserver:
         specifier: ^9.0.1
         version: 9.0.1
@@ -480,6 +484,10 @@ packages:
 
   '@ilic/compiler-wasm@file:../ilic-fork/packages/compiler-wasm':
     resolution: {directory: ../ilic-fork/packages/compiler-wasm, type: directory}
+    engines: {node: '>=18'}
+
+  '@ilic/tools@file:../ilic-fork/packages/tools':
+    resolution: {directory: ../ilic-fork/packages/tools, type: directory}
     engines: {node: '>=18'}
 
   '@inquirer/external-editor@1.0.3':
@@ -3129,6 +3137,8 @@ snapshots:
   '@humanwhocodes/retry@0.4.3': {}
 
   '@ilic/compiler-wasm@file:../ilic-fork/packages/compiler-wasm': {}
+
+  '@ilic/tools@file:../ilic-fork/packages/tools': {}
 
   '@inquirer/external-editor@1.0.3(@types/node@22.20.1)':
     dependencies:

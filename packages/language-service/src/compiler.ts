@@ -3,7 +3,7 @@ import type { CompilerBackend } from "./types.js";
 
 /** Creates a backend backed by the ilic WASM ABI in Node.js or a browser worker. */
 export async function createWasmCompilerBackend(): Promise<CompilerBackend> {
-  const compiler = await createCompiler();
+  let compiler = await createCompiler();
   let session = compiler.createSession();
   const sources = new Map<
     string,
@@ -22,8 +22,9 @@ export async function createWasmCompilerBackend(): Promise<CompilerBackend> {
     analyze: (request) => session.analyze(request),
     compile: (request) => session.compile(request),
     format: (uri, options) => session.format(uri, options),
-    restart() {
+    async restart() {
       session.dispose();
+      compiler = await createCompiler();
       session = compiler.createSession();
       for (const [uri, value] of sources)
         session.putSource(uri, value.source, value.version);

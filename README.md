@@ -54,14 +54,42 @@ Build the pinned compiler WASM once, then install and verify this workspace:
 
 ```sh
 cd ../ilic-fork
+emcc --version
 ./scripts/build-wasm.sh
 
 cd ../interlis-language-tools
-corepack pnpm install
+corepack pnpm install --frozen-lockfile
 corepack pnpm check
 corepack pnpm --filter @ilic/language-service test:coverage
 corepack pnpm pack:verify
 corepack pnpm package:vsix
+```
+
+For day-to-day extension development, open the `interlis-language-tools`
+repository root in VS Code, select either `INTERLIS Extension (Desktop)` or
+`INTERLIS Extension (Web)` in **Run and Debug**, and press F5. The pre-launch
+task builds all TypeScript packages, disables `edigonzales.interlis-editor` in
+the Development Host and opens `examples/dev-workspace`. The example resolves
+`LocalCatalog` from the workspace and `Units` from the configured repository.
+
+After C++ or WASM changes, run `../ilic-fork/scripts/build-wasm.sh` again before
+F5. Pure TypeScript changes need no separate build. To test the installable
+artifact instead:
+
+```sh
+corepack pnpm package:vsix
+code --install-extension artifacts/interlis-language-tools.vsix --force
+```
+
+To run the sibling Web IDE against the current package state:
+
+```sh
+cd ../interlis-language-tools
+corepack pnpm pack:verify
+
+cd ../interlis-web-ide
+corepack pnpm install --force --update-checksums
+corepack pnpm dev
 ```
 
 `pack:verify` installs all five language-tool packages plus `@ilic/tools` and
@@ -76,7 +104,9 @@ uses GitHub OIDC trusted publishing and has no repository secret. Marketplace
 publication uses only `VSCE_PAT` and `OVSX_PAT`; a missing secret skips only its
 external publish step. See [release process](docs/release.md),
 [test strategy](docs/testing.md), [capability matrix](docs/capability-matrix.md)
-and [Java-LSP migration](docs/migration-from-java-lsp.md).
+and [Java-LSP migration](docs/migration-from-java-lsp.md). Repository source
+layers, caches and the temporary browser aliases are described in
+[model repositories](docs/model-repositories.md).
 
 Mermaid, PlantUML, GraphML and HTML generation, Java/JRE configuration and the
 legacy GLSP WebSocket transport are intentionally out of scope.

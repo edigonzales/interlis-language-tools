@@ -36,6 +36,7 @@ test("pins compiler and workspace dependencies in staged manifests", () => {
       name: "@ilic/language-server",
       version: "0.1.0",
       dependencies: {
+        "@ilic/tools": "0.9.9-SNAPSHOT",
         "@ilic/docx": "workspace:*",
         "@ilic/language-service": "workspace:*",
         "vscode-languageserver": "^9.0.1",
@@ -45,6 +46,7 @@ test("pins compiler and workspace dependencies in staged manifests", () => {
   );
   assert.equal(rewritten.version, snapshotVersion);
   assert.deepEqual(rewritten.dependencies, {
+    "@ilic/tools": compilerVersion,
     "@ilic/docx": snapshotVersion,
     "@ilic/language-service": snapshotVersion,
     "vscode-languageserver": "^9.0.1",
@@ -54,7 +56,9 @@ test("pins compiler and workspace dependencies in staged manifests", () => {
     {
       name: "@ilic/language-service",
       version: "0.1.0",
-      dependencies: { "@ilic/compiler-wasm": "0.9.9-SNAPSHOT" },
+      dependencies: {
+        "@ilic/compiler-wasm": "0.9.9-SNAPSHOT",
+      },
     },
     { snapshotVersion, compilerVersion },
   );

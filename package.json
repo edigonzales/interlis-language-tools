@@ -16,6 +16,7 @@
     "format:check": "prettier --check .",
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm test:snapshot && pnpm build",
     "test:snapshot": "node --test test/npm/*.test.mjs",
+    "test:repository-network": "node scripts/smoke-browser-repositories.mjs",
     "snapshot:prepare": "node scripts/prepare-npm-snapshot.mjs",
     "pack:verify": "node scripts/verify-packages.mjs",
     "package:vsix": "pnpm build && node scripts/package-vsix.mjs",

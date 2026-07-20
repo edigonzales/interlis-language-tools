@@ -1,0 +1,31 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "INTERLIS Extension (Desktop)",
+      "type": "extensionHost",
+      "request": "launch",
+      "preLaunchTask": "build language tools",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}/apps/vscode-extension",
+        "--disable-extension=edigonzales.interlis-editor",
+        "${workspaceFolder}/examples/dev-workspace"
+      ],
+      "outFiles": ["${workspaceFolder}/apps/vscode-extension/dist/**/*.js"]
+    },
+    {
+      "name": "INTERLIS Extension (Web)",
+      "type": "pwa-extensionHost",
+      "request": "launch",
+      "preLaunchTask": "build language tools",
+      "debugWebWorkerHost": true,
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}/apps/vscode-extension",
+        "--extensionDevelopmentKind=web",
+        "--disable-extension=edigonzales.interlis-editor",
+        "${workspaceFolder}/examples/dev-workspace"
+      ],
+      "outFiles": ["${workspaceFolder}/apps/vscode-extension/dist/**/*.js"]
+    }
+  ]
+}

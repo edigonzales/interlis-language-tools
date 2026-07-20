@@ -56,6 +56,7 @@ const expectedInternalDependencies = new Map([
   [
     "@ilic/language-server",
     {
+      "@ilic/tools": result.compilerVersion,
       "@ilic/docx": result.snapshotVersion,
       "@ilic/language-service": result.snapshotVersion,
     },

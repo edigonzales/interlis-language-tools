@@ -13,6 +13,9 @@ Web and compatible Theia products.
   layout settings, anchored viewport and semantic SVG export;
 - DOCX documentation export;
 - support for saved files, untitled buffers and browser-backed virtual files.
+- repository-aware `IMPORTS` completion and transitive model resolution;
+- Ctrl-click navigation into cached repository models (local read-only files on
+  Desktop and virtual read-only documents in VS Code Web).
 
 Desktop runs the bundled Node server. VS Code Web runs the browser-worker server
 from the same package. No Java runtime is downloaded or required.
@@ -27,3 +30,10 @@ migration guide before replacing the Java extension in a production workflow.
 Settings and commands use the `interlisLanguageTools.*` namespace. Relevant old
 `interlisLsp.*` values are accepted as fallbacks; Java/JAR/JVM and GLSP transport
 settings are intentionally absent.
+
+The default repository setting is
+`%ILI_DIR;https://models.interlis.ch`. `%ILI_DIR` gives workspace models highest
+priority. Desktop caches repository metadata and models in the extension's
+global storage. Browser hosts temporarily use the documented CORS mirrors at
+`geo.so.ch` for the central INTERLIS and federal model repositories; other
+browser repositories must support CORS themselves.

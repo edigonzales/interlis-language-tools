@@ -1,0 +1,6 @@
+INTERLIS 2.3;
+
+MODEL LocalCatalog (en) AT "https://example.invalid/dev" VERSION "1" =
+  DOMAIN
+    LocalIdentifier = TEXT*80;
+END LocalCatalog.

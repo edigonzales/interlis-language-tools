@@ -158,7 +158,8 @@ export function rewriteLanguageManifest(
   const dependencies = Object.fromEntries(
     Object.entries(manifest.dependencies ?? {}).map(([name, version]) => {
       if (INTERNAL_NAMES.has(name)) return [name, snapshotVersion];
-      if (name === "@ilic/compiler-wasm") return [name, compilerVersion];
+      if (name === "@ilic/compiler-wasm" || name === "@ilic/tools")
+        return [name, compilerVersion];
       return [name, version];
     }),
   );

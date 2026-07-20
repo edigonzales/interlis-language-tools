@@ -1,0 +1,11 @@
+INTERLIS 2.3;
+
+MODEL RepositoryDemo (en) AT "https://example.invalid/dev" VERSION "1" =
+  IMPORTS LocalCatalog, Units;
+
+  TOPIC Data =
+    CLASS Item =
+      Identifier : LocalCatalog.LocalIdentifier;
+    END Item;
+  END Data;
+END RepositoryDemo.

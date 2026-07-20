@@ -175,15 +175,16 @@ export function locationsForDefinition(
     (item) =>
       item.range?.uri === uri && item.range && contains(item.range, position),
   );
-  const direct = semantic.symbols.find(
-    (item) =>
-      item.range?.uri === uri && item.range && contains(item.range, position),
-  );
+  const direct = semantic.symbols.find((item) => {
+    const selection = item.selectionRange ?? item.range;
+    return selection?.uri === uri && contains(selection, position);
+  });
   const targetId = reference?.targetId ?? direct?.id;
   if (!targetId) return [];
   const target = semantic.symbols.find((item) => item.id === targetId);
-  return target?.range
-    ? [{ uri: target.range.uri, range: toEditorRange(target.range) }]
+  const targetRange = target?.selectionRange ?? target?.range;
+  return targetRange
+    ? [{ uri: targetRange.uri, range: toEditorRange(targetRange) }]
     : [];
 }
 
@@ -202,10 +203,11 @@ export function locationsForReferences(
     const symbol = semantic.symbols.find(
       (candidate) => candidate.id === symbolId,
     );
-    if (symbol?.range)
+    const declaration = symbol?.selectionRange ?? symbol?.range;
+    if (declaration)
       result.unshift({
-        uri: symbol.range.uri,
-        range: toEditorRange(symbol.range),
+        uri: declaration.uri,
+        range: toEditorRange(declaration),
       });
   }
   return result;
@@ -222,10 +224,10 @@ export function symbolAt(
   );
   if (reference)
     return semantic.symbols.find((item) => item.id === reference.targetId);
-  return semantic.symbols.find(
-    (item) =>
-      item.range?.uri === uri && item.range && contains(item.range, position),
-  );
+  return semantic.symbols.find((item) => {
+    const selection = item.selectionRange ?? item.range;
+    return selection?.uri === uri && contains(selection, position);
+  });
 }
 
 export function renameSymbol(
@@ -258,7 +260,7 @@ export function documentSymbols(
         detail: symbol.qualifiedName,
         kind: symbol.kind,
         range: toEditorRange(symbol.range!),
-        selectionRange: toEditorRange(symbol.range!),
+        selectionRange: toEditorRange(symbol.selectionRange ?? symbol.range!),
         children: build(symbol.id),
       }));
   return build("");
