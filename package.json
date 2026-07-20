@@ -14,7 +14,7 @@
     "typecheck": "pnpm -r typecheck",
     "lint": "eslint . --no-error-on-unmatched-pattern",
     "format:check": "prettier --check .",
-    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm test:snapshot && pnpm build",
+    "check": "pnpm build && pnpm lint && pnpm typecheck && pnpm test && pnpm test:snapshot",
     "test:snapshot": "node --test test/npm/*.test.mjs",
     "test:repository-network": "node scripts/smoke-browser-repositories.mjs",
     "snapshot:prepare": "node scripts/prepare-npm-snapshot.mjs",
