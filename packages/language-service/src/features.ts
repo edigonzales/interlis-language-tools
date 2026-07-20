@@ -245,6 +245,23 @@ export function renameSymbol(
   return { changes };
 }
 
+function comparePositions(left: EditorPosition, right: EditorPosition): number {
+  return left.line - right.line || left.character - right.character;
+}
+
+function enclosingRange(
+  range: EditorRange,
+  additions: readonly EditorRange[],
+): EditorRange {
+  let start = range.start;
+  let end = range.end;
+  for (const addition of additions) {
+    if (comparePositions(addition.start, start) < 0) start = addition.start;
+    if (comparePositions(addition.end, end) > 0) end = addition.end;
+  }
+  return { start, end };
+}
+
 export function documentSymbols(
   semantic: SemanticSnapshot,
   uri: string,
@@ -255,14 +272,26 @@ export function documentSymbols(
   const build = (containerId: string): DocumentSymbol[] =>
     symbols
       .filter((symbol) => symbol.containerId === containerId && symbol.range)
-      .map((symbol) => ({
-        name: symbol.name,
-        detail: symbol.qualifiedName,
-        kind: symbol.kind,
-        range: toEditorRange(symbol.range!),
-        selectionRange: toEditorRange(symbol.selectionRange ?? symbol.range!),
-        children: build(symbol.id),
-      }));
+      .map((symbol) => {
+        const source = symbol.range!;
+        const sourceRange = toEditorRange(source);
+        const selectionRange =
+          symbol.selectionRange?.uri === source.uri
+            ? toEditorRange(symbol.selectionRange)
+            : sourceRange;
+        const children = build(symbol.id);
+        return {
+          name: symbol.name,
+          detail: symbol.qualifiedName,
+          kind: symbol.kind,
+          range: enclosingRange(sourceRange, [
+            selectionRange,
+            ...children.map((child) => child.range),
+          ]),
+          selectionRange,
+          children,
+        };
+      });
   return build("");
 }
 

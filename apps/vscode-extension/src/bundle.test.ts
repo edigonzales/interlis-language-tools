@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { readFile, stat } from "node:fs/promises";
 import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const dist = resolve(import.meta.dirname, "../dist");
 
@@ -11,6 +11,65 @@ const readBundle = (name: string): Promise<string> =>
 const lspMessage = (message: unknown): string => {
   const json = JSON.stringify(message);
   return `Content-Length: ${Buffer.byteLength(json)}\r\n\r\n${json}`;
+};
+
+interface LspResponse {
+  readonly id?: number;
+  readonly result?: unknown;
+  readonly error?: { readonly message?: string };
+}
+
+interface LspDocumentSymbol {
+  readonly name: string;
+  readonly range: LspRange;
+  readonly selectionRange: LspRange;
+  readonly children?: readonly LspDocumentSymbol[];
+}
+
+interface LspRange {
+  readonly start: { readonly line: number; readonly character: number };
+  readonly end: { readonly line: number; readonly character: number };
+}
+
+const lspResponses = (output: string): LspResponse[] => {
+  const bytes = Buffer.from(output);
+  const separator = Buffer.from("\r\n\r\n");
+  const responses: LspResponse[] = [];
+  let offset = 0;
+  while (offset < bytes.length) {
+    const headerEnd = bytes.indexOf(separator, offset);
+    if (headerEnd < 0) break;
+    const header = bytes.subarray(offset, headerEnd).toString();
+    const length = /Content-Length: (\d+)/iu.exec(header)?.[1];
+    if (!length) break;
+    const bodyStart = headerEnd + separator.length;
+    const bodyEnd = bodyStart + Number(length);
+    if (bodyEnd > bytes.length) break;
+    responses.push(
+      JSON.parse(bytes.subarray(bodyStart, bodyEnd).toString()) as LspResponse,
+    );
+    offset = bodyEnd;
+  }
+  return responses;
+};
+
+const comparePositions = (
+  left: LspRange["start"],
+  right: LspRange["start"],
+): number => left.line - right.line || left.character - right.character;
+
+const containsRange = (outer: LspRange, inner: LspRange): boolean =>
+  comparePositions(outer.start, inner.start) <= 0 &&
+  comparePositions(outer.end, inner.end) >= 0;
+
+const expectValidSymbolRanges = (
+  symbol: LspDocumentSymbol,
+  parent?: LspRange,
+): void => {
+  expect(containsRange(symbol.range, symbol.selectionRange)).toBe(true);
+  if (parent) expect(containsRange(parent, symbol.range)).toBe(true);
+  for (const child of symbol.children ?? [])
+    expectValidSymbolRanges(child, symbol.range);
 };
 
 describe("VS Code extension bundles", () => {
@@ -48,7 +107,7 @@ describe("VS Code extension bundles", () => {
     expect(helper.mode & 0o111).not.toBe(0);
   });
 
-  it("starts the bundled Node server with the real WASM compiler", async () => {
+  it("serves valid document symbols from the real WASM compiler", async () => {
     const child = spawn(
       process.execPath,
       [resolve(dist, "server-node.js"), "--stdio"],
@@ -56,63 +115,91 @@ describe("VS Code extension bundles", () => {
     );
     let stdout = "";
     let stderr = "";
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+
+    const waitForResponse = async (id: number): Promise<LspResponse> => {
+      let response: LspResponse | undefined;
+      await vi.waitFor(
+        () => {
+          response = lspResponses(stdout).find((message) => message.id === id);
+          expect(response).toBeDefined();
+        },
+        { timeout: 10_000, interval: 10 },
+      );
+      return response!;
+    };
 
     try {
-      await new Promise<void>((resolveStarted, rejectStarted) => {
-        const timeout = setTimeout(() => {
-          cleanup();
-          rejectStarted(
-            new Error(`Language server startup timed out\n${stderr}`),
-          );
-        }, 10_000);
-        const cleanup = (): void => {
-          clearTimeout(timeout);
-          child.stdout.off("data", onStdout);
-          child.off("error", onError);
-          child.off("exit", onExit);
-        };
-        const onStdout = (chunk: Buffer): void => {
-          stdout += chunk.toString();
-          if (stdout.includes('"id":1')) {
-            cleanup();
-            resolveStarted();
-          }
-        };
-        const onError = (error: Error): void => {
-          cleanup();
-          rejectStarted(error);
-        };
-        const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
-          cleanup();
-          rejectStarted(
-            new Error(
-              `Language server exited during startup (${code ?? signal})\n${stderr}`,
-            ),
-          );
-        };
-
-        child.stdout.on("data", onStdout);
-        child.stderr.on("data", (chunk: Buffer) => {
-          stderr += chunk.toString();
-        });
-        child.once("error", onError);
-        child.once("exit", onExit);
-        child.stdin.write(
-          lspMessage({
-            jsonrpc: "2.0",
-            id: 1,
-            method: "initialize",
-            params: {
-              processId: null,
-              rootUri: null,
-              capabilities: {},
-              initializationOptions: { modelRepositories: [] },
-            },
-          }),
-        );
+      child.stdin.write(
+        lspMessage({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            processId: null,
+            rootUri: null,
+            capabilities: {},
+            initializationOptions: { modelRepositories: [] },
+          },
+        }),
+      );
+      const initialized = await waitForResponse(1);
+      expect(initialized.error).toBeUndefined();
+      expect(initialized.result).toMatchObject({
+        serverInfo: { name: "@ilic/language-server" },
       });
 
-      expect(stdout).toContain('"name":"@ilic/language-server"');
+      const uri = "memory:///LocalCatalog.ili";
+      const text = await readFile(
+        resolve(
+          import.meta.dirname,
+          "../../../examples/dev-workspace/LocalCatalog.ili",
+        ),
+        "utf8",
+      );
+      child.stdin.write(
+        lspMessage({ jsonrpc: "2.0", method: "initialized", params: {} }),
+      );
+      child.stdin.write(
+        lspMessage({
+          jsonrpc: "2.0",
+          method: "textDocument/didOpen",
+          params: {
+            textDocument: {
+              uri,
+              languageId: "interlis",
+              version: 1,
+              text,
+            },
+          },
+        }),
+      );
+      child.stdin.write(
+        lspMessage({
+          jsonrpc: "2.0",
+          id: 2,
+          method: "interlis/compile",
+          params: { roots: [uri] },
+        }),
+      );
+      expect((await waitForResponse(2)).error).toBeUndefined();
+      child.stdin.write(
+        lspMessage({
+          jsonrpc: "2.0",
+          id: 3,
+          method: "textDocument/documentSymbol",
+          params: { textDocument: { uri } },
+        }),
+      );
+      const symbols = (await waitForResponse(3)).result as
+        LspDocumentSymbol[] | undefined;
+      expect(symbols?.[0]?.name).toBe("LocalCatalog");
+      for (const symbol of symbols ?? []) expectValidSymbolRanges(symbol);
       expect(stderr).not.toContain("Dynamic require");
     } finally {
       if (child.exitCode === null && child.signalCode === null) {

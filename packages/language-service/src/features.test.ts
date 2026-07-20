@@ -211,9 +211,61 @@ describe("semantic feature helpers", () => {
   });
 
   it("builds hierarchical document symbols", () => {
-    const symbols = documentSymbols(semantic(), uri);
-    expect(symbols[0]?.name).toBe("Model");
-    expect(symbols[0]?.children[0]?.name).toBe("Building");
+    const snapshot = semantic();
+    snapshot.symbols[0] = {
+      ...snapshot.symbols[0]!,
+      range: range(0, 0, 0, 1),
+      selectionRange: range(0, 6, 0, 11),
+    };
+    snapshot.symbols[1] = {
+      ...snapshot.symbols[1]!,
+      range: range(2, 0, 2, 1),
+      selectionRange: range(2, 8, 2, 16),
+    };
+
+    const symbols = documentSymbols(snapshot, uri);
+    expect(symbols[0]).toMatchObject({
+      name: "Model",
+      range: {
+        start: { line: 0, character: 0 },
+        end: { line: 2, character: 16 },
+      },
+      selectionRange: {
+        start: { line: 0, character: 6 },
+        end: { line: 0, character: 11 },
+      },
+    });
+    expect(symbols[0]?.children[0]).toMatchObject({
+      name: "Building",
+      range: {
+        start: { line: 2, character: 0 },
+        end: { line: 2, character: 16 },
+      },
+      selectionRange: {
+        start: { line: 2, character: 8 },
+        end: { line: 2, character: 16 },
+      },
+    });
+  });
+
+  it("falls back from missing or foreign document selection ranges", () => {
+    const missingSnapshot = semantic();
+    missingSnapshot.symbols = [missingSnapshot.symbols[0]!];
+    const missing = documentSymbols(missingSnapshot, uri)[0];
+    expect(missing?.selectionRange).toEqual(missing?.range);
+
+    const snapshot = semantic();
+    snapshot.symbols = [
+      {
+        ...snapshot.symbols[0]!,
+        selectionRange: {
+          ...range(5, 3, 5, 8),
+          uri: "memory:///Other.ili",
+        },
+      },
+    ];
+    const foreign = documentSymbols(snapshot, uri)[0];
+    expect(foreign?.selectionRange).toEqual(foreign?.range);
   });
 
   it("combines only diagnostics for the requested URI", () => {

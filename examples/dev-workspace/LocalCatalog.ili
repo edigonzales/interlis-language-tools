@@ -3,4 +3,18 @@ INTERLIS 2.3;
 MODEL LocalCatalog (en) AT "https://example.invalid/dev" VERSION "1" =
   DOMAIN
     LocalIdentifier = TEXT*80;
+    myEnum = (a, b);
+
+
+  TOPIC foo =
+
+    CLASS bar =
+
+      asdf : TEXT;
+      aaa : 0..-9;
+    END bar;
+
+  END foo;
+
+
 END LocalCatalog.
