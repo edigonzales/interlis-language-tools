@@ -6,5 +6,11 @@ export type {
   DiagramSnapshotParams,
   DiagramSnapshotResult,
   ExportDocxParams,
+  InterlisInitializationOptions,
   OnTypeEditParams,
+  RepositoryConfigurationParams,
+  RepositorySourceResult,
+  WorkspaceSourceChangedParams,
+  WorkspaceSourcePayload,
+  WorkspaceSourcesParams,
 } from "./protocol.js";

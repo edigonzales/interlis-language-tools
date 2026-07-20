@@ -70,6 +70,7 @@ const semantic = (): SemanticSnapshot => ({
   cancelled: false,
   roots: [uri],
   documentVersions: { [uri]: 1 },
+  missingModels: [],
   symbols: [
     {
       id: "model",

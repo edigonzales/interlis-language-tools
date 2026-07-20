@@ -3,9 +3,11 @@ import { LanguageClient } from "vscode-languageclient/browser.js";
 import type { LanguageClientOptions } from "vscode-languageclient/browser.js";
 import {
   createOnTypeMiddleware,
+  createInitializationOptions,
   documentSelector,
   hasActiveLegacyExtension,
   registerClientWorkflows,
+  registerRepositoryWorkflows,
 } from "./common.js";
 import type { PendingSelection } from "./common.js";
 import { registerDiagramWorkflows } from "./diagram-view.js";
@@ -28,8 +30,13 @@ export async function activate(
   );
   const worker = new Worker(workerUri.toString(true), { type: "module" });
   const pending = new Map<string, PendingSelection>();
+  const initializationOptions = await createInitializationOptions(
+    context,
+    false,
+  );
   const clientOptions: LanguageClientOptions = {
     documentSelector: documentSelector(),
+    initializationOptions,
     middleware: {
       provideOnTypeFormattingEdits: (document, position, character) =>
         createOnTypeMiddleware(() => client!, pending)(
@@ -51,6 +58,7 @@ export async function activate(
   });
   registerClientWorkflows(context, client, output, debug, pending);
   await client.start();
+  registerRepositoryWorkflows(context, client, true);
   registerDiagramWorkflows(context, client);
 }
 

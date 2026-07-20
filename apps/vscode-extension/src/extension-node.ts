@@ -6,9 +6,11 @@ import type {
 } from "vscode-languageclient/node.js";
 import {
   createOnTypeMiddleware,
+  createInitializationOptions,
   documentSelector,
   hasActiveLegacyExtension,
   registerClientWorkflows,
+  registerRepositoryWorkflows,
 } from "./common.js";
 import type { PendingSelection } from "./common.js";
 import { registerDiagramWorkflows } from "./diagram-view.js";
@@ -34,8 +36,13 @@ export async function activate(
     debug: { module: serverModule, transport: TransportKind.ipc },
   };
   const pending = new Map<string, PendingSelection>();
+  const initializationOptions = await createInitializationOptions(
+    context,
+    true,
+  );
   const clientOptions: LanguageClientOptions = {
     documentSelector: documentSelector(),
+    initializationOptions,
     middleware: {
       provideOnTypeFormattingEdits: (document, position, character) =>
         createOnTypeMiddleware(() => client!, pending)(
@@ -57,6 +64,7 @@ export async function activate(
   });
   registerClientWorkflows(context, client, output, debug, pending);
   await client.start();
+  registerRepositoryWorkflows(context, client, false);
   registerDiagramWorkflows(context, client);
 }
 

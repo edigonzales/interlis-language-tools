@@ -10,6 +10,8 @@ files are never trusted merely because the workspace compiles.
 - `@ilic/compiler-wasm` executes the documented session and repository examples
   against the real WASM ABI.
 - `@ilic/tools` resolves a repository dependency closure.
+- Repository tests also cover partial catalog failure and a warm cache with no
+  network access.
 
 ## Language tools
 
@@ -20,6 +22,7 @@ pnpm pack:verify
 pnpm package:vsix
 pnpm licenses:check
 pnpm security:check
+pnpm test:repository-network
 ```
 
 The core thresholds are 90% statements, lines and functions and 85% branches.
@@ -29,6 +32,15 @@ in a clean consumer, runs the WASM compiler, and rejects moving internal
 dependency specifications. `package:vsix` unpacks the extension and asserts its
 identity, license, icon, WASM binary and Node/browser client and server entry
 points.
+
+Language-service tests exercise workspace precedence, transitive repository
+sources, exact import navigation, generation cancellation, repository-aware
+completion and read-only rename. LSP adapter tests cover browser aliases and
+virtual repository URIs. The F5 example workspace provides the Desktop/Web
+Ctrl-click smoke path for `IMPORTS Units`.
+`test:repository-network` is the separate opt-in network smoke test for the two
+temporary CORS mirror catalogs; deterministic unit and release checks do not
+depend on public network availability.
 
 ## Web IDE
 

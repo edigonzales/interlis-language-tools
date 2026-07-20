@@ -50,6 +50,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@ilic/tools": "0.9.9-SNAPSHOT",
     "@ilic/docx": "workspace:*",
     "@ilic/language-service": "workspace:*",
     "vscode-languageserver": "^9.0.1"

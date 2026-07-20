@@ -12,3 +12,4 @@ onlyBuiltDependencies:
 
 overrides:
   "@ilic/compiler-wasm": file:../ilic-fork/packages/compiler-wasm
+  "@ilic/tools": file:../ilic-fork/packages/tools

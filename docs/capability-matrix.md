@@ -11,6 +11,8 @@ current evidence; detailed commands are in [testing.md](testing.md).
 | -------------------------------------------------------- | ------------: | ------------: | ----------: | --------------: | ----------: | ----: | ---------: | --------------------------------------------------------------------: |
 | Live and save diagnostics                                |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                  ✅ unit/contract/E2E |
 | Import and repository-model completion                   |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                      ✅ unit/contract |
+| Transitive repository resolution and warm offline cache  |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                               ✅ native/unit/contract |
+| Ctrl-click into read-only repository models              |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                  ✅ unit/manual smoke |
 | Definition and references                                |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                       ✅ unit/adapter |
 | Prepare rename and rename                                |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                       ✅ unit/adapter |
 | Document symbols and outline                             |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                       ✅ unit/adapter |
@@ -54,4 +56,6 @@ The Java extension is not removed or disabled. The public packages remain on
 the `0.1.0-SNAPSHOT.*` line and the extension remains a `0.1.0` pre-release
 until Marketplace/Open VSX credentials and final installation smoke tests in
 external VS Code Web and Theia hosts have completed. npm snapshots use only the
-`snapshot` dist-tag; `latest` remains untouched.
+`snapshot` dist-tag in CI. During the pre-release bootstrap phase, `latest` is
+manually synchronized to the same snapshot with local npm web authentication as
+documented in the release process.

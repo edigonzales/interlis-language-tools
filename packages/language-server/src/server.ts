@@ -1,5 +1,9 @@
 import type { LanguageService } from "@ilic/language-service";
-import type { Connection, InitializeResult } from "vscode-languageserver";
+import type {
+  Connection,
+  InitializeParams,
+  InitializeResult,
+} from "vscode-languageserver";
 import { TextDocumentSyncKind } from "vscode-languageserver";
 import {
   toCompletion,
@@ -14,11 +18,20 @@ import { InterlisProtocol } from "./protocol.js";
 import type {
   CompileParams,
   ExportDocxParams,
+  InterlisInitializationOptions,
   OnTypeEditParams,
+  RepositoryConfigurationParams,
+  RepositorySourceResult,
+  WorkspaceSourceChangedParams,
+  WorkspaceSourcesParams,
 } from "./protocol.js";
 
 export interface LanguageServerHooks {
   readonly exportDocx?: (params: ExportDocxParams) => Promise<Uint8Array>;
+  readonly configureRepositories?: (
+    repositories: readonly string[],
+    options: InterlisInitializationOptions,
+  ) => Promise<void>;
 }
 
 export function bindLanguageServer(
@@ -26,34 +39,52 @@ export function bindLanguageServer(
   service: LanguageService,
   hooks: LanguageServerHooks = {},
 ): void {
+  let initializationOptions: InterlisInitializationOptions = {};
   const publishDiagnostics = (uri: string): void => {
     void connection.sendDiagnostics({
       uri,
       diagnostics: service.diagnostics(uri).map(toDiagnostic),
     });
   };
+  const analysisSubscription = service.onAnalysis(({ affectedUris }) => {
+    for (const uri of affectedUris) publishDiagnostics(uri);
+  });
 
-  connection.onInitialize((): InitializeResult => ({
-    capabilities: {
-      textDocumentSync: {
-        openClose: true,
-        change: TextDocumentSyncKind.Full,
-        save: { includeText: true },
-      },
-      completionProvider: { triggerCharacters: [" ", ".", "=", "(", "*", "@"] },
-      definitionProvider: true,
-      referencesProvider: true,
-      renameProvider: { prepareProvider: true },
-      documentSymbolProvider: true,
-      hoverProvider: true,
-      documentFormattingProvider: true,
-      documentOnTypeFormattingProvider: {
-        firstTriggerCharacter: "\n",
-        moreTriggerCharacter: ["="],
-      },
+  connection.onInitialize(
+    async (params: InitializeParams): Promise<InitializeResult> => {
+      const options = (params.initializationOptions ??
+        {}) as InterlisInitializationOptions;
+      initializationOptions = options;
+      service.replaceWorkspaceSources(options.workspaceSources ?? []);
+      await hooks.configureRepositories?.(
+        options.modelRepositories ?? ["https://models.interlis.ch"],
+        options,
+      );
+      return {
+        capabilities: {
+          textDocumentSync: {
+            openClose: true,
+            change: TextDocumentSyncKind.Full,
+            save: { includeText: true },
+          },
+          completionProvider: {
+            triggerCharacters: [" ", ".", "=", "(", "*", "@"],
+          },
+          definitionProvider: true,
+          referencesProvider: true,
+          renameProvider: { prepareProvider: true },
+          documentSymbolProvider: true,
+          hoverProvider: true,
+          documentFormattingProvider: true,
+          documentOnTypeFormattingProvider: {
+            firstTriggerCharacter: "\n",
+            moreTriggerCharacter: ["="],
+          },
+        },
+        serverInfo: { name: "@ilic/language-server", version: "0.1.0" },
+      };
     },
-    serverInfo: { name: "@ilic/language-server", version: "0.1.0" },
-  }));
+  );
 
   connection.onDidOpenTextDocument((params) => {
     const document = params.textDocument;
@@ -61,6 +92,7 @@ export function bindLanguageServer(
     publishDiagnostics(document.uri);
   });
   connection.onDidChangeTextDocument((params) => {
+    if (service.isReadOnlyUri(params.textDocument.uri)) return;
     const text = params.contentChanges.at(-1)?.text;
     if (text === undefined) return;
     service.changeDocument(
@@ -82,10 +114,10 @@ export function bindLanguageServer(
     });
   });
 
-  connection.onCompletion((params) =>
-    service
-      .completion(params.textDocument.uri, params.position)
-      .map(toCompletion),
+  connection.onCompletion(async (params) =>
+    (await service.completion(params.textDocument.uri, params.position)).map(
+      toCompletion,
+    ),
   );
   connection.onDefinition((params) =>
     service
@@ -163,6 +195,50 @@ export function bindLanguageServer(
   connection.onRequest(InterlisProtocol.compile, (params: CompileParams) =>
     service.compile(params.roots ? [...params.roots] : undefined),
   );
+  connection.onNotification(
+    InterlisProtocol.workspaceSources,
+    (params: WorkspaceSourcesParams) =>
+      service.replaceWorkspaceSources(params.sources),
+  );
+  connection.onNotification(
+    InterlisProtocol.workspaceSourceChanged,
+    (params: WorkspaceSourceChangedParams) => {
+      if (params.deleted) service.removeWorkspaceSource(params.uri);
+      else if (params.text !== undefined)
+        service.putWorkspaceSource(params.uri, params.text, params.version);
+    },
+  );
+  connection.onNotification(
+    InterlisProtocol.repositoryConfiguration,
+    (params: RepositoryConfigurationParams) => {
+      const pending = hooks.configureRepositories?.(
+        params.modelRepositories,
+        initializationOptions,
+      );
+      void pending?.catch((error: unknown) =>
+        connection.console.error(
+          `Repository configuration failed: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+      );
+    },
+  );
+  connection.onRequest(
+    InterlisProtocol.repositorySource,
+    (params: { uri: string }): RepositorySourceResult | null => {
+      const document = service.getRepositoryDocument(params.uri);
+      if (!document) return null;
+      const text =
+        typeof document.source === "string"
+          ? document.source
+          : new TextDecoder().decode(document.source);
+      return {
+        uri: document.uri,
+        originUri: document.originUri,
+        text,
+        readOnly: true,
+      };
+    },
+  );
   connection.onRequest(
     InterlisProtocol.exportDocx,
     async (params: ExportDocxParams) => {
@@ -172,6 +248,7 @@ export function bindLanguageServer(
     },
   );
   connection.onShutdown(() => {
+    analysisSubscription.dispose();
     service.dispose();
   });
 }

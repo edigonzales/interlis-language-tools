@@ -7,7 +7,45 @@ export const InterlisProtocol = {
   compile: "interlis/compile",
   semanticSnapshotChanged: "interlis/semanticSnapshotChanged",
   log: "interlis/log",
+  workspaceSources: "interlis/workspaceSources",
+  workspaceSourceChanged: "interlis/workspaceSourceChanged",
+  repositoryConfiguration: "interlis/repositoryConfiguration",
+  repositorySource: "interlis/repositorySource",
 } as const;
+
+export interface WorkspaceSourcePayload {
+  readonly uri: string;
+  readonly text: string;
+  readonly version?: number;
+}
+
+export interface InterlisInitializationOptions {
+  readonly modelRepositories?: readonly string[];
+  readonly workspaceSources?: readonly WorkspaceSourcePayload[];
+  readonly repositoryCachePath?: string;
+}
+
+export interface WorkspaceSourcesParams {
+  readonly sources: readonly WorkspaceSourcePayload[];
+}
+
+export interface WorkspaceSourceChangedParams {
+  readonly uri: string;
+  readonly text?: string;
+  readonly version?: number;
+  readonly deleted?: boolean;
+}
+
+export interface RepositoryConfigurationParams {
+  readonly modelRepositories: readonly string[];
+}
+
+export interface RepositorySourceResult {
+  readonly uri: string;
+  readonly originUri: string;
+  readonly text: string;
+  readonly readOnly: true;
+}
 
 export interface OnTypeEditParams {
   readonly uri: string;

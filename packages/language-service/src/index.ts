@@ -1,6 +1,13 @@
 export { AnalysisCache } from "./cache.js";
 export { createWasmCompilerBackend } from "./compiler.js";
-export type { RepositoryResolver, ResolvedModel } from "./repository.js";
+export type {
+  ModelCatalogEntry,
+  ModelRepository,
+  RepositoryResolver,
+  RepositorySchemaLanguage,
+  ResolvedModel,
+  ResolvedRepositoryModel,
+} from "./repository.js";
 export { WorkspaceRepositoryResolver } from "./repository.js";
 export { LanguageService } from "./service.js";
 export type {
@@ -41,6 +48,7 @@ export type {
   OpenDocument,
   ResultFreshness,
   VersionedResult,
+  WorkspaceSource,
 } from "./types.js";
 export type {
   Disposable,
