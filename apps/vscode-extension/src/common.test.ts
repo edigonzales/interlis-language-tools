@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { LanguageClientFacade } from "./common.js";
 
-const mockVscode = vi.mock as unknown as (...args: unknown[]) => unknown;
+const mockVscode = (...args: unknown[]): unknown => vi.doMock(...args);
 mockVscode(
   "vscode",
   () => ({ window: { activeTextEditor: undefined } }),
