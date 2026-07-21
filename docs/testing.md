@@ -26,6 +26,12 @@ pnpm test:repository-network
 ```
 
 The core thresholds are 90% statements, lines and functions and 85% branches.
+CI and the coordinated npm release train still generate this report and upload
+it as an artifact, but the threshold check is currently non-blocking. The
+thresholds and the missing test coverage are tracked in the
+[`Coverage gate and test expansion`](../BACKLOG.md#coverage-gate-and-test-expansion)
+section of the backlog; publication must become gated again once those targets
+are met consistently.
 `check` includes deterministic version/rewrite tests using a fixed UTC
 timestamp. `pack:verify` stages and installs all seven public package tarballs
 in a clean consumer, runs the WASM compiler, and rejects moving internal

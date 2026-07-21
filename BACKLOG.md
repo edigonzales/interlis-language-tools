@@ -20,3 +20,17 @@ Before live checking is reintroduced, implement and measure:
 Acceptance requires representative large models, cancellation under sustained
 typing, stable source ranges, and proof that live work cannot delay an explicit
 save or manual compilation.
+
+## Coverage gate and test expansion
+
+The language-service coverage report is generated in CI and in the coordinated
+release train, but the current shortfall does not block package publication.
+Restore the gate after the following work is complete:
+
+- [ ] Raise `@ilic/language-service` to at least 90% statements, lines and
+      functions, and 85% branches.
+- [ ] Add focused tests for the currently uncovered `cache.ts` and `service.ts`
+      paths and for the remaining uncovered branches in interactions, features and
+      workspace handling.
+- [ ] Re-enable the thresholds as a blocking CI/release step once the targets
+      are met consistently on a clean runner.

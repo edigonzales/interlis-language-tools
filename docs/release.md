@@ -50,6 +50,13 @@ release workflow:
 - `release.yml` publishes the already verified VSIX to the VS Code Marketplace
   and Open VSX.
 
+The language-service coverage report runs in both CI and the release train and
+is retained as a workflow artifact for inspection. Its configured thresholds
+(90% statements/lines/functions and 85% branches) are currently report-only, so
+a coverage shortfall does not prevent the coordinated npm publication. The
+blocking gate is tracked in the [coverage backlog](../BACKLOG.md#coverage-gate-and-test-expansion)
+and will be restored after the targets are met consistently.
+
 The compiler repository dispatches its successful `main` CI revision to the
 language-tools workflow. A language-tools push starts the same workflow
 directly. The workflow captures both full commit SHAs before building, so it

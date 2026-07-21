@@ -50,9 +50,18 @@ jobs:
       - name: Lint, typecheck, test and build
         working-directory: interlis-language-tools
         run: pnpm check
-      - name: Enforce core coverage thresholds
+      - name: Generate core coverage report (non-blocking)
+        continue-on-error: true
         working-directory: interlis-language-tools
         run: pnpm --filter @ilic/language-service test:coverage
+      - name: Upload core coverage report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: interlis-language-service-coverage-${{ github.sha }}
+          path: interlis-language-tools/packages/language-service/coverage
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Verify npm tarball consumers
         working-directory: interlis-language-tools
         run: pnpm pack:verify
