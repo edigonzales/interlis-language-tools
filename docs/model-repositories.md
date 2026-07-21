@@ -29,9 +29,10 @@ legacy Java-extension setting; it is ignored and produces one migration
 warning. HTTP(S) entries are handed to `@ilic/tools`. One unavailable catalog
 does not discard models obtained from another configured repository.
 
-When analysis reports missing models, the language service groups them by the
-INTERLIS version of the importing document, obtains the complete dependency
-closure and analyzes again. A final failure is reported at the exact model name
+When compilation reports missing models, the language service groups them by
+the INTERLIS version of the importing document, obtains the complete dependency
+closure and performs a final compile-and-analyze run. Only that final run is
+published. A final failure is reported at the exact model name
 in `IMPORTS`. Cached metadata and model files remain usable when their origin is
 temporarily unavailable.
 

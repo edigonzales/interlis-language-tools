@@ -7,6 +7,7 @@ import {
   toTextEdit,
   toWorkspaceEdit,
 } from "./converters.js";
+import { SymbolKind } from "vscode-languageserver";
 
 const range = {
   start: { line: 1, character: 2 },
@@ -62,10 +63,13 @@ describe("LSP converters", () => {
   it("maps hierarchical symbols and unknown kinds", () => {
     const symbol = toDocumentSymbol({
       name: "M",
-      detail: "M",
-      kind: "Model",
+      detail: "MODEL",
+      kind: "model",
       range,
-      selectionRange: range,
+      selectionRange: {
+        start: range.start,
+        end: range.start,
+      },
       children: [
         {
           name: "Unknown",
@@ -77,6 +81,33 @@ describe("LSP converters", () => {
         },
       ],
     });
+    expect(symbol.kind).toBe(SymbolKind.Module);
     expect(symbol.children?.[0]?.name).toBe("Unknown");
+  });
+
+  it("maps INTERLIS member kinds to Java-compatible LSP kinds", () => {
+    const kinds = [
+      ["topic", SymbolKind.Namespace],
+      ["class", SymbolKind.Class],
+      ["structure", SymbolKind.Struct],
+      ["association", SymbolKind.Interface],
+      ["attribute", SymbolKind.Property],
+      ["role", SymbolKind.Property],
+      ["domain", SymbolKind.TypeParameter],
+      ["unit", SymbolKind.Constant],
+      ["function", SymbolKind.Function],
+    ] as const;
+    for (const [kind, expected] of kinds) {
+      expect(
+        toDocumentSymbol({
+          name: kind,
+          detail: "",
+          kind,
+          range,
+          selectionRange: range,
+          children: [],
+        }).kind,
+      ).toBe(expected);
+    }
   });
 });

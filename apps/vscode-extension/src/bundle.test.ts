@@ -21,6 +21,8 @@ interface LspResponse {
 
 interface LspDocumentSymbol {
   readonly name: string;
+  readonly detail?: string;
+  readonly kind?: number;
   readonly range: LspRange;
   readonly selectionRange: LspRange;
   readonly children?: readonly LspDocumentSymbol[];
@@ -71,6 +73,14 @@ const expectValidSymbolRanges = (
   for (const child of symbol.children ?? [])
     expectValidSymbolRanges(child, symbol.range);
 };
+
+const flattenSymbols = (
+  symbols: readonly LspDocumentSymbol[],
+): LspDocumentSymbol[] =>
+  symbols.flatMap((symbol) => [
+    symbol,
+    ...flattenSymbols(symbol.children ?? []),
+  ]);
 
 describe("VS Code extension bundles", () => {
   it("provides CommonJS globals only to the Node bundles", async () => {
@@ -184,7 +194,7 @@ describe("VS Code extension bundles", () => {
           jsonrpc: "2.0",
           id: 2,
           method: "interlis/compile",
-          params: { roots: [uri] },
+          params: { uri },
         }),
       );
       expect((await waitForResponse(2)).error).toBeUndefined();
@@ -199,6 +209,13 @@ describe("VS Code extension bundles", () => {
       const symbols = (await waitForResponse(3)).result as
         LspDocumentSymbol[] | undefined;
       expect(symbols?.[0]?.name).toBe("LocalCatalog");
+      expect(symbols?.[0]?.detail).toBe("MODEL");
+      expect(symbols?.[0]?.kind).toBe(2);
+      expect(
+        flattenSymbols(symbols ?? []).some(
+          (symbol) => symbol.name === "BASKET",
+        ),
+      ).toBe(false);
       for (const symbol of symbols ?? []) expectValidSymbolRanges(symbol);
       expect(stderr).not.toContain("Dynamic require");
     } finally {

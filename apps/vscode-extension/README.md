@@ -5,10 +5,13 @@ Web and compatible Theia products.
 
 ## Features
 
-- live/save diagnostics, completion, hover, definitions, references and rename;
+- save/manual-compile diagnostics, plus snapshot-based completion, hover,
+  definitions, references and rename for unchanged compiled documents;
 - document symbols, full-document and on-type formatting;
 - parser-aware suggestions, snippets, templates and INTERLIS syntax themes;
-- dependency-aware compile command with structured Compiler/Debug output;
+- single-root, dependency-aware compilation with structured Problems and a
+  fully replaced CLI-style compiler transcript with final error/warning
+  summary; Debug remains append-only;
 - synchronized `elkjs` live UML diagram with last-good state, source navigation,
   layout settings, anchored viewport and semantic SVG export;
 - DOCX documentation export;

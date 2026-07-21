@@ -43,6 +43,44 @@ function compiler(): CompilerBackend {
       diagnostics: [],
       logs: [],
     }),
+    compileAndAnalyze: (request) => ({
+      schemaVersion: 1,
+      abiVersion: 1,
+      compilerVersion: "test",
+      kind: "compilation-analysis",
+      compilation: {
+        schemaVersion: 1,
+        abiVersion: 1,
+        compilerVersion: "test",
+        kind: "compilation",
+        success: true,
+        cancelled: false,
+        errorCount: 0,
+        warningCount: 0,
+        missingModels: [],
+        models: [],
+        diagnostics: [],
+        logs: [],
+      },
+      semantic: {
+        schemaVersion: 1,
+        abiVersion: 1,
+        compilerVersion: "test",
+        kind: "semantic",
+        success: true,
+        cancelled: false,
+        roots: request.roots,
+        documentVersions: {},
+        symbols: [],
+        references: [],
+        dependencies: [],
+        diagram: { nodes: [], edges: [] },
+        documentation: { title: "", sections: [] },
+        diagnostics: [],
+        logs: [],
+      },
+      syntax: [],
+    }),
     compile: () => {
       throw new Error("unused");
     },
@@ -107,9 +145,7 @@ describe("MonacoLanguageAdapter", () => {
       Range: ValueRange,
       Selection: ValueRange,
     } as unknown as MonacoApi;
-    const service = new LanguageService(compiler(), {
-      semanticDebounceMs: 10_000,
-    });
+    const service = new LanguageService(compiler());
     const adapter = new MonacoLanguageAdapter(monaco, service);
     let listener: () => void = () => undefined;
     let version = 1;

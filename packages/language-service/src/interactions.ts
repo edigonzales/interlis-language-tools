@@ -1,6 +1,11 @@
-import type { SyntaxSnapshot } from "@ilic/compiler-wasm";
+import type {
+  CompilationResult,
+  Diagnostic,
+  SyntaxSnapshot,
+} from "@ilic/compiler-wasm";
 import { contextAt } from "./features.js";
 import type { EditorPosition } from "./features.js";
+import type { CompilationOutputEvent } from "./types.js";
 
 export const DEFAULT_TEMPLATE_URL =
   "https://geo.so.ch/models/AGI/SO_AGI_Modellvorlage_20260324.ili";
@@ -239,4 +244,60 @@ export class OutputBuffer {
   clear(): void {
     this.#entries.length = 0;
   }
+}
+
+function diagnosticTranscriptLine(diagnostic: Diagnostic): string {
+  const error = diagnostic.treatedAsError || diagnostic.severity === "error";
+  const prefix = error
+    ? "err:"
+    : diagnostic.severity === "warning"
+      ? "wrn:"
+      : "inf:";
+  const location = diagnostic.range
+    ? `${diagnostic.range.uri}:${diagnostic.range.start.line + 1}:${diagnostic.range.start.character + 1}: `
+    : "";
+  return `${prefix}${error || diagnostic.severity === "warning" ? "    " : " "}${location}${diagnostic.message}`;
+}
+
+function completionTranscriptLine(result: CompilationResult): string {
+  const errors =
+    result.errorCount === 0
+      ? "no errors"
+      : `${result.errorCount} error${result.errorCount === 1 ? "" : "s"}`;
+  const warnings =
+    result.warningCount === 0
+      ? "no warnings"
+      : `${result.warningCount} warning${result.warningCount === 1 ? "" : "s"}`;
+  return `inf: ilic completed with ${errors}, ${warnings}.`;
+}
+
+/** Returns the compiler-owned CLI transcript from the authoritative result. */
+export function formatCompilationOutput(event: CompilationOutputEvent): string {
+  const result = event.compilation;
+  const lines =
+    result.transcript && result.transcript.length > 0
+      ? [...result.transcript]
+      : [`inf: ilic ${result.compilerVersion}`, "inf:"];
+  let completionIndex = lines.findIndex((line) =>
+    line.startsWith("inf: ilic completed with "),
+  );
+  if (completionIndex < 0) {
+    if (result.diagnostics.length > 0)
+      lines.push(...result.diagnostics.map(diagnosticTranscriptLine));
+    lines.push("inf:");
+    completionIndex = lines.length;
+    lines.push(completionTranscriptLine(result));
+  } else {
+    const missingDiagnostics = result.diagnostics.filter(
+      (diagnostic) => !lines.some((line) => line.includes(diagnostic.message)),
+    );
+    lines.splice(
+      completionIndex,
+      0,
+      ...missingDiagnostics.map(diagnosticTranscriptLine),
+    );
+    completionIndex += missingDiagnostics.length;
+    lines[completionIndex] = completionTranscriptLine(result);
+  }
+  return `${lines.join("\n")}\n`;
 }

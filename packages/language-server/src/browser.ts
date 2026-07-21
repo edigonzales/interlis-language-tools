@@ -45,10 +45,11 @@ export async function startBrowserLanguageServer(
       );
     },
     exportDocx: async (params) => {
-      let result = service.getSemanticSnapshot();
-      if (!result?.value) result = await service.analyzeNow(params.uri);
+      const result = service.getSavedSemanticSnapshot(params.uri);
       if (!result?.value)
-        throw new Error("No semantic INTERLIS snapshot is available");
+        throw new Error(
+          "No saved semantic INTERLIS snapshot is available. Save or compile the document first.",
+        );
       return generateDocx(result.value);
     },
   });

@@ -19,10 +19,14 @@ LSP adapter   Monaco adapter
 VS Code/Theia   Browser IDE
 ```
 
-Unsaved buffers are authoritative. Syntax snapshots are refreshed for every
-document version; semantic work is debounced, dependency-aware and protected by
-generation/version gates. Navigation and diagrams may use the last successful
-semantic snapshot, explicitly marked as stale.
+Compilation is save-driven. Opening and typing only update the in-memory buffer;
+they do not parse, analyze, or compile. Save and the manual compile command run
+exactly one root plus its transitive imports and atomically produce compiler
+Output, Problems, and editor snapshots. Output is the compiler-owned CLI-style
+transcript, including the final error/warning summary; Problems contains the
+same diagnostics in structured form. Unsaved changes keep the last result
+visible as outdated. Future live language intelligence is tracked in
+[BACKLOG.md](BACKLOG.md).
 
 ## Published packages
 

@@ -7,6 +7,7 @@ import {
 import { InterlisProtocol } from "@ilic/language-server/protocol";
 import type {
   CompileParams,
+  CompilationCompletedParams,
   ExportDocxParams,
   InterlisInitializationOptions,
   OnTypeEditParams,
@@ -17,6 +18,7 @@ import type {
   WorkspaceSourcesParams,
 } from "@ilic/language-server/protocol";
 import type { CompilationResult, TemplateEdit } from "@ilic/language-service";
+import { replaceCompilationOutput } from "./compilation-output.js";
 
 export interface LanguageClientFacade {
   sendRequest<R>(method: string, params: unknown): Promise<R>;
@@ -25,6 +27,22 @@ export interface LanguageClientFacade {
     method: string,
     handler: (params: unknown) => void,
   ): vscode.Disposable;
+}
+
+/** Compile the active INTERLIS editor once after the language client starts. */
+export async function compileActiveDocumentOnStartup(
+  client: LanguageClientFacade,
+  document:
+    | (Pick<vscode.TextDocument, "languageId"> & {
+        readonly uri: { toString(): string };
+      })
+    | undefined = vscode.window.activeTextEditor?.document,
+): Promise<void> {
+  if (!document || document.languageId !== "interlis") return;
+  await client.sendRequest<CompilationResult>(InterlisProtocol.compile, {
+    uri: document.uri.toString(),
+    trigger: "startup",
+  } satisfies CompileParams);
 }
 
 export interface PendingSelection {
@@ -281,15 +299,36 @@ export function registerClientWorkflows(
   debug: vscode.OutputChannel,
   pending: Map<string, PendingSelection>,
 ): void {
+  const compilationStatus = vscode.window.createStatusBarItem(
+    vscode.StatusBarAlignment.Left,
+    50,
+  );
+  compilationStatus.name = "INTERLIS compilation";
+  compilationStatus.text = "$(circle-outline) INTERLIS: not compiled";
+  compilationStatus.tooltip = "Save or compile the active INTERLIS document.";
+  compilationStatus.show();
   context.subscriptions.push(
     output,
     debug,
+    compilationStatus,
     client.onNotification(InterlisProtocol.log, (event) => {
       debug.appendLine(
         `[${new Date().toISOString()}] ${JSON.stringify(event)}`,
       );
     }),
+    client.onNotification(InterlisProtocol.compilationCompleted, (params) => {
+      const event = params as CompilationCompletedParams;
+      replaceCompilationOutput(output, event);
+      compilationStatus.text = event.compilation.success
+        ? "$(check) INTERLIS: compiled"
+        : `$(error) INTERLIS: ${event.compilation.errorCount} error(s)`;
+      compilationStatus.tooltip = `Last compilation: ${event.timestamp}\n${event.rootUri}`;
+    }),
     vscode.workspace.onDidChangeTextDocument((event) => {
+      if (event.document.languageId === "interlis") {
+        compilationStatus.text = "$(warning) INTERLIS: outdated";
+        compilationStatus.tooltip = "Outdated – save or compile.";
+      }
       const key = event.document.uri.toString();
       const target = pending.get(key);
       if (!target || target.version !== event.document.version) return;
@@ -304,21 +343,9 @@ export function registerClientWorkflows(
       async () => {
         const document = vscode.window.activeTextEditor?.document;
         if (!document || document.languageId !== "interlis") return;
-        if (isBlankInterlisDocument(document.getText())) {
-          void vscode.window.showInformationMessage(
-            "The INTERLIS file is empty. Add a model before compiling.",
-          );
-          return;
-        }
-        const result = await client.sendRequest<CompilationResult>(
-          InterlisProtocol.compile,
-          { roots: [document.uri.toString()] } satisfies CompileParams,
-        );
-        output.appendLine(
-          `[${new Date().toISOString()}] ${result.success ? "Compilation succeeded" : "Compilation failed"}: ${result.errorCount} error(s), ${result.warningCount} warning(s)`,
-        );
-        for (const log of result.logs)
-          output.appendLine(`[${log.level}] ${log.message}`);
+        await client.sendRequest<CompilationResult>(InterlisProtocol.compile, {
+          uri: document.uri.toString(),
+        } satisfies CompileParams);
         output.show(true);
       },
     ),

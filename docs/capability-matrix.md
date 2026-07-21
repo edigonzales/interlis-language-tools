@@ -9,7 +9,7 @@ current evidence; detailed commands are in [testing.md](testing.md).
 
 | Capability                                               | legacy-server | legacy-client | shared-core | VS Code Desktop | VS Code Web | Theia | Monaco IDE |                                                        automated-test |
 | -------------------------------------------------------- | ------------: | ------------: | ----------: | --------------: | ----------: | ----: | ---------: | --------------------------------------------------------------------: |
-| Live and save diagnostics                                |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                  ✅ unit/contract/E2E |
+| Save/manual diagnostics; stale result while typing       |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                  ✅ unit/contract/E2E |
 | Import and repository-model completion                   |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                      ✅ unit/contract |
 | Transitive repository resolution and warm offline cache  |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                               ✅ native/unit/contract |
 | Ctrl-click into read-only repository models              |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                  ✅ unit/manual smoke |

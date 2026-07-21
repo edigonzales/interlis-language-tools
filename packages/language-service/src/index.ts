@@ -28,6 +28,7 @@ export {
   OFFLINE_TEMPLATE,
   OutputBuffer,
   fetchTemplate,
+  formatCompilationOutput,
   isBlankInterlisDocument,
   resolveTemplateUrl,
   snippetKeyAction,
@@ -43,6 +44,9 @@ export type {
 } from "./interactions.js";
 export type {
   AnalysisEvent,
+  CompilationEvent,
+  CompilationOutputEvent,
+  CompilationTrigger,
   CompilerBackend,
   LanguageServiceOptions,
   OpenDocument,
@@ -60,6 +64,8 @@ export type {
 export { MemoryWorkspaceFileSystem } from "./workspace.js";
 export type {
   CompilationResult,
+  CompilationAnalysisResult,
+  CompilationRequest,
   Diagnostic,
   DiagramEdge,
   DiagramNode,

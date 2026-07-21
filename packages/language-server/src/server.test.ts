@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { LanguageService } from "@ilic/language-service";
+import type { CompilationEvent, LanguageService } from "@ilic/language-service";
 import type {
   Connection,
   InitializeParams,
@@ -17,7 +17,12 @@ type RegisteredHandler = (...args: unknown[]) => unknown;
 
 function contractHarness() {
   const registered = new Map<string, RegisteredHandler>();
-  const sendDiagnostics = vi.fn(() => Promise.resolve());
+  const sendDiagnostics = vi.fn(
+    (params: { uri: string; diagnostics: unknown[] }) => {
+      void params;
+      return Promise.resolve();
+    },
+  );
   const consoleError = vi.fn();
   const connectionTarget = {
     sendDiagnostics,
@@ -49,10 +54,8 @@ function contractHarness() {
     },
   }) as unknown as Connection;
 
-  let analysisListener:
-    | ((event: { affectedUris: readonly string[]; result: unknown }) => void)
-    | undefined;
-  const analysisDispose = vi.fn();
+  let compilationListener: ((event: CompilationEvent) => void) | undefined;
+  const compilationDispose = vi.fn();
   const spies = {
     replaceWorkspaceSources: vi.fn(),
     putWorkspaceSource: vi.fn(),
@@ -63,14 +66,15 @@ function contractHarness() {
     closeDocument: vi.fn(),
     dispose: vi.fn(),
     isReadOnlyUri: vi.fn(() => false),
-    diagnostics: vi.fn(() => []),
     getRepositoryDocument: vi.fn(),
+    compileDocument: vi.fn(() => Promise.resolve({ compilation: {} })),
+    getSavedSemanticSnapshot: vi.fn(() => null),
   };
   const service = {
     ...spies,
-    onAnalysis: vi.fn((listener: typeof analysisListener) => {
-      analysisListener = listener;
-      return { dispose: analysisDispose };
+    onCompilation: vi.fn((listener: typeof compilationListener) => {
+      compilationListener = listener;
+      return { dispose: compilationDispose };
     }),
     completion: vi.fn(() => Promise.resolve([])),
     definition: vi.fn(() => []),
@@ -81,9 +85,6 @@ function contractHarness() {
     hover: vi.fn(() => null),
     formatting: vi.fn(() => []),
     onTypeEdit: vi.fn(() => null),
-    compile: vi.fn(() => Promise.resolve({})),
-    getSemanticSnapshot: vi.fn(() => null),
-    analyzeNow: vi.fn(() => Promise.resolve({ value: null })),
   } as unknown as LanguageService;
 
   const handler = <T>(key: string): T => {
@@ -96,11 +97,11 @@ function contractHarness() {
     connection,
     consoleError,
     sendDiagnostics,
+    sendNotification: connectionTarget.sendNotification,
     service,
     spies,
-    analysisDispose,
-    fireAnalysis: (affectedUris: readonly string[]) =>
-      analysisListener?.({ affectedUris, result: null }),
+    compilationDispose,
+    fireCompilation: (event: CompilationEvent) => compilationListener?.(event),
     handler,
   };
 }
@@ -216,13 +217,105 @@ describe("language server repository contract", () => {
     expect(harness.spies.changeDocument).not.toHaveBeenCalled();
   });
 
-  it("publishes post-resolution diagnostics and disposes on shutdown", () => {
+  it("clears previous diagnostics, publishes the exact new set, and notifies", () => {
     const harness = contractHarness();
     bindLanguageServer(harness.connection, harness.service);
-    harness.fireAnalysis(["file:///A.ili", "file:///B.ili"]);
-    expect(harness.sendDiagnostics).toHaveBeenCalledTimes(2);
+    const makeEvent = (uri: string, code: string): CompilationEvent => ({
+      runId: code === "first" ? 1 : 2,
+      timestamp: "2026-07-20T12:00:00.000Z",
+      trigger: "save",
+      rootUri: uri,
+      documentVersion: 1,
+      compilation: {
+        schemaVersion: 1,
+        abiVersion: 1,
+        compilerVersion: "test",
+        kind: "compilation",
+        success: false,
+        cancelled: false,
+        errorCount: 1,
+        warningCount: 0,
+        missingModels: [],
+        models: [],
+        diagnostics: [
+          {
+            severity: "warning",
+            code,
+            message: code,
+            range: {
+              uri,
+              start: { line: 0, character: 0, byteOffset: 0 },
+              end: { line: 0, character: 1, byteOffset: 1 },
+            },
+            relatedInformation: [],
+            notes: ["note"],
+            treatedAsError: true,
+          },
+        ],
+        logs: [],
+      },
+      semantic: {
+        value: null,
+        freshness: "fresh",
+        generation: 1,
+        documentVersions: { [uri]: 1 },
+      },
+    });
+    harness.fireCompilation(makeEvent("file:///A.ili", "first"));
+    harness.fireCompilation(makeEvent("file:///B.ili", "second"));
+    expect(harness.sendDiagnostics).toHaveBeenCalledTimes(3);
+    expect(harness.sendDiagnostics.mock.calls[1]?.[0]).toEqual({
+      uri: "file:///A.ili",
+      diagnostics: [],
+    });
+    expect(harness.sendDiagnostics.mock.calls[2]?.[0]).toEqual(
+      expect.objectContaining({ uri: "file:///B.ili" }),
+    );
+    expect(
+      (
+        harness.sendDiagnostics.mock.calls[2]?.[0] as {
+          diagnostics: Array<{ severity: number; data: unknown }>;
+        }
+      ).diagnostics[0],
+    ).toEqual(
+      expect.objectContaining({
+        severity: 1,
+        data: {
+          treatedAsError: true,
+          notes: ["note"],
+          relatedInformation: [],
+        },
+      }),
+    );
+    expect(harness.sendNotification).toHaveBeenLastCalledWith(
+      InterlisProtocol.compilationCompleted,
+      expect.objectContaining({ rootUri: "file:///B.ili" }),
+    );
     harness.handler<() => void>("onShutdown")();
-    expect(harness.analysisDispose).toHaveBeenCalledOnce();
+    expect(harness.compilationDispose).toHaveBeenCalledOnce();
     expect(harness.spies.dispose).toHaveBeenCalledOnce();
+  });
+
+  it("compiles on save and manual request with one root URI", async () => {
+    const harness = contractHarness();
+    bindLanguageServer(harness.connection, harness.service);
+    const uri = "file:///Root.ili";
+    harness.handler<(params: unknown) => void>("onDidSaveTextDocument")({
+      textDocument: { uri },
+    });
+    expect(harness.spies.markSaved).toHaveBeenCalledWith(uri);
+    expect(harness.spies.compileDocument).toHaveBeenCalledWith(uri, "save");
+    await harness.handler<(params: { uri: string }) => Promise<unknown>>(
+      `onRequest:${InterlisProtocol.compile}`,
+    )({ uri });
+    expect(harness.spies.compileDocument).toHaveBeenCalledWith(uri, "manual");
+
+    await harness.handler<
+      (params: { uri: string; trigger: "startup" }) => Promise<unknown>
+    >(`onRequest:${InterlisProtocol.compile}`)({
+      uri,
+      trigger: "startup",
+    });
+    expect(harness.spies.compileDocument).toHaveBeenCalledWith(uri, "startup");
   });
 });

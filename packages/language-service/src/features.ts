@@ -262,36 +262,125 @@ function enclosingRange(
   return { start, end };
 }
 
+const outlineDetails: Readonly<Record<string, string>> = {
+  model: "MODEL",
+  topic: "TOPIC",
+  class: "CLASS",
+  structure: "STRUCTURE",
+  association: "ASSOCIATION",
+  view: "VIEW",
+  domain: "DOMAIN",
+  unit: "UNIT",
+  function: "FUNCTION",
+  constraint: "CONSTRAINT",
+  graphic: "GRAPHIC",
+};
+
+const inheritedMemberKinds = new Set(["attribute", "role"]);
+const viewableKinds = new Set(["class", "structure", "association", "view"]);
+
+function normalizedKind(kind: string): string {
+  return kind.toLowerCase();
+}
+
+function isOutlineVisible(kind: string, name: string): boolean {
+  return !(normalizedKind(kind) === "dataunit" && name === "BASKET");
+}
+
+function cursorRange(range: EditorRange): EditorRange {
+  return { start: range.start, end: range.start };
+}
+
+function outlineDetail(kind: string): string {
+  return outlineDetails[normalizedKind(kind)] ?? "";
+}
+
 export function documentSymbols(
   semantic: SemanticSnapshot,
   uri: string,
 ): DocumentSymbol[] {
-  const symbols = semantic.symbols.filter(
-    (symbol) => symbol.range?.uri === uri && symbol.range,
+  type Symbol = SemanticSnapshot["symbols"][number];
+  const allById = new Map<string, Symbol>(
+    semantic.symbols.map((symbol) => [symbol.id, symbol]),
   );
-  const build = (containerId: string): DocumentSymbol[] =>
-    symbols
-      .filter((symbol) => symbol.containerId === containerId && symbol.range)
-      .map((symbol) => {
-        const source = symbol.range!;
-        const sourceRange = toEditorRange(source);
-        const selectionRange =
-          symbol.selectionRange?.uri === source.uri
-            ? toEditorRange(symbol.selectionRange)
-            : sourceRange;
-        const children = build(symbol.id);
-        return {
-          name: symbol.name,
-          detail: symbol.qualifiedName,
-          kind: symbol.kind,
-          range: enclosingRange(sourceRange, [
-            selectionRange,
-            ...children.map((child) => child.range),
-          ]),
-          selectionRange,
-          children,
-        };
-      });
+  const symbols = semantic.symbols.filter(
+    (symbol) =>
+      symbol.range?.uri === uri &&
+      symbol.range &&
+      isOutlineVisible(symbol.kind, symbol.name),
+  );
+  const symbolsByContainer = new Map<string, Symbol[]>();
+  for (const symbol of symbols) {
+    const children = symbolsByContainer.get(symbol.containerId) ?? [];
+    children.push(symbol);
+    symbolsByContainer.set(symbol.containerId, children);
+  }
+
+  const inheritanceTarget = (symbolId: string): Symbol | undefined => {
+    const reference = semantic.references.find(
+      (candidate) =>
+        candidate.sourceId === symbolId &&
+        normalizedKind(candidate.kind) === "inheritance",
+    );
+    return reference ? allById.get(reference.targetId) : undefined;
+  };
+
+  const directMembers = (containerId: string): Symbol[] =>
+    (symbolsByContainer.get(containerId) ?? []).filter((symbol) =>
+      inheritedMemberKinds.has(normalizedKind(symbol.kind)),
+    );
+
+  const buildSymbol = (symbol: Symbol, inherited = false): DocumentSymbol => {
+    const source = symbol.range!;
+    const sourceRange = toEditorRange(source);
+    const declaredSelection =
+      symbol.selectionRange?.uri === source.uri
+        ? toEditorRange(symbol.selectionRange)
+        : sourceRange;
+    const selectionRange = cursorRange(declaredSelection);
+    const localChildren = build(symbol.id);
+    const children = inherited
+      ? []
+      : [...localChildren, ...inheritedChildren(symbol, localChildren)];
+    return {
+      name: symbol.name || symbol.qualifiedName,
+      detail: outlineDetail(symbol.kind),
+      kind: normalizedKind(symbol.kind),
+      range: enclosingRange(sourceRange, [
+        declaredSelection,
+        ...localChildren.map((child) => child.range),
+      ]),
+      selectionRange,
+      children,
+    };
+  };
+
+  const inheritedChildren = (
+    symbol: Symbol,
+    localChildren: readonly DocumentSymbol[],
+  ): DocumentSymbol[] => {
+    if (!viewableKinds.has(normalizedKind(symbol.kind))) return [];
+    const names = new Set(localChildren.map((child) => child.name));
+    const result: DocumentSymbol[] = [];
+    let parent = inheritanceTarget(symbol.id);
+    while (parent != null) {
+      if (parent.range?.uri !== uri) break;
+      for (const member of directMembers(parent.id)) {
+        if (names.has(member.name)) continue;
+        names.add(member.name);
+        result.push(buildSymbol(member, true));
+      }
+      parent = inheritanceTarget(parent.id);
+    }
+    return result;
+  };
+
+  function build(containerId: string): DocumentSymbol[] {
+    return (symbolsByContainer.get(containerId) ?? []).map((symbol) =>
+      buildSymbol(symbol),
+    );
+  }
+
   return build("");
 }
 

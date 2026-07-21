@@ -89,7 +89,10 @@ const position = (value: {
 
 export class MonacoLanguageAdapter implements Disposable {
   readonly #registrations: Disposable[] = [];
-  readonly #models = new Map<string, Disposable>();
+  readonly #models = new Map<
+    string,
+    { readonly model: MonacoModel; readonly disposable: Disposable }
+  >();
 
   constructor(
     private readonly monaco: MonacoApi,
@@ -102,6 +105,12 @@ export class MonacoLanguageAdapter implements Disposable {
       aliases: ["INTERLIS", "interlis"],
     });
     this.#registerProviders();
+    this.#registrations.push(
+      service.onCompilation(() => {
+        for (const { model } of this.#models.values())
+          this.#publishMarkers(model);
+      }),
+    );
   }
 
   attachModel(
@@ -118,9 +127,9 @@ export class MonacoLanguageAdapter implements Disposable {
       if (this.service.getDocument(uri))
         this.service.changeDocument(uri, model.getValue(), version);
       else this.service.openDocument(uri, model.getValue(), version);
-      this.#publishMarkers(model);
     };
     update();
+    this.#publishMarkers(model);
     const listener = model.onDidChangeContent(update);
     const disposable = {
       dispose: () => {
@@ -130,8 +139,8 @@ export class MonacoLanguageAdapter implements Disposable {
           this.service.closeDocument(uri);
       },
     };
-    this.#models.get(uri)?.dispose();
-    this.#models.set(uri, disposable);
+    this.#models.get(uri)?.disposable.dispose();
+    this.#models.set(uri, { model, disposable });
     return disposable;
   }
 
@@ -165,7 +174,8 @@ export class MonacoLanguageAdapter implements Disposable {
 
   dispose(): void {
     for (const registration of this.#registrations) registration.dispose();
-    for (const model of [...this.#models.values()]) model.dispose();
+    for (const { disposable } of [...this.#models.values()])
+      disposable.dispose();
     this.#registrations.length = 0;
   }
 
@@ -345,9 +355,11 @@ export class MonacoLanguageAdapter implements Disposable {
           ? [
               {
                 ...this.#markerRange(diagnostic.range),
-                severity: { error: 8, warning: 4, information: 2, hint: 1 }[
-                  diagnostic.severity
-                ],
+                severity: diagnostic.treatedAsError
+                  ? 8
+                  : { error: 8, warning: 4, information: 2, hint: 1 }[
+                      diagnostic.severity
+                    ],
                 code: diagnostic.code,
                 message: diagnostic.message,
                 source: "ilic",

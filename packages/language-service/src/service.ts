@@ -1,14 +1,13 @@
 import type {
+  CompilationAnalysisResult,
   CompilationResult,
   Diagnostic,
   SemanticSnapshot,
   SyntaxSnapshot,
 } from "@ilic/compiler-wasm";
-import { AnalysisCache } from "./cache.js";
 import {
   completionsAt,
   contextAt,
-  diagnosticsFor,
   documentSymbols,
   locationsForDefinition,
   locationsForReferences,
@@ -35,6 +34,8 @@ import type {
 } from "./repository.js";
 import type {
   AnalysisEvent,
+  CompilationEvent,
+  CompilationTrigger,
   CompilerBackend,
   LanguageServiceOptions,
   OpenDocument,
@@ -53,19 +54,24 @@ export class LanguageService {
   readonly #repositorySources = new Map<string, ResolvedRepositoryModel>();
   readonly #readOnlyUris = new Set<string>();
   readonly #syntax = new Map<string, VersionedResult<SyntaxSnapshot>>();
-  readonly #cache = new AnalysisCache();
-  readonly #compileCache = new Map<string, CompilationResult>();
+  readonly #diagnostics = new Map<string, Diagnostic[]>();
   readonly #reverseDependencies = new Map<string, Set<string>>();
-  readonly #debounceMs: number;
   readonly #analysisListeners = new Set<(event: AnalysisEvent) => void>();
+  readonly #compilationListeners = new Set<(event: CompilationEvent) => void>();
   readonly #onError?: (error: unknown) => void;
   #modelRepository?: ModelRepository;
   #catalog: readonly ModelCatalogEntry[] | null = null;
   #catalogPromise: Promise<readonly ModelCatalogEntry[]> | null = null;
   #lastSemantic: VersionedResult<SemanticSnapshot> | null = null;
   #lastGoodSemantic: VersionedResult<SemanticSnapshot> | null = null;
-  #analysisPromise: Promise<VersionedResult<SemanticSnapshot>> | null = null;
-  #timer: ReturnType<typeof setTimeout> | null = null;
+  #lastSavedSemantic: VersionedResult<SemanticSnapshot> | null = null;
+  readonly #savedSemanticByRoot = new Map<
+    string,
+    VersionedResult<SemanticSnapshot>
+  >();
+  #compileQueue: Promise<void> = Promise.resolve();
+  #nextRunId = 0;
+  #latestRequestedRunId = 0;
   #generation = 0;
   #sourceRevision = 1;
   #disposed = false;
@@ -74,8 +80,9 @@ export class LanguageService {
     readonly compiler: CompilerBackend,
     options: LanguageServiceOptions = {},
   ) {
-    this.#debounceMs = options.semanticDebounceMs ?? 150;
     if (options.onAnalysis) this.#analysisListeners.add(options.onAnalysis);
+    if (options.onCompilation)
+      this.#compilationListeners.add(options.onCompilation);
     this.#onError = options.onError;
     this.#modelRepository = options.modelRepository;
   }
@@ -93,6 +100,13 @@ export class LanguageService {
   onAnalysis(listener: (event: AnalysisEvent) => void): { dispose(): void } {
     this.#analysisListeners.add(listener);
     return { dispose: () => this.#analysisListeners.delete(listener) };
+  }
+
+  onCompilation(listener: (event: CompilationEvent) => void): {
+    dispose(): void;
+  } {
+    this.#compilationListeners.add(listener);
+    return { dispose: () => this.#compilationListeners.delete(listener) };
   }
 
   openDocument(
@@ -129,7 +143,7 @@ export class LanguageService {
     this.#documents.delete(uri);
     this.#refreshEffectiveSource(uri);
     if (!this.#repositorySources.has(uri)) this.#readOnlyUris.delete(uri);
-    this.#invalidate(uri);
+    this.#invalidate();
   }
 
   replaceWorkspaceSources(sources: readonly WorkspaceSource[]): void {
@@ -159,14 +173,14 @@ export class LanguageService {
       version: version ?? ++this.#sourceRevision,
     });
     this.#refreshEffectiveSource(uri);
-    this.#invalidate(uri);
+    this.#invalidate();
   }
 
   removeWorkspaceSource(uri: string): void {
     this.#assertActive();
     if (!this.#workspaceSources.delete(uri)) return;
     this.#refreshEffectiveSource(uri);
-    this.#invalidate(uri);
+    this.#invalidate();
   }
 
   async setModelRepository(repository?: ModelRepository): Promise<void> {
@@ -219,24 +233,26 @@ export class LanguageService {
     return this.#documents.get(uri);
   }
   getSyntaxSnapshot(uri: string): VersionedResult<SyntaxSnapshot> | null {
-    return this.#syntax.get(uri) ?? null;
+    const result = this.#syntax.get(uri) ?? null;
+    const document = this.#documents.get(uri);
+    if (
+      result?.freshness !== "fresh" ||
+      document?.dirty ||
+      (document && result?.value?.documentVersion !== document.version)
+    )
+      return null;
+    return result;
   }
 
   diagnostics(uri: string): Diagnostic[] {
-    const syntax = this.#syntax.get(uri)?.value;
-    if (!syntax) return [];
-    const semantic =
-      this.#lastSemantic?.freshness === "fresh"
-        ? this.#lastSemantic.value
-        : null;
-    return diagnosticsFor(uri, syntax, semantic);
+    return [...(this.#diagnostics.get(uri) ?? [])];
   }
 
   async completion(
     uri: string,
     position: EditorPosition,
   ): Promise<CompletionItem[]> {
-    const syntax = this.#syntax.get(uri)?.value;
+    const syntax = this.getSyntaxSnapshot(uri)?.value;
     if (!syntax) return [];
     const base = completionsAt(
       syntax,
@@ -286,6 +302,7 @@ export class LanguageService {
   }
 
   definition(uri: string, position: EditorPosition): Location[] {
+    if (!this.#hasFreshSemanticFor(uri)) return [];
     const semantic = this.getSemanticSnapshot()?.value;
     return semantic ? locationsForDefinition(semantic, uri, position) : [];
   }
@@ -295,6 +312,7 @@ export class LanguageService {
     position: EditorPosition,
     includeDeclaration = true,
   ): Location[] {
+    if (!this.#hasFreshSemanticFor(uri)) return [];
     const semantic = this.getSemanticSnapshot()?.value;
     if (!semantic) return [];
     const symbol = symbolAt(semantic, uri, position);
@@ -307,6 +325,7 @@ export class LanguageService {
     uri: string,
     position: EditorPosition,
   ): { range: TextEdit["range"]; placeholder: string } | null {
+    if (!this.#hasFreshSemanticFor(uri)) return null;
     const semantic = this.getSemanticSnapshot()?.value;
     const symbol = semantic ? symbolAt(semantic, uri, position) : undefined;
     const declaration = symbol?.selectionRange ?? symbol?.range;
@@ -330,6 +349,7 @@ export class LanguageService {
     position: EditorPosition,
     newName: string,
   ): RenameResult | null {
+    if (!this.#hasFreshSemanticFor(uri)) return null;
     const semantic = this.getSemanticSnapshot()?.value;
     const symbol = semantic ? symbolAt(semantic, uri, position) : undefined;
     const declaration = symbol?.selectionRange ?? symbol?.range;
@@ -352,11 +372,13 @@ export class LanguageService {
   }
 
   symbols(uri: string): DocumentSymbol[] {
+    if (!this.#hasFreshSemanticFor(uri)) return [];
     const semantic = this.getSemanticSnapshot()?.value;
     return semantic ? documentSymbols(semantic, uri) : [];
   }
 
   hover(uri: string, position: EditorPosition): HoverResult | null {
+    if (!this.#hasFreshSemanticFor(uri)) return null;
     const semanticResult = this.getSemanticSnapshot();
     const symbol = semanticResult?.value
       ? symbolAt(semanticResult.value, uri, position)
@@ -401,25 +423,32 @@ export class LanguageService {
     character: string,
   ): TemplateEdit | null {
     if (character !== "\n" || this.isReadOnlyUri(uri)) return null;
-    const syntax = this.#syntax.get(uri)?.value;
+    const syntax = this.getSyntaxSnapshot(uri)?.value;
     return syntax ? templateForNewline(syntax, position) : null;
   }
 
-  async compile(
-    roots = [...this.#documents.keys()],
-  ): Promise<CompilationResult> {
-    await this.analyzeNow(roots.at(0));
-    const versions = this.#versions();
-    const key = JSON.stringify({
-      roots: [...roots].sort(),
-      versions: Object.entries(versions).sort(),
-      repositorySources: [...this.#repositorySources.keys()].sort(),
-    });
-    const cached = this.#compileCache.get(key);
-    if (cached) return cached;
-    const result = this.compiler.compile({ roots });
-    this.#compileCache.set(key, result);
-    return result;
+  async compile(roots: readonly string[]): Promise<CompilationResult> {
+    if (roots.length !== 1)
+      throw new Error("Exactly one root URI is required for compilation");
+    return (await this.compileDocument(roots[0]!, "manual")).compilation;
+  }
+
+  compileDocument(
+    rootUri: string,
+    trigger: CompilationTrigger,
+  ): Promise<CompilationEvent> {
+    this.#assertActive();
+    if (!rootUri) throw new Error("A root URI is required for compilation");
+    const runId = ++this.#nextRunId;
+    this.#latestRequestedRunId = runId;
+    const operation = this.#compileQueue.then(() =>
+      this.#runCompilation(rootUri, trigger, runId),
+    );
+    this.#compileQueue = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return operation;
   }
 
   getSemanticSnapshot(
@@ -434,164 +463,105 @@ export class LanguageService {
     };
   }
 
+  getSavedSemanticSnapshot(
+    rootUri?: string,
+  ): VersionedResult<SemanticSnapshot> | null {
+    const saved = rootUri
+      ? (this.#savedSemanticByRoot.get(rootUri) ?? null)
+      : this.#lastSavedSemantic;
+    if (!saved) return null;
+    const freshness = Object.entries(saved.documentVersions).every(
+      ([uri, version]) => {
+        const document = this.#documents.get(uri);
+        return !document || document.version === version;
+      },
+    )
+      ? saved.freshness
+      : "stale";
+    return { ...saved, freshness };
+  }
+
+  /** @deprecated Use compileDocument(uri, "manual"). */
   async analyzeNow(
     changedUri?: string,
   ): Promise<VersionedResult<SemanticSnapshot>> {
-    this.#assertActive();
-    if (this.#timer) {
-      clearTimeout(this.#timer);
-      this.#timer = null;
-    }
-    while (this.#analysisPromise)
-      await this.#analysisPromise.catch(() => undefined);
-    const analysis = this.#runAnalysis(changedUri);
-    this.#analysisPromise = analysis;
-    try {
-      return await analysis;
-    } finally {
-      if (this.#analysisPromise === analysis) this.#analysisPromise = null;
-    }
+    const rootUri =
+      changedUri ?? this.#documents.keys().next().value ?? undefined;
+    if (!rootUri) throw new Error("A root URI is required for analysis");
+    return (await this.compileDocument(rootUri, "manual")).semantic;
   }
 
-  async #runAnalysis(
-    changedUri?: string,
-  ): Promise<VersionedResult<SemanticSnapshot>> {
+  async #runCompilation(
+    rootUri: string,
+    trigger: CompilationTrigger,
+    runId: number,
+  ): Promise<CompilationEvent> {
     const generation = this.#generation;
     const versions = this.#versions();
-    const roots = this.#affectedRoots(changedUri);
-    const cached = this.#cache.get(roots, versions);
-    let snapshot: SemanticSnapshot;
-    if (cached) snapshot = cached;
-    else {
-      const failures = new Map<string, string>();
-      const attempted = new Set<string>();
-      let restartNeeded = false;
-      if (this.#modelRepository) {
-        for (const request of this.#directRepositoryRequests(roots)) {
-          attempted.add(request.key);
-          try {
-            const resolved = await this.#modelRepository.resolveModels(
-              [request.model],
-              request.schema,
-            );
-            if (!this.#isCurrent(generation, versions))
-              return this.#cancelled(generation, versions);
-            for (const source of resolved) {
-              if (
-                this.#repositorySources.has(source.uri) ||
-                this.#localModelNames(source.schemaLanguage).has(source.model)
-              )
-                continue;
-              this.#putRepositorySource(source);
-              restartNeeded = true;
-            }
-          } catch (error) {
-            const message =
-              error instanceof Error ? error.message : String(error);
-            failures.set(request.key, message);
-            this.#onError?.(error);
-          }
-        }
-      }
-      if (restartNeeded) {
-        await this.compiler.restart?.();
-        if (!this.#isCurrent(generation, versions))
-          return this.#cancelled(generation, versions);
-      }
-      snapshot = await Promise.resolve().then(() =>
-        this.compiler.analyze({ roots }),
+    let analysis: CompilationAnalysisResult;
+    try {
+      analysis = await Promise.resolve().then(() =>
+        this.compiler.compileAndAnalyze({ roots: [rootUri] }),
       );
-      while (true) {
-        if (!this.#isCurrent(generation, versions))
-          return this.#cancelled(generation, versions);
-        const missing = this.#missingModels(snapshot, roots).filter(
-          (model) => model !== "INTERLIS",
-        );
-        const requests = missing
-          .flatMap((model) =>
-            this.#schemaLanguagesForMissingModel(model).map((schema) => ({
-              model,
-              schema,
-              key: `${schema}:${model}`,
-            })),
-          )
-          .filter((request) => !attempted.has(request.key));
-        if (requests.length === 0 || !this.#modelRepository) break;
-        let added = 0;
-        for (const request of requests) {
-          attempted.add(request.key);
-          try {
-            const resolved = await this.#modelRepository.resolveModels(
-              [request.model],
-              request.schema,
-            );
-            if (!this.#isCurrent(generation, versions))
-              return this.#cancelled(generation, versions);
-            for (const source of resolved) {
-              if (
-                this.#repositorySources.has(source.uri) ||
-                this.#localModelNames(source.schemaLanguage).has(source.model)
-              )
-                continue;
-              this.#putRepositorySource(source);
-              added++;
-            }
-          } catch (error) {
-            const message =
-              error instanceof Error ? error.message : String(error);
-            failures.set(request.key, message);
-            this.#onError?.(error);
-          }
-        }
-        if (added === 0) break;
-        await this.compiler.restart?.();
-        if (!this.#isCurrent(generation, versions))
-          return this.#cancelled(generation, versions);
-        snapshot = await Promise.resolve().then(() =>
-          this.compiler.analyze({ roots }),
-        );
-      }
-      const unresolved = this.#missingModels(snapshot, roots).filter(
-        (model) => model !== "INTERLIS",
-      );
-      if (unresolved.length > 0)
-        snapshot = {
-          ...snapshot,
-          diagnostics: [
-            ...snapshot.diagnostics,
-            ...unresolved.flatMap((model) =>
-              this.#repositoryDiagnostics(
-                model,
-                this.#schemaLanguagesForMissingModel(model)
-                  .map((schema) => failures.get(`${schema}:${model}`))
-                  .find((message) => message !== undefined) ??
-                  "model not found in configured repositories",
-              ),
-            ),
-          ],
-        };
+      analysis = await this.#resolveMissingModels(analysis, rootUri);
+    } catch (error) {
+      this.#onError?.(error);
+      analysis = this.#failedAnalysis(rootUri, error);
     }
-    if (!this.#isCurrent(generation, versions))
-      return this.#cancelled(generation, versions);
-    if (!cached) this.#cache.set(roots, versions, snapshot);
-    const result = {
-      value: snapshot,
-      freshness: "fresh",
+
+    const current = this.#documents.get(rootUri);
+    const fresh =
+      generation === this.#generation &&
+      (!current || current.version === versions[rootUri]);
+    for (const syntax of analysis.syntax) {
+      this.#syntax.set(syntax.uri, {
+        value: syntax,
+        freshness: fresh ? "fresh" : "stale",
+        generation,
+        documentVersions: analysis.semantic.documentVersions,
+      });
+    }
+    const semantic = {
+      value: analysis.semantic,
+      freshness: fresh ? ("fresh" as const) : ("stale" as const),
       generation,
-      documentVersions: versions,
-    } as const;
-    this.#lastSemantic = result;
-    if (snapshot.success && !snapshot.cancelled)
-      this.#lastGoodSemantic = result;
-    this.#rebuildDependencies(snapshot);
-    const event = { result, affectedUris: roots };
-    for (const listener of this.#analysisListeners) listener(event);
-    return result;
+      documentVersions: analysis.semantic.documentVersions,
+    };
+    this.#lastSemantic = semantic;
+    if (analysis.semantic.success && !analysis.semantic.cancelled)
+      this.#lastGoodSemantic = semantic;
+    if (!current?.dirty) {
+      this.#lastSavedSemantic = semantic;
+      this.#savedSemanticByRoot.set(rootUri, semantic);
+    }
+    this.#rebuildDependencies(analysis.semantic);
+
+    const event: CompilationEvent = {
+      runId,
+      timestamp: new Date().toISOString(),
+      trigger,
+      rootUri,
+      documentVersion: versions[rootUri] ?? 0,
+      compilation: analysis.compilation,
+      semantic,
+    };
+    if (runId === this.#latestRequestedRunId) {
+      this.#replaceDiagnostics(rootUri, analysis.compilation.diagnostics);
+      for (const listener of this.#compilationListeners) listener(event);
+      const affectedUris = [
+        ...new Set(
+          analysis.compilation.diagnostics.map(
+            (diagnostic) => diagnostic.range?.uri ?? rootUri,
+          ),
+        ),
+      ];
+      const analysisEvent = { result: semantic, affectedUris };
+      for (const listener of this.#analysisListeners) listener(analysisEvent);
+    }
+    return event;
   }
 
   async cancelAnalysis(): Promise<void> {
-    if (this.#timer) clearTimeout(this.#timer);
-    this.#timer = null;
     this.#generation++;
     await this.compiler.restart?.();
     this.#lastSemantic = {
@@ -604,10 +574,10 @@ export class LanguageService {
 
   dispose(): void {
     if (this.#disposed) return;
-    if (this.#timer) clearTimeout(this.#timer);
     this.#disposed = true;
     this.#generation++;
     this.#analysisListeners.clear();
+    this.#compilationListeners.clear();
     this.#readOnlyUris.clear();
     void this.#modelRepository?.dispose?.();
     this.compiler.dispose();
@@ -625,8 +595,13 @@ export class LanguageService {
       throw new Error(`Document version must increase for ${uri}`);
     this.#documents.set(uri, { uri, text, version, dirty });
     this.compiler.putSource(uri, text, version);
-    this.#invalidate(uri);
-    return this.#parseSource(uri);
+    this.#invalidate();
+    return {
+      value: null,
+      freshness: "stale",
+      generation: this.#generation,
+      documentVersions: this.#versions(),
+    };
   }
 
   #parseSource(uri: string): VersionedResult<SyntaxSnapshot> {
@@ -645,19 +620,16 @@ export class LanguageService {
     const document = this.#documents.get(uri);
     if (document) {
       this.compiler.putSource(uri, document.text, document.version);
-      this.#parseSource(uri);
       return;
     }
     const workspace = this.#workspaceSources.get(uri);
     if (workspace) {
       this.compiler.putSource(uri, workspace.text, workspace.version);
-      this.#parseSource(uri);
       return;
     }
     const repository = this.#repositorySources.get(uri);
     if (repository) {
       this.compiler.putSource(uri, repository.source, ++this.#sourceRevision);
-      this.#parseSource(uri);
       return;
     }
     this.compiler.removeSource(uri);
@@ -668,43 +640,177 @@ export class LanguageService {
     this.#repositorySources.set(source.uri, source);
     this.#readOnlyUris.add(source.uri);
     this.compiler.putSource(source.uri, source.source, ++this.#sourceRevision);
-    this.#cache.clear();
-    this.#compileCache.clear();
   }
 
-  #invalidate(changedUri?: string): void {
+  async #resolveMissingModels(
+    initial: CompilationAnalysisResult,
+    rootUri: string,
+  ): Promise<CompilationAnalysisResult> {
+    let analysis = initial;
+    const attempted = new Set<string>();
+    const failures = new Map<string, string>();
+    while (this.#modelRepository) {
+      const requests = [
+        ...new Set(
+          analysis.compilation.missingModels.filter(
+            (model) => model !== "INTERLIS",
+          ),
+        ),
+      ]
+        .flatMap((model) =>
+          this.#schemaLanguagesForMissingModel(model, analysis.syntax).map(
+            (schema) => ({ model, schema, key: `${schema}:${model}` }),
+          ),
+        )
+        .filter((request) => !attempted.has(request.key));
+      if (requests.length === 0) break;
+      const compiledNames = new Set(
+        analysis.compilation.models.map((model) => model.name),
+      );
+      let added = 0;
+      for (const request of requests) {
+        attempted.add(request.key);
+        try {
+          const resolved = await this.#modelRepository.resolveModels(
+            [request.model],
+            request.schema,
+          );
+          for (const source of resolved) {
+            if (
+              this.#repositorySources.has(source.uri) ||
+              compiledNames.has(source.model)
+            )
+              continue;
+            this.#putRepositorySource(source);
+            added++;
+          }
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          failures.set(request.key, message);
+          this.#onError?.(error);
+        }
+      }
+      if (added === 0) break;
+      await this.compiler.restart?.();
+      analysis = this.compiler.compileAndAnalyze({ roots: [rootUri] });
+    }
+
+    const unresolved = [
+      ...new Set(
+        analysis.compilation.missingModels.filter(
+          (model) => model !== "INTERLIS",
+        ),
+      ),
+    ];
+    if (unresolved.length === 0) return analysis;
+    const extra = unresolved.flatMap((model) =>
+      this.#repositoryDiagnostics(
+        model,
+        this.#schemaLanguagesForMissingModel(model, analysis.syntax)
+          .map((schema) => failures.get(`${schema}:${model}`))
+          .find((message) => message !== undefined) ??
+          "model not found in configured repositories",
+        analysis.syntax,
+      ),
+    );
+    const diagnostics = [...analysis.compilation.diagnostics, ...extra];
+    return {
+      ...analysis,
+      compilation: {
+        ...analysis.compilation,
+        success: false,
+        errorCount: analysis.compilation.errorCount + extra.length,
+        diagnostics,
+      },
+      semantic: {
+        ...analysis.semantic,
+        success: false,
+        diagnostics,
+      },
+    };
+  }
+
+  #failedAnalysis(rootUri: string, error: unknown): CompilationAnalysisResult {
+    const message = error instanceof Error ? error.message : String(error);
+    const diagnostic: Diagnostic = {
+      severity: "error",
+      code: "language-service-compilation-failed",
+      message,
+      range: null,
+      relatedInformation: [],
+      notes: [],
+      treatedAsError: true,
+    };
+    const common = {
+      schemaVersion: 1 as const,
+      abiVersion: 1 as const,
+      compilerVersion: "unknown",
+    };
+    return {
+      ...common,
+      kind: "compilation-analysis",
+      compilation: {
+        ...common,
+        kind: "compilation",
+        success: false,
+        cancelled: false,
+        errorCount: 1,
+        warningCount: 0,
+        missingModels: [],
+        models: [],
+        diagnostics: [diagnostic],
+        logs: [],
+      },
+      semantic: {
+        ...common,
+        kind: "semantic",
+        success: false,
+        cancelled: false,
+        roots: [rootUri],
+        documentVersions: this.#versions(),
+        missingModels: [],
+        symbols: [],
+        references: [],
+        dependencies: [],
+        diagram: { nodes: [], edges: [] },
+        documentation: { title: "", sections: [] },
+        diagnostics: [diagnostic],
+        logs: [],
+      },
+      syntax: [],
+    };
+  }
+
+  #replaceDiagnostics(
+    rootUri: string,
+    diagnostics: readonly Diagnostic[],
+  ): void {
+    this.#diagnostics.clear();
+    for (const diagnostic of diagnostics) {
+      const uri = diagnostic.range?.uri ?? rootUri;
+      const values = this.#diagnostics.get(uri) ?? [];
+      values.push(diagnostic);
+      this.#diagnostics.set(uri, values);
+    }
+  }
+
+  #invalidate(): void {
     this.#generation++;
-    this.#cache.clear();
-    this.#compileCache.clear();
+    for (const [uri, snapshot] of this.#syntax)
+      this.#syntax.set(uri, { ...snapshot, freshness: "stale" });
     if (this.#lastSemantic)
       this.#lastSemantic = { ...this.#lastSemantic, freshness: "stale" };
-    if (this.#documents.size > 0) this.#schedule(changedUri);
-  }
-
-  #schedule(changedUri?: string): void {
-    if (this.#timer) clearTimeout(this.#timer);
-    this.#timer = setTimeout(() => {
-      this.#timer = null;
-      void this.analyzeNow(changedUri).catch((error) => this.#onError?.(error));
-    }, this.#debounceMs);
-  }
-
-  #affectedRoots(changedUri?: string): string[] {
-    const open = [...this.#documents.keys()];
-    if (open.length === 0) return [...this.#workspaceSources.keys()].sort();
-    if (!changedUri || !this.#documents.has(changedUri)) return open.sort();
-    const affected = new Set<string>([changedUri]);
-    const queue = [changedUri];
-    while (queue.length > 0) {
-      const dependency = queue.shift();
-      if (!dependency) continue;
-      for (const candidate of this.#reverseDependencies.get(dependency) ?? []) {
-        if (affected.has(candidate)) continue;
-        affected.add(candidate);
-        queue.push(candidate);
-      }
-    }
-    return open.filter((uri) => affected.has(uri)).sort();
+    if (this.#lastSavedSemantic)
+      this.#lastSavedSemantic = {
+        ...this.#lastSavedSemantic,
+        freshness: "stale",
+      };
+    for (const [rootUri, snapshot] of this.#savedSemanticByRoot)
+      this.#savedSemanticByRoot.set(rootUri, {
+        ...snapshot,
+        freshness: "stale",
+      });
   }
 
   #rebuildDependencies(snapshot: SemanticSnapshot): void {
@@ -724,49 +830,13 @@ export class LanguageService {
     );
   }
 
-  #isCurrent(
-    generation: number,
-    versions: Readonly<Record<string, number>>,
-  ): boolean {
-    if (generation !== this.#generation) return false;
-    const current = this.#versions();
-    const uris = new Set([...Object.keys(versions), ...Object.keys(current)]);
-    return [...uris].every((uri) => versions[uri] === current[uri]);
-  }
-
-  #cancelled(
-    generation: number,
-    versions: Readonly<Record<string, number>>,
-  ): VersionedResult<SemanticSnapshot> {
-    const cancelled = {
-      value: null,
-      freshness: "cancelled",
-      generation,
-      documentVersions: versions,
-    } as const;
-    this.#lastSemantic = cancelled;
-    return cancelled;
-  }
-
-  #missingModels(
-    snapshot: SemanticSnapshot,
-    roots: readonly string[],
-  ): string[] {
-    if (snapshot.missingModels) return [...new Set(snapshot.missingModels)];
-    return [
-      ...new Set(this.compiler.compile({ roots: [...roots] }).missingModels),
-    ];
-  }
-
-  #schemaLanguagesForMissingModel(model: string): RepositorySchemaLanguage[] {
+  #schemaLanguagesForMissingModel(
+    model: string,
+    snapshots: readonly SyntaxSnapshot[],
+  ): RepositorySchemaLanguage[] {
     const schemas = new Set<RepositorySchemaLanguage>();
-    for (const syntaxResult of this.#syntax.values()) {
-      const syntax = syntaxResult.value;
-      if (
-        !syntax ||
-        !syntax.imports.includes(model) ||
-        syntax.iliVersion === "1.0"
-      )
+    for (const syntax of snapshots) {
+      if (!syntax.imports.includes(model) || syntax.iliVersion === "1.0")
         continue;
       schemas.add(this.#schemaLanguage(syntax));
     }
@@ -775,40 +845,6 @@ export class LanguageService {
 
   #schemaLanguage(snapshot: SyntaxSnapshot): RepositorySchemaLanguage {
     return snapshot.iliVersion === "2.4" ? "ili2_4" : "ili2_3";
-  }
-
-  #directRepositoryRequests(roots: readonly string[]): Array<{
-    model: string;
-    schema: RepositorySchemaLanguage;
-    key: string;
-  }> {
-    const requests = new Map<
-      string,
-      { model: string; schema: RepositorySchemaLanguage; key: string }
-    >();
-    for (const uri of roots) {
-      const syntax = this.#syntax.get(uri)?.value;
-      if (!syntax || syntax.iliVersion === "1.0") continue;
-      const schema = this.#schemaLanguage(syntax);
-      const local = this.#localModelNames(schema);
-      const repository = new Set(
-        [...this.#repositorySources.values()]
-          .filter((source) => source.schemaLanguage === schema)
-          .map((source) => source.model),
-      );
-      for (const model of syntax.imports) {
-        const key = `${schema}:${model}`;
-        if (
-          model === "INTERLIS" ||
-          local.has(model) ||
-          repository.has(model) ||
-          requests.has(key)
-        )
-          continue;
-        requests.set(key, { model, schema, key });
-      }
-    }
-    return [...requests.values()];
   }
 
   #localModelNames(schema: RepositorySchemaLanguage): Set<string> {
@@ -859,10 +895,14 @@ export class LanguageService {
     );
   }
 
-  #repositoryDiagnostics(model: string, message: string): Diagnostic[] {
+  #repositoryDiagnostics(
+    model: string,
+    message: string,
+    snapshots: readonly SyntaxSnapshot[],
+  ): Diagnostic[] {
     const ranges: Diagnostic["range"][] = [];
-    for (const syntax of this.#syntax.values()) {
-      for (const reference of syntax.value?.importReferences ?? [])
+    for (const syntax of snapshots) {
+      for (const reference of syntax.importReferences ?? [])
         if (reference.model === model) ranges.push(reference.range);
     }
     if (ranges.length === 0) ranges.push(null);
@@ -875,6 +915,14 @@ export class LanguageService {
       notes: [],
       treatedAsError: true,
     }));
+  }
+
+  #hasFreshSemanticFor(uri: string): boolean {
+    const document = this.#documents.get(uri);
+    if (document?.dirty || this.#lastSemantic?.freshness !== "fresh")
+      return false;
+    if (!document) return true;
+    return this.#lastSemantic.documentVersions[uri] === document.version;
   }
 
   #contains(

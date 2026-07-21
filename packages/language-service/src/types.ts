@@ -1,4 +1,5 @@
 import type {
+  CompilationAnalysisResult,
   CompilationRequest,
   CompilationResult,
   FormatResult,
@@ -28,6 +29,7 @@ export interface CompilerBackend {
   removeSource(uri: string): boolean;
   parse(uri: string): SyntaxSnapshot;
   analyze(request: CompilationRequest): SemanticSnapshot;
+  compileAndAnalyze(request: CompilationRequest): CompilationAnalysisResult;
   compile(request: CompilationRequest): CompilationResult;
   format(
     uri: string,
@@ -42,9 +44,24 @@ export interface AnalysisEvent {
   readonly affectedUris: readonly string[];
 }
 
+export type CompilationTrigger = "save" | "manual" | "startup";
+
+export interface CompilationOutputEvent {
+  readonly runId: number;
+  readonly timestamp: string;
+  readonly trigger: CompilationTrigger;
+  readonly rootUri: string;
+  readonly documentVersion: number;
+  readonly compilation: CompilationResult;
+}
+
+export interface CompilationEvent extends CompilationOutputEvent {
+  readonly semantic: VersionedResult<SemanticSnapshot>;
+}
+
 export interface LanguageServiceOptions {
-  readonly semanticDebounceMs?: number;
   readonly onAnalysis?: (event: AnalysisEvent) => void;
+  readonly onCompilation?: (event: CompilationEvent) => void;
   readonly onError?: (error: unknown) => void;
   readonly modelRepository?: ModelRepository;
 }

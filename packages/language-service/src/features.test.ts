@@ -106,6 +106,96 @@ const semantic = (): SemanticSnapshot => ({
   logs: [],
 });
 
+const inheritanceSemantic = (): SemanticSnapshot => ({
+  ...semantic(),
+  symbols: [
+    {
+      id: "model",
+      name: "Model",
+      qualifiedName: "Model",
+      kind: "model",
+      containerId: "",
+      range: range(0, 0, 12, 1),
+      selectionRange: range(0, 6, 0, 11),
+      abstract: false,
+    },
+    {
+      id: "base",
+      name: "Base",
+      qualifiedName: "Model.Base",
+      kind: "Class",
+      containerId: "model",
+      range: range(2, 0, 6, 1),
+      selectionRange: range(2, 6, 2, 10),
+      abstract: false,
+    },
+    {
+      id: "baseName",
+      name: "Name",
+      qualifiedName: "Model.Base.Name",
+      kind: "Attribute",
+      containerId: "base",
+      range: range(3, 2, 3, 16),
+      selectionRange: range(3, 2, 3, 6),
+      abstract: false,
+    },
+    {
+      id: "baseRole",
+      name: "owner",
+      qualifiedName: "Model.Base.owner",
+      kind: "Role",
+      containerId: "base",
+      range: range(4, 2, 4, 16),
+      selectionRange: range(4, 2, 4, 7),
+      abstract: false,
+    },
+    {
+      id: "child",
+      name: "Child",
+      qualifiedName: "Model.Child",
+      kind: "class",
+      containerId: "model",
+      range: range(8, 0, 12, 1),
+      selectionRange: range(8, 6, 8, 11),
+      abstract: false,
+    },
+    {
+      id: "childName",
+      name: "Name",
+      qualifiedName: "Model.Child.Name",
+      kind: "attribute",
+      containerId: "child",
+      range: range(9, 2, 9, 16),
+      selectionRange: range(9, 2, 9, 6),
+      abstract: false,
+    },
+    {
+      id: "basket",
+      name: "BASKET",
+      qualifiedName: "Model.Child.BASKET",
+      kind: "DataUnit",
+      containerId: "child",
+      range: range(10, 2, 10, 8),
+      selectionRange: range(10, 2, 10, 8),
+      abstract: false,
+    },
+  ],
+  references: [
+    {
+      sourceId: "child",
+      targetId: "base",
+      kind: "inheritance",
+      range: range(8, 12, 8, 16),
+    },
+    {
+      sourceId: "childName",
+      targetId: "baseName",
+      kind: "inheritance",
+      range: range(9, 2, 9, 6),
+    },
+  ],
+});
+
 describe("syntax-driven feature helpers", () => {
   it("uses the smallest parser context and range boundaries", () => {
     expect(contextAt(syntax(), { line: 3, character: 0 })?.kind).toBe(
@@ -232,7 +322,7 @@ describe("semantic feature helpers", () => {
       },
       selectionRange: {
         start: { line: 0, character: 6 },
-        end: { line: 0, character: 11 },
+        end: { line: 0, character: 6 },
       },
     });
     expect(symbols[0]?.children[0]).toMatchObject({
@@ -243,7 +333,7 @@ describe("semantic feature helpers", () => {
       },
       selectionRange: {
         start: { line: 2, character: 8 },
-        end: { line: 2, character: 16 },
+        end: { line: 2, character: 8 },
       },
     });
   });
@@ -252,7 +342,10 @@ describe("semantic feature helpers", () => {
     const missingSnapshot = semantic();
     missingSnapshot.symbols = [missingSnapshot.symbols[0]!];
     const missing = documentSymbols(missingSnapshot, uri)[0];
-    expect(missing?.selectionRange).toEqual(missing?.range);
+    expect(missing?.selectionRange).toEqual({
+      start: { line: 0, character: 6 },
+      end: { line: 0, character: 6 },
+    });
 
     const snapshot = semantic();
     snapshot.symbols = [
@@ -265,7 +358,81 @@ describe("semantic feature helpers", () => {
       },
     ];
     const foreign = documentSymbols(snapshot, uri)[0];
-    expect(foreign?.selectionRange).toEqual(foreign?.range);
+    expect(foreign?.selectionRange).toEqual({
+      start: { line: 0, character: 6 },
+      end: { line: 0, character: 6 },
+    });
+  });
+
+  it("uses Java-compatible labels, filters BASKET and expands local inheritance", () => {
+    const symbols = documentSymbols(inheritanceSemantic(), uri);
+    const model = symbols[0]!;
+    const child = model.children.find((symbol) => symbol.name === "Child")!;
+    expect(model).toMatchObject({
+      name: "Model",
+      detail: "MODEL",
+      kind: "model",
+    });
+    expect(child).toMatchObject({
+      name: "Child",
+      detail: "CLASS",
+      kind: "class",
+    });
+    expect(child.children.map((symbol) => symbol.name)).toEqual([
+      "Name",
+      "owner",
+    ]);
+    expect(child.children[0]?.detail).toBe("");
+    expect(child.children[1]?.selectionRange).toEqual({
+      start: { line: 4, character: 2 },
+      end: { line: 4, character: 2 },
+    });
+    expect(child.children[1]?.range.start).toEqual({ line: 4, character: 2 });
+    expect(child.children.some((symbol) => symbol.name === "BASKET")).toBe(
+      false,
+    );
+    expect(child.children[0]?.selectionRange.start).toEqual({
+      line: 9,
+      character: 2,
+    });
+    expect(child.children[0]?.selectionRange.end).toEqual(
+      child.children[0]?.selectionRange.start,
+    );
+    expect(
+      locationsForDefinition(inheritanceSemantic(), uri, {
+        line: 9,
+        character: 3,
+      }),
+    ).toEqual([
+      {
+        uri,
+        range: {
+          start: { line: 3, character: 2 },
+          end: { line: 3, character: 6 },
+        },
+      },
+    ]);
+  });
+
+  it("does not project inherited members from another document", () => {
+    const snapshot = inheritanceSemantic();
+    snapshot.symbols = snapshot.symbols.map((symbol) =>
+      symbol.id === "base" || symbol.id === "baseName"
+        ? {
+            ...symbol,
+            range: symbol.range
+              ? { ...symbol.range, uri: "memory:///Other.ili" }
+              : symbol.range,
+            selectionRange: symbol.selectionRange
+              ? { ...symbol.selectionRange, uri: "memory:///Other.ili" }
+              : symbol.selectionRange,
+          }
+        : symbol,
+    );
+    const child = documentSymbols(snapshot, uri)[0]?.children.find(
+      (symbol) => symbol.name === "Child",
+    );
+    expect(child?.children.map((symbol) => symbol.name)).toEqual(["Name"]);
   });
 
   it("combines only diagnostics for the requested URI", () => {

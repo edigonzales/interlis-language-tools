@@ -42,7 +42,9 @@ const severity = {
 export function toDiagnostic(value: CoreDiagnostic) {
   return {
     range: value.range ? toRange(value.range) : Range.create(0, 0, 0, 1),
-    severity: severity[value.severity],
+    severity: value.treatedAsError
+      ? DiagnosticSeverity.Error
+      : severity[value.severity],
     code: value.code,
     source: "ilic",
     message: value.message,
@@ -59,6 +61,11 @@ export function toDiagnostic(value: CoreDiagnostic) {
           ]
         : [],
     ),
+    data: {
+      treatedAsError: value.treatedAsError,
+      notes: value.notes,
+      relatedInformation: value.relatedInformation,
+    },
   };
 }
 
@@ -85,21 +92,26 @@ export function toCompletion(value: CoreCompletionItem) {
 }
 
 const symbolKind: Readonly<Record<string, SymbolKind>> = {
-  Model: SymbolKind.Module,
-  Topic: SymbolKind.Namespace,
-  Class: SymbolKind.Class,
-  Structure: SymbolKind.Struct,
-  Association: SymbolKind.Interface,
-  Attribute: SymbolKind.Field,
-  Domain: SymbolKind.TypeParameter,
-  Unit: SymbolKind.Number,
+  model: SymbolKind.Module,
+  topic: SymbolKind.Namespace,
+  class: SymbolKind.Class,
+  structure: SymbolKind.Struct,
+  association: SymbolKind.Interface,
+  view: SymbolKind.Object,
+  graphic: SymbolKind.Object,
+  attribute: SymbolKind.Property,
+  role: SymbolKind.Property,
+  domain: SymbolKind.TypeParameter,
+  unit: SymbolKind.Constant,
+  function: SymbolKind.Function,
+  constraint: SymbolKind.Key,
 };
 
 export function toDocumentSymbol(value: CoreDocumentSymbol): DocumentSymbol {
   return DocumentSymbol.create(
     value.name,
     value.detail,
-    symbolKind[value.kind] ?? SymbolKind.Object,
+    symbolKind[value.kind.toLowerCase()] ?? SymbolKind.Object,
     toRange(value.range),
     toRange(value.selectionRange),
     value.children.map(toDocumentSymbol),

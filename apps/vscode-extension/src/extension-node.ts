@@ -6,6 +6,7 @@ import type {
 } from "vscode-languageclient/node.js";
 import {
   createOnTypeMiddleware,
+  compileActiveDocumentOnStartup,
   createInitializationOptions,
   documentSelector,
   hasActiveLegacyExtension,
@@ -66,6 +67,11 @@ export async function activate(
   await client.start();
   registerRepositoryWorkflows(context, client, false);
   registerDiagramWorkflows(context, client);
+  void compileActiveDocumentOnStartup(client).catch((error: unknown) =>
+    debug.appendLine(
+      `[${new Date().toISOString()}] startup compilation request failed: ${error instanceof Error ? error.message : String(error)}`,
+    ),
+  );
 }
 
 export async function deactivate(): Promise<void> {

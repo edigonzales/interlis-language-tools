@@ -20,6 +20,7 @@ export async function createWasmCompilerBackend(): Promise<CompilerBackend> {
     },
     parse: (uri) => session.parse(uri),
     analyze: (request) => session.analyze(request),
+    compileAndAnalyze: (request) => session.compileAndAnalyze(request),
     compile: (request) => session.compile(request),
     format: (uri, options) => session.format(uri, options),
     async restart() {

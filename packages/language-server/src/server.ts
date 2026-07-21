@@ -17,6 +17,8 @@ import {
 import { InterlisProtocol } from "./protocol.js";
 import type {
   CompileParams,
+  CompilationCompletedParams,
+  DiagramSnapshotParams,
   ExportDocxParams,
   InterlisInitializationOptions,
   OnTypeEditParams,
@@ -40,14 +42,29 @@ export function bindLanguageServer(
   hooks: LanguageServerHooks = {},
 ): void {
   let initializationOptions: InterlisInitializationOptions = {};
-  const publishDiagnostics = (uri: string): void => {
-    void connection.sendDiagnostics({
-      uri,
-      diagnostics: service.diagnostics(uri).map(toDiagnostic),
-    });
-  };
-  const analysisSubscription = service.onAnalysis(({ affectedUris }) => {
-    for (const uri of affectedUris) publishDiagnostics(uri);
+  let publishedDiagnosticUris = new Set<string>();
+  const compilationSubscription = service.onCompilation((event) => {
+    for (const uri of publishedDiagnosticUris)
+      void connection.sendDiagnostics({ uri, diagnostics: [] });
+    const grouped = new Map<string, typeof event.compilation.diagnostics>();
+    for (const diagnostic of event.compilation.diagnostics) {
+      const uri = diagnostic.range?.uri ?? event.rootUri;
+      grouped.set(uri, [...(grouped.get(uri) ?? []), diagnostic]);
+    }
+    publishedDiagnosticUris = new Set(grouped.keys());
+    for (const [uri, diagnostics] of grouped)
+      void connection.sendDiagnostics({
+        uri,
+        diagnostics: diagnostics.map(toDiagnostic),
+      });
+    void connection.sendNotification(InterlisProtocol.compilationCompleted, {
+      runId: event.runId,
+      timestamp: event.timestamp,
+      trigger: event.trigger,
+      rootUri: event.rootUri,
+      documentVersion: event.documentVersion,
+      compilation: event.compilation,
+    } satisfies CompilationCompletedParams);
   });
 
   connection.onInitialize(
@@ -89,7 +106,6 @@ export function bindLanguageServer(
   connection.onDidOpenTextDocument((params) => {
     const document = params.textDocument;
     service.openDocument(document.uri, document.text, document.version);
-    publishDiagnostics(document.uri);
   });
   connection.onDidChangeTextDocument((params) => {
     if (service.isReadOnlyUri(params.textDocument.uri)) return;
@@ -100,18 +116,19 @@ export function bindLanguageServer(
       text,
       params.textDocument.version,
     );
-    publishDiagnostics(params.textDocument.uri);
   });
   connection.onDidSaveTextDocument((params) => {
     service.markSaved(params.textDocument.uri);
-    publishDiagnostics(params.textDocument.uri);
+    void service
+      .compileDocument(params.textDocument.uri, "save")
+      .catch((error: unknown) =>
+        connection.console.error(
+          `Compilation failed: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+      );
   });
   connection.onDidCloseTextDocument((params) => {
     service.closeDocument(params.textDocument.uri);
-    void connection.sendDiagnostics({
-      uri: params.textDocument.uri,
-      diagnostics: [],
-    });
   });
 
   connection.onCompletion(async (params) =>
@@ -181,19 +198,23 @@ export function bindLanguageServer(
     (params: OnTypeEditParams) =>
       service.onTypeEdit(params.uri, params.position, params.character),
   );
-  connection.onRequest(InterlisProtocol.diagramSnapshot, async () => {
-    let result = service.getSemanticSnapshot();
-    if (!result?.value) result = await service.analyzeNow();
-    return result?.value
-      ? {
-          freshness: result.freshness,
-          generation: result.generation,
-          snapshot: result.value,
-        }
-      : null;
-  });
+  connection.onRequest(
+    InterlisProtocol.diagramSnapshot,
+    (params: DiagramSnapshotParams) => {
+      const result = service.getSavedSemanticSnapshot(params.uri);
+      return result?.value
+        ? {
+            freshness: result.freshness,
+            generation: result.generation,
+            snapshot: result.value,
+          }
+        : null;
+    },
+  );
   connection.onRequest(InterlisProtocol.compile, (params: CompileParams) =>
-    service.compile(params.roots ? [...params.roots] : undefined),
+    service
+      .compileDocument(params.uri, params.trigger ?? "manual")
+      .then((event) => event.compilation),
   );
   connection.onNotification(
     InterlisProtocol.workspaceSources,
@@ -248,7 +269,7 @@ export function bindLanguageServer(
     },
   );
   connection.onShutdown(() => {
-    analysisSubscription.dispose();
+    compilationSubscription.dispose();
     service.dispose();
   });
 }

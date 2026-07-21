@@ -1,10 +1,15 @@
-import type { SemanticSnapshot } from "@ilic/language-service";
+import type {
+  CompilationResult,
+  CompilationTrigger,
+  SemanticSnapshot,
+} from "@ilic/language-service";
 
 export const InterlisProtocol = {
   onTypeEdit: "interlis/onTypeEdit",
   diagramSnapshot: "interlis/diagramSnapshot",
   exportDocx: "interlis/exportDocx",
   compile: "interlis/compile",
+  compilationCompleted: "interlis/compilationCompleted",
   semanticSnapshotChanged: "interlis/semanticSnapshotChanged",
   log: "interlis/log",
   workspaceSources: "interlis/workspaceSources",
@@ -62,7 +67,17 @@ export interface DiagramSnapshotResult {
   readonly snapshot: SemanticSnapshot;
 }
 export interface CompileParams {
-  readonly roots?: readonly string[];
+  readonly uri: string;
+  /** A client-initiated compile is manual unless explicitly marked as startup. */
+  readonly trigger?: "manual" | "startup";
+}
+export interface CompilationCompletedParams {
+  readonly runId: number;
+  readonly timestamp: string;
+  readonly trigger: CompilationTrigger;
+  readonly rootUri: string;
+  readonly documentVersion: number;
+  readonly compilation: CompilationResult;
 }
 export interface ExportDocxParams {
   readonly uri: string;
