@@ -5,9 +5,9 @@
 The coordinated development versions are:
 
 - `@ilic/compiler-wasm` and `@ilic/tools`:
-  `0.9.9-SNAPSHOT.YYYYMMDDHHmmss`;
+  `0.9.9-SNAPSHOT.YYYYMMDDHHmmss.<build-id>`;
 - the five language-tool packages:
-  `0.1.0-SNAPSHOT.YYYYMMDDHHmmss`;
+  `0.1.0-SNAPSHOT.YYYYMMDDHHmmss.<build-id>`;
 - VS Code/Open VSX extension: `0.1.0`, packaged as a pre-release;
 - browser IDE: an independently versioned private deployment package.
 
@@ -40,20 +40,22 @@ Extension publication is deliberately separate from repeatable npm snapshots.
 ## Pipelines
 
 `ci.yml` always builds and tests the sources, seven npm tarballs and the
-universal VSIX. External publication is split into two manually dispatched
-workflows:
+universal VSIX. The coordinated npm publication is started automatically for
+every successful `main` commit. The VSIX publication remains a separate manual
+release workflow:
 
-- `publish-npm-snapshot.yml` publishes the five language packages with npm
-  trusted publishing and GitHub OIDC;
+- `publish-npm-snapshot.yml` checks out exact compiler and language-tools SHAs,
+  publishes the two compiler packages followed by the five language packages,
+  and sends the completed release to the Web IDE with `repository_dispatch`;
 - `release.yml` publishes the already verified VSIX to the VS Code Marketplace
   and Open VSX.
 
-The npm workflow resolves `@ilic/compiler-wasm@snapshot` once, validates that
-`@ilic/tools@snapshot` has the same version, reads the package's `gitHead` and
-checks out that exact compiler commit. The staged `@ilic/language-service`
-manifest pins the resolved compiler version. The workflow then publishes in
-dependency order: Language Service, Monaco Adapter, Diagram, DOCX, Language
-Server.
+The compiler repository dispatches its successful `main` CI revision to the
+language-tools workflow. A language-tools push starts the same workflow
+directly. The workflow captures both full commit SHAs before building, so it
+never resolves a moving compiler dist-tag. The staged manifests pin the exact
+compiler snapshot version, and `release-manifest.json` records both source
+revisions and all published versions.
 
 Only the npm publish job receives:
 
@@ -67,12 +69,13 @@ It runs on a GitHub-hosted runner with Node 24 and npm 11.18.0. There is no
 `NPM_TOKEN`, `NODE_AUTH_TOKEN` or checked-in `.npmrc`. Public packages from this
 public repository receive npm provenance automatically.
 
-The only manually configured GitHub Actions secrets are:
+The manually configured GitHub Actions secrets are:
 
-| Secret     | Destination                                  |
-| ---------- | -------------------------------------------- |
-| `VSCE_PAT` | VS Code Marketplace, publisher `edigonzales` |
-| `OVSX_PAT` | Open VSX, publisher `edigonzales`            |
+| Secret                   | Destination                                     |
+| ------------------------ | ----------------------------------------------- |
+| `VSCE_PAT`               | VS Code Marketplace, publisher `edigonzales`    |
+| `OVSX_PAT`               | Open VSX, publisher `edigonzales`               |
+| `RELEASE_DISPATCH_TOKEN` | Cross-repository dispatch to `interlis-web-ide` |
 
 Missing Marketplace credentials do not block the sibling publication job or
 artifact creation. GitHub Pages uses GitHub's own OIDC permissions in the Web
@@ -80,9 +83,10 @@ IDE repository and needs no manually configured secret.
 
 ## npm trusted-publisher bootstrap
 
-`@ilic/tools` and `@ilic/compiler-wasm` already exist on npm. After publishing
-the first compiler snapshot containing the editor snapshot API, configure and
-verify the trusted publisher described in `ilic-fork/docs/npm-publikation.md`.
+`@ilic/tools` and `@ilic/compiler-wasm` already exist on npm. Their Trusted
+Publisher must point to the coordinated workflow in this repository:
+repository `interlis-language-tools`, workflow filename
+`publish-npm-snapshot.yml`. The five language packages use the same workflow.
 
 The five language packages do not yet exist and therefore need one interactive
 bootstrap publish. Generate or download the verified tarballs, authenticate
@@ -115,8 +119,9 @@ and remove any old `NPM_TOKEN` repository secret.
 ## Synchronize `latest` after npm publication
 
 Trusted publishing authorizes `npm publish` or `npm stage publish`, but not
-`npm dist-tag add`. The GitHub workflow therefore remains token-free and only
-moves `snapshot`. After every successful `Publish npm snapshot` run, validate
+`npm dist-tag add`. The npm publication itself remains token-free; the separate
+`RELEASE_DISPATCH_TOKEN` is used only for the Web-IDE dispatch. After every
+successful `Publish npm snapshot` run, validate
 all five versions before changing any tag, then move `latest` locally with 2FA:
 
 ```sh
@@ -171,16 +176,20 @@ done
 
 ## Ordering and recovery
 
-1. Publish matching `@ilic/tools` and `@ilic/compiler-wasm` snapshots from
-   `ilic-fork`.
-2. Run `Publish npm snapshot` in this repository. It pins the exact compiler
-   snapshot and creates one timestamp for all five language packages.
-3. Synchronize `latest` to the new `snapshot` locally with 2FA.
-4. Run `Publish VS Code extension` only when the extension manifest version has
+1. A successful `ilic-fork` `main` CI run requests a release train, or a
+   successful language-tools `main` push starts one directly.
+2. The release train captures both source SHAs, builds native and WASM
+   compiler artifacts, verifies all seven packages, and publishes them in
+   dependency order.
+3. A repeat of the same workflow skips package versions that already exist and
+   can finish a partially completed publication.
+4. The workflow dispatches the exact source pair to the Web IDE Pages build.
+5. Synchronize `latest` to the new `snapshot` locally with 2FA.
+6. Run `Publish VS Code extension` only when the extension manifest version has
    not already been published.
-5. Build the Web IDE from the same verified local tarballs or a committed
+7. Build the Web IDE from the same verified local tarballs or a committed
    lockfile resolving the identical registry versions.
-6. Record Marketplace, Open VSX, VS Code Web and Theia smoke results in the
+8. Record Marketplace, Open VSX, VS Code Web and Theia smoke results in the
    capability matrix before a future stable promotion.
 
 npm does not offer a transaction spanning several packages. All builds and

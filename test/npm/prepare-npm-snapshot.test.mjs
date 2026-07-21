@@ -22,6 +22,17 @@ test("creates deterministic compiler and language snapshot versions", () => {
   );
 });
 
+test("adds the same numeric build ID to compiler and language versions", () => {
+  assert.equal(
+    compilerSnapshotVersion(timestamp, "12345"),
+    `0.9.9-SNAPSHOT.${timestamp}.12345`,
+  );
+  assert.equal(
+    languageSnapshotVersion(timestamp, "12345"),
+    `0.1.0-SNAPSHOT.${timestamp}.12345`,
+  );
+});
+
 test("rejects malformed or impossible snapshot timestamps", () => {
   for (const value of ["2026-07-19", "20260230120000"]) {
     assert.throws(() => validateTimestamp(value), /timestamp/i);

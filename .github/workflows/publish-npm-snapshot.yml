@@ -1,78 +1,119 @@
-name: Publish npm snapshot
+name: Publish coordinated npm snapshot
 
 on:
+  push:
+    branches: [main]
+  repository_dispatch:
+    types: [release-train-requested]
   workflow_dispatch:
+    inputs:
+      compiler_sha:
+        description: Optional ilic-fork commit SHA (40 hex characters)
+        required: false
+        type: string
+      language_tools_sha:
+        description: Optional language-tools commit SHA (40 hex characters)
+        required: false
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: publish-npm-snapshot
+  group: release-train
   cancel-in-progress: false
 
 jobs:
-  resolve-compiler:
+  resolve-refs:
+    name: Resolve coordinated source revisions
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.compiler.outputs.version }}
-      git_head: ${{ steps.compiler.outputs.git_head }}
+      compiler_sha: ${{ steps.resolve.outputs.compiler_sha }}
+      language_tools_sha: ${{ steps.resolve.outputs.language_tools_sha }}
     steps:
-      - uses: actions/setup-node@v6
-        with:
-          node-version: "24"
-          package-manager-cache: false
-      - name: Install OIDC-capable npm
-        run: npm install --global npm@11.18.0
-      - name: Resolve immutable compiler snapshot
-        id: compiler
+      - name: Resolve exact source revisions
+        id: resolve
+        env:
+          EVENT_COMPILER_SHA: ${{ github.event.client_payload.compiler_sha }}
+          EVENT_LANGUAGE_TOOLS_SHA: ${{ github.event.client_payload.language_tools_sha }}
+          INPUT_COMPILER_SHA: ${{ inputs.compiler_sha }}
+          INPUT_LANGUAGE_TOOLS_SHA: ${{ inputs.language_tools_sha }}
         shell: bash
         run: |
           set -euo pipefail
-          version=$(npm view @ilic/compiler-wasm@snapshot version)
-          tools_version=$(npm view @ilic/tools@snapshot version)
-          git_head=$(npm view "@ilic/compiler-wasm@$version" gitHead)
-          if [[ ! "$version" =~ ^0\.9\.9-SNAPSHOT\.[0-9]{14}$ ]]; then
-            echo "Unexpected compiler snapshot: $version" >&2
-            exit 1
+
+          main_sha() {
+            git ls-remote "https://github.com/$1.git" refs/heads/main | awk 'NR == 1 { print $1 }'
+          }
+
+          compiler_sha="${INPUT_COMPILER_SHA:-${EVENT_COMPILER_SHA:-}}"
+          language_tools_sha="${INPUT_LANGUAGE_TOOLS_SHA:-${EVENT_LANGUAGE_TOOLS_SHA:-}}"
+
+          if [[ -z "$compiler_sha" ]]; then
+            compiler_sha=$(main_sha edigonzales/ilic-fork)
           fi
-          if [[ "$tools_version" != "$version" ]]; then
-            echo "Compiler and tools snapshot versions differ" >&2
-            exit 1
+          if [[ -z "$language_tools_sha" ]]; then
+            if [[ "${{ github.event_name }}" == "push" ]]; then
+              language_tools_sha="$GITHUB_SHA"
+            else
+              language_tools_sha=$(main_sha edigonzales/interlis-language-tools)
+            fi
           fi
-          if [[ ! "$git_head" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "Unexpected compiler gitHead: $git_head" >&2
-            exit 1
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "git_head=$git_head" >> "$GITHUB_OUTPUT"
+
+          for value in "$compiler_sha" "$language_tools_sha"; do
+            if [[ ! "$value" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "Expected a full 40-character commit SHA, received: $value" >&2
+              exit 1
+            fi
+          done
+
+          echo "compiler_sha=$compiler_sha" >> "$GITHUB_OUTPUT"
+          echo "language_tools_sha=$language_tools_sha" >> "$GITHUB_OUTPUT"
+          printf 'Compiler SHA: %s\nLanguage-tools SHA: %s\n' "$compiler_sha" "$language_tools_sha"
 
   build:
-    needs: resolve-compiler
+    name: Build and verify coordinated packages
+    needs: resolve-refs
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 45
+    outputs:
+      snapshot_version: ${{ steps.stage.outputs.snapshot_version }}
+      compiler_version: ${{ steps.stage.outputs.compiler_version }}
+      timestamp: ${{ steps.stage.outputs.timestamp }}
+      build_id: ${{ steps.stage.outputs.build_id }}
     steps:
       - name: Checkout language tools
         uses: actions/checkout@v6
         with:
+          ref: ${{ needs.resolve-refs.outputs.language_tools_sha }}
           path: interlis-language-tools
           persist-credentials: false
-      - name: Checkout exact published compiler source
+      - name: Checkout exact compiler source
         uses: actions/checkout@v6
         with:
           repository: edigonzales/ilic-fork
-          ref: ${{ needs.resolve-compiler.outputs.git_head }}
+          ref: ${{ needs.resolve-refs.outputs.compiler_sha }}
           path: ilic-fork
           persist-credentials: false
+      - name: Install native dependencies
+        run: sudo apt-get update && sudo apt-get install --yes libcurl4-openssl-dev libxml2-dev ninja-build
+      - name: Configure native compiler
+        working-directory: ilic-fork
+        run: cmake -S . -B build/release-train -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build and test native compiler
+        working-directory: ilic-fork
+        run: |
+          cmake --build build/release-train --parallel
+          ctest --test-dir build/release-train --output-on-failure
       - uses: pnpm/action-setup@v4
         with:
           version: 11.14.0
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
-          package-manager-cache: false
-      - name: Install pinned npm
-        run: npm install --global npm@11.18.0
-      - name: Build exact compiler WASM
+          cache: pnpm
+          cache-dependency-path: interlis-language-tools/pnpm-lock.yaml
+      - name: Install pinned Emscripten SDK
         shell: bash
         working-directory: ilic-fork
         run: |
@@ -81,51 +122,82 @@ jobs:
           git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
           "$RUNNER_TEMP/emsdk/emsdk" install "$emscripten_version"
           "$RUNNER_TEMP/emsdk/emsdk" activate "$emscripten_version"
+      - name: Build exact compiler WASM
+        shell: bash
+        working-directory: ilic-fork
+        run: |
+          set -euo pipefail
           source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
           ./scripts/build-wasm.sh
-      - name: Verify sources and local package consumers
+      - name: Install locked language-tool dependencies
         working-directory: interlis-language-tools
-        run: |
-          pnpm install --frozen-lockfile
-          pnpm check
-          pnpm --filter @ilic/language-service test:coverage
-          pnpm licenses:check
-          pnpm security:check
-      - name: Stage and verify immutable release snapshots
+        run: pnpm install --frozen-lockfile
+      - name: Lint, typecheck and test language tools
+        working-directory: interlis-language-tools
+        run: pnpm check
+      - name: Enforce core coverage thresholds
+        working-directory: interlis-language-tools
+        run: pnpm --filter @ilic/language-service test:coverage
+      - name: Check production licenses and vulnerabilities
+        working-directory: interlis-language-tools
+        run: pnpm licenses:check && pnpm security:check
+      - name: Select unique snapshot timestamp
+        id: stage_timestamp
+        shell: bash
+        run: echo "timestamp=$(date -u +%Y%m%d%H%M%S)" >> "$GITHUB_OUTPUT"
+      - name: Stage and verify all package tarballs
         id: stage
         working-directory: interlis-language-tools
         env:
-          COMPILER_VERSION: ${{ needs.resolve-compiler.outputs.version }}
+          SNAPSHOT_TIMESTAMP: ${{ steps.stage_timestamp.outputs.timestamp }}
+          SNAPSHOT_BUILD_ID: ${{ github.run_id }}
         shell: bash
         run: |
           set -euo pipefail
-          timestamp=$(date -u +%Y%m%d%H%M%S)
-          SNAPSHOT_TIMESTAMP="$timestamp" pnpm pack:verify
-          echo "snapshot_version=0.1.0-SNAPSHOT.$timestamp" >> "$GITHUB_OUTPUT"
-          echo "compiler_version=$COMPILER_VERSION" >> "$GITHUB_OUTPUT"
-      - name: Upload verified snapshot artifacts
+          pnpm pack:verify
+          echo "snapshot_version=$(node -e 'const m=require("./artifacts/npm/snapshot-manifest.json"); console.log(m.snapshotVersion)')" >> "$GITHUB_OUTPUT"
+          echo "compiler_version=$(node -e 'const m=require("./artifacts/npm/snapshot-manifest.json"); console.log(m.compilerVersion)')" >> "$GITHUB_OUTPUT"
+          echo "timestamp=$SNAPSHOT_TIMESTAMP" >> "$GITHUB_OUTPUT"
+          echo "build_id=$SNAPSHOT_BUILD_ID" >> "$GITHUB_OUTPUT"
+      - name: Create release manifest
+        working-directory: interlis-language-tools
+        env:
+          COMPILER_SHA: ${{ needs.resolve-refs.outputs.compiler_sha }}
+          LANGUAGE_TOOLS_SHA: ${{ needs.resolve-refs.outputs.language_tools_sha }}
+          RELEASE_RUN_ID: ${{ github.run_id }}
+        run: |
+          jq \
+            --arg compilerSha "$COMPILER_SHA" \
+            --arg languageToolsSha "$LANGUAGE_TOOLS_SHA" \
+            --arg releaseRunId "$RELEASE_RUN_ID" \
+            '. + {compilerSha: $compilerSha, languageToolsSha: $languageToolsSha, releaseRunId: $releaseRunId}' \
+            artifacts/npm/snapshot-manifest.json > artifacts/npm/release-manifest.json
+      - name: Upload verified release artifacts
         uses: actions/upload-artifact@v6
         with:
-          name: interlis-language-tools-npm-${{ steps.stage.outputs.snapshot_version }}
+          name: interlis-release-${{ github.run_id }}
           path: |
             interlis-language-tools/artifacts/npm/*.tgz
             interlis-language-tools/artifacts/npm/snapshot-manifest.json
+            interlis-language-tools/artifacts/npm/release-manifest.json
           if-no-files-found: error
           retention-days: 14
 
   publish:
+    name: Publish coordinated npm packages
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: read
       id-token: write
+    outputs:
+      published: ${{ steps.manifest.outputs.published }}
     steps:
       - uses: actions/download-artifact@v7
         with:
-          pattern: interlis-language-tools-npm-*
+          name: interlis-release-${{ github.run_id }}
           path: artifacts/npm
-          merge-multiple: true
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
@@ -134,11 +206,64 @@ jobs:
       - name: Install OIDC-capable npm
         run: npm install --global npm@11.18.0
       - name: Publish packages in dependency order
+        env:
+          NPM_CONFIG_PROVENANCE: true
         shell: bash
         run: |
           set -euo pipefail
-          npm publish artifacts/npm/ilic-language-service-snapshot.tgz --access public --tag snapshot
-          npm publish artifacts/npm/ilic-monaco-adapter-snapshot.tgz --access public --tag snapshot
-          npm publish artifacts/npm/ilic-diagram-snapshot.tgz --access public --tag snapshot
-          npm publish artifacts/npm/ilic-docx-snapshot.tgz --access public --tag snapshot
-          npm publish artifacts/npm/ilic-language-server-snapshot.tgz --access public --tag snapshot
+
+          publish_if_missing() {
+            local tarball="$1"
+            local package_name
+            local package_version
+            package_name=$(tar -xOf "$tarball" package/package.json | node -e 'let d=""; process.stdin.on("data", c => d += c).on("end", () => console.log(JSON.parse(d).name))')
+            package_version=$(tar -xOf "$tarball" package/package.json | node -e 'let d=""; process.stdin.on("data", c => d += c).on("end", () => console.log(JSON.parse(d).version))')
+            if npm view "$package_name@$package_version" version >/dev/null 2>&1; then
+              echo "Already published: $package_name@$package_version"
+              return
+            fi
+            npm publish "$tarball" --access public --tag snapshot
+          }
+
+          publish_if_missing artifacts/npm/ilic-tools-snapshot.tgz
+          publish_if_missing artifacts/npm/ilic-compiler-wasm-snapshot.tgz
+          publish_if_missing artifacts/npm/ilic-language-service-snapshot.tgz
+          publish_if_missing artifacts/npm/ilic-monaco-adapter-snapshot.tgz
+          publish_if_missing artifacts/npm/ilic-diagram-snapshot.tgz
+          publish_if_missing artifacts/npm/ilic-docx-snapshot.tgz
+          publish_if_missing artifacts/npm/ilic-language-server-snapshot.tgz
+      - name: Validate publication manifest
+        id: manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -e '.compilerSha and .languageToolsSha and .compilerVersion and .snapshotVersion' artifacts/npm/release-manifest.json >/dev/null
+          echo 'published=true' >> "$GITHUB_OUTPUT"
+      - name: Dispatch coordinated release to Web IDE
+        env:
+          RELEASE_DISPATCH_TOKEN: ${{ secrets.RELEASE_DISPATCH_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$RELEASE_DISPATCH_TOKEN" ]]; then
+            echo "RELEASE_DISPATCH_TOKEN is required to deploy the coordinated Web IDE release" >&2
+            exit 1
+          fi
+          payload=$(jq -c '{compiler_sha: .compilerSha, language_tools_sha: .languageToolsSha, compiler_version: .compilerVersion, language_tools_version: .snapshotVersion, timestamp, build_id: (.buildId // ""), release_run_id: .releaseRunId}' artifacts/npm/release-manifest.json)
+          jq -n --arg event "release-train-published" --argjson payload "$payload" '{event_type: $event, client_payload: $payload}' \
+            | curl --fail-with-body --silent --show-error \
+                -X POST \
+                -H "Accept: application/vnd.github+json" \
+                -H "Authorization: Bearer $RELEASE_DISPATCH_TOKEN" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                https://api.github.com/repos/edigonzales/interlis-web-ide/dispatches \
+                --data-binary @-
+      - name: Write publication summary
+        if: success()
+        run: |
+          {
+            echo '## Coordinated npm snapshot published'
+            echo
+            jq -r '"- Compiler: `\(.compilerVersion)` (\(.compilerSha))"' artifacts/npm/release-manifest.json
+            jq -r '"- Language tools: `\(.snapshotVersion)` (\(.languageToolsSha))"' artifacts/npm/release-manifest.json
+          } >> "$GITHUB_STEP_SUMMARY"

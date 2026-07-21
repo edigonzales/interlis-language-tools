@@ -73,21 +73,36 @@ export function validateTimestamp(timestamp) {
   }
 }
 
-export function languageSnapshotVersion(timestamp) {
-  validateTimestamp(timestamp);
-  return `${BASE_VERSION}-SNAPSHOT.${timestamp}`;
+export function validateBuildId(buildId) {
+  if (buildId === undefined || buildId === null || buildId === "")
+    return undefined;
+  const normalized = String(buildId);
+  if (!/^\d+$/.test(normalized)) {
+    throw new Error("Snapshot build ID must contain only digits");
+  }
+  return normalized;
 }
 
-export function compilerSnapshotVersion(timestamp) {
+function snapshotVersion(baseVersion, timestamp, buildId) {
+  const normalizedBuildId = validateBuildId(buildId);
+  return `${baseVersion}-SNAPSHOT.${timestamp}${normalizedBuildId ? `.${normalizedBuildId}` : ""}`;
+}
+
+export function languageSnapshotVersion(timestamp, buildId) {
   validateTimestamp(timestamp);
-  return `${COMPILER_BASE_VERSION}-SNAPSHOT.${timestamp}`;
+  return snapshotVersion(BASE_VERSION, timestamp, buildId);
+}
+
+export function compilerSnapshotVersion(timestamp, buildId) {
+  validateTimestamp(timestamp);
+  return snapshotVersion(COMPILER_BASE_VERSION, timestamp, buildId);
 }
 
 function compilerTimestamp(version) {
-  const match = version.match(/^0\.9\.9-SNAPSHOT\.(\d{14})$/);
+  const match = version.match(/^0\.9\.9-SNAPSHOT\.(\d{14})(?:\.\d+)?$/);
   if (!match) {
     throw new Error(
-      `Compiler version must match 0.9.9-SNAPSHOT.YYYYMMDDHHmmss, received ${version}`,
+      `Compiler version must match 0.9.9-SNAPSHOT.YYYYMMDDHHmmss[.buildId], received ${version}`,
     );
   }
   validateTimestamp(match[1]);
@@ -187,14 +202,16 @@ export async function prepareNpmSnapshot({
   compilerProjectRoot = resolve(projectRoot, "../ilic-fork"),
   outputRoot = resolve(projectRoot, "artifacts/npm"),
   timestamp = formatUtcTimestamp(),
-  compilerVersion = compilerSnapshotVersion(timestamp),
+  buildId,
+  compilerVersion = compilerSnapshotVersion(timestamp, buildId),
 } = {}) {
   projectRoot = resolve(projectRoot);
   compilerProjectRoot = resolve(compilerProjectRoot);
   outputRoot = resolve(outputRoot);
   validateTimestamp(timestamp);
+  const normalizedBuildId = validateBuildId(buildId);
   validateOutputRoot(projectRoot, outputRoot);
-  const snapshotVersion = languageSnapshotVersion(timestamp);
+  const snapshotVersion = languageSnapshotVersion(timestamp, normalizedBuildId);
   const resolvedCompilerTimestamp = compilerTimestamp(compilerVersion);
 
   const workspaceManifest = await readJson(
@@ -218,6 +235,7 @@ export async function prepareNpmSnapshot({
     projectRoot: compilerProjectRoot,
     outputRoot: resolve(outputRoot, "staging/compiler"),
     timestamp: resolvedCompilerTimestamp,
+    buildId: normalizedBuildId,
   });
   if (compiler.snapshotVersion !== compilerVersion) {
     throw new Error(
@@ -281,6 +299,7 @@ export async function prepareNpmSnapshot({
   const result = {
     schemaVersion: 1,
     timestamp,
+    buildId: normalizedBuildId ?? null,
     snapshotVersion,
     compilerVersion,
     outputRoot,
@@ -292,6 +311,7 @@ export async function prepareNpmSnapshot({
       {
         schemaVersion: result.schemaVersion,
         timestamp,
+        buildId: result.buildId,
         snapshotVersion,
         compilerVersion,
         packages: Object.fromEntries(
@@ -320,6 +340,7 @@ function parseArguments(argv) {
         "--compiler-project-root",
         "--output",
         "--timestamp",
+        "--build-id",
         "--compiler-version",
         "--github-output",
       ].includes(argument)
@@ -331,6 +352,7 @@ function parseArguments(argv) {
         options.compilerProjectRoot = resolve(value);
       } else if (argument === "--output") options.outputRoot = resolve(value);
       else if (argument === "--timestamp") options.timestamp = value;
+      else if (argument === "--build-id") options.buildId = value;
       else if (argument === "--compiler-version")
         options.compilerVersion = value;
       else githubOutput = value;

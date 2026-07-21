@@ -8,6 +8,7 @@ const root = resolve(import.meta.dirname, "..");
 const artifacts = resolve(root, "artifacts/npm");
 const consumer = resolve(artifacts, "consumer");
 const timestamp = process.env.SNAPSHOT_TIMESTAMP ?? "20260101000000";
+const buildId = process.env.SNAPSHOT_BUILD_ID;
 const compilerVersion = process.env.COMPILER_VERSION;
 
 function run(command, args, cwd = root) {
@@ -32,6 +33,7 @@ const result = await prepareNpmSnapshot({
   projectRoot: root,
   outputRoot: artifacts,
   timestamp,
+  ...(buildId ? { buildId } : {}),
   ...(compilerVersion ? { compilerVersion } : {}),
 });
 await mkdir(consumer, { recursive: true });
@@ -96,7 +98,7 @@ for (const [name, expectedVersion] of expectedVersions) {
     if (expectedVersions.has(dependency)) {
       assert.match(
         version,
-        /^\d+\.\d+\.\d+-SNAPSHOT\.\d{14}$/,
+        /^\d+\.\d+\.\d+-SNAPSHOT\.\d{14}(?:\.\d+)?$/,
         `${name} contains moving internal dependency ${dependency}@${version}`,
       );
     }
@@ -108,6 +110,7 @@ const snapshotManifest = JSON.parse(
 );
 assert.equal(snapshotManifest.snapshotVersion, result.snapshotVersion);
 assert.equal(snapshotManifest.compilerVersion, result.compilerVersion);
+assert.equal(snapshotManifest.buildId, result.buildId ?? null);
 
 await writeFile(
   resolve(consumer, "package.json"),
