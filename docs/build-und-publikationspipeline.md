@@ -183,7 +183,8 @@ Ereignis `release-train-published` an `interlis-web-ide`. Der Payload enthält:
 }
 ```
 
-Der Dispatch erfolgt nach allen sieben npm-Publishes. Fehlt das Secret
+Der Dispatch erfolgt nach der Publikation der fünf Language-Pakete; die beiden
+Compiler-Pakete wurden zuvor aus `ilic-fork` publiziert. Fehlt das Secret
 `RELEASE_DISPATCH_TOKEN` oder scheitert der API-Aufruf, können die Pakete daher
 bereits vollständig publiziert sein. Ein erneuter Lauf mit derselben
 Workflow-Run-ID überspringt vorhandene Versionen und kann die Übergabe erneut
@@ -223,6 +224,16 @@ Open-VSX-Release ändert keine npm-Version und löst keinen Web-IDE-Deploy aus.
 Der Compiler-Dispatch in dieses Repository wird mit dem gleichnamigen Secret
 im `ilic-fork`-Repository authentisiert. GitHub Pages benötigt kein Secret aus
 diesem Repository.
+
+`RELEASE_DISPATCH_TOKEN` ist ein GitHub-API-Token für den
+Cross-Repository-Dispatch, kein npm-Token. Das Secret dieses Repositories wird
+unter `Settings → Secrets and variables → Actions` gespeichert und darf nur
+`edigonzales/interlis-web-ide` dispatchen. Für ein empfohlenes Fine-grained
+Token wird ausschließlich dieses Ziel-Repository mit
+`Contents: Read and write` ausgewählt. Das Gegenstück im Compiler-Repository
+heißt ebenfalls `RELEASE_DISPATCH_TOKEN`, darf aber nur den Dispatch an dieses
+Repository auslösen. npm Trusted Publishing verwendet weiterhin OIDC und
+benötigt dieses Secret nicht.
 
 ## Pinning und lokale Abweichungen
 

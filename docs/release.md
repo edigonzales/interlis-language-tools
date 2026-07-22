@@ -95,6 +95,15 @@ Missing Marketplace credentials do not block the sibling publication job or
 artifact creation. GitHub Pages uses GitHub's own OIDC permissions in the Web
 IDE repository and needs no manually configured secret.
 
+`RELEASE_DISPATCH_TOKEN` is a GitHub API credential, not an npm credential. In
+this repository it is stored under `Settings → Secrets and variables →
+Actions` and is used only to send `release-train-published` to
+`edigonzales/interlis-web-ide`. A recommended fine-grained token is restricted
+to that target repository with `Contents: Read and write`. The reverse
+direction uses a separate secret with the same name in `ilic-fork`, targeting
+`interlis-language-tools`. npm publication remains token-free through GitHub
+OIDC.
+
 ## npm trusted-publisher bootstrap
 
 `@ilic/tools` and `@ilic/compiler-wasm` already exist on npm. Their Trusted
@@ -193,8 +202,9 @@ done
 1. A successful `ilic-fork` `main` CI run requests a release train, or a
    successful language-tools `main` push starts one directly.
 2. The release train captures both source SHAs, builds native and WASM
-   compiler artifacts, verifies all seven packages, and publishes them in
-   dependency order.
+   compiler artifacts, verifies all seven packages, and publishes the five
+   language packages in dependency order. The two compiler packages were
+   already published by `ilic-fork`.
 3. A repeat of the same workflow skips package versions that already exist and
    can finish a partially completed publication.
 4. The workflow dispatches the exact source pair to the Web IDE Pages build.
