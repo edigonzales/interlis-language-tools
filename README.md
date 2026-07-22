@@ -106,7 +106,9 @@ files are written below `artifacts/` and are never committed.
 CI always produces verified npm tarballs and a universal VSIX. npm publication
 uses GitHub OIDC trusted publishing and has no repository secret. Marketplace
 publication uses only `VSCE_PAT` and `OVSX_PAT`; a missing secret skips only its
-external publish step. See [release process](docs/release.md),
+external publish step. See the detailed
+[build and publication pipeline](docs/build-und-publikationspipeline.md),
+[release process](docs/release.md),
 [test strategy](docs/testing.md), [capability matrix](docs/capability-matrix.md)
 and [Java-LSP migration](docs/migration-from-java-lsp.md). Repository source
 layers, caches and the temporary browser aliases are described in
