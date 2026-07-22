@@ -54,6 +54,9 @@ const doMock = (
     ) => unknown
   )(path, factory, options);
 
+const restoreViewportMock = vi.fn();
+const captureViewportMock = vi.fn();
+
 class FakeDiagramController {
   state: {
     status: "empty" | "ready" | "error";
@@ -94,7 +97,7 @@ doMock(
   "@ilic/diagram",
   () => ({
     DiagramController: FakeDiagramController,
-    captureViewport: vi.fn(),
+    captureViewport: captureViewportMock,
     defaultDiagramSettings: {
       edgeRouting: "POLYLINE",
       attributeMode: "OWN",
@@ -106,14 +109,16 @@ doMock(
     layoutAndRenderDiagram: vi.fn(() =>
       Promise.resolve({ layout: {}, svg: '<svg id="diagram"></svg>' }),
     ),
-    restoreViewport: vi.fn(),
+    restoreViewport: restoreViewportMock,
     sourceLocationForNode: vi.fn(),
   }),
   { virtual: true },
 );
 
-const { openDiagramOnStartup, registerDiagramWorkflows } =
-  await import("./diagram-view.js");
+const {
+  openDiagramOnStartup,
+  registerDiagramWorkflows,
+} = await import("./diagram-view.js");
 
 type StartupDocument = NonNullable<Parameters<typeof openDiagramOnStartup>[1]>;
 type DiagramUri = StartupDocument["uri"];
@@ -149,6 +154,8 @@ describe("VS Code startup diagram", () => {
     );
     activeEditorListeners.length = 0;
     documentChangeListeners.length = 0;
+    captureViewportMock.mockReset();
+    restoreViewportMock.mockReset();
     vscodeMock.window.createWebviewPanel.mockReset();
     setActiveDocument(undefined);
   });
@@ -306,6 +313,97 @@ describe("VS Code startup diagram", () => {
 
     expect(vscodeMock.window.createWebviewPanel).toHaveBeenCalledOnce();
     expect(panel.reveal).toHaveBeenCalledWith(2, true);
+  });
+
+  it("restores the saved zoom and position when the diagram is refreshed", async () => {
+    const active = document("file:///Zoom.ili");
+    setActiveDocument(active);
+    let receiveMessage:
+      | ((message: { type?: string; value?: unknown }) => void)
+      | undefined;
+    let semanticChanged:
+      | ((params: unknown) => void)
+      | undefined;
+    const panel = {
+      active: true,
+      webview: {
+        html: "",
+        onDidReceiveMessage: vi.fn(
+          (handler: (message: { type?: string; value?: unknown }) => void) => {
+            receiveMessage = handler;
+            return { dispose: vi.fn() };
+          },
+        ),
+      },
+      onDidDispose: vi.fn(),
+      reveal: vi.fn(),
+    };
+    vscodeMock.window.createWebviewPanel.mockReturnValue(panel);
+    const sendRequest = vi.fn(() =>
+      Promise.resolve({
+        freshness: "fresh",
+        generation: 1,
+        snapshot: {
+          success: true,
+          documentVersions: { "file:///Zoom.ili": 1 },
+          diagram: { nodes: [], edges: [] },
+        },
+      }),
+    );
+    const client = {
+      sendRequest,
+      onNotification: vi.fn(
+        (_method: string, handler: (params: unknown) => void) => {
+          semanticChanged = handler;
+          return { dispose: vi.fn() };
+        },
+      ),
+    } as unknown as LanguageClient;
+    const workflows = registerDiagramWorkflows(
+      { subscriptions: [] } as unknown as ExtensionContext,
+      client,
+    );
+
+    restoreViewportMock.mockReturnValue({
+      zoom: 2,
+      scrollX: 10,
+      scrollY: 20,
+      width: 900,
+      height: 700,
+    });
+    captureViewportMock.mockReturnValue({
+      anchorId: null,
+      zoom: 2,
+      offsetX: 0,
+      offsetY: 0,
+    });
+    await workflows.open(asDiagramUri(active.uri));
+    receiveMessage?.({
+      type: "viewport",
+      value: {
+        zoom: 2,
+        scrollX: 10,
+        scrollY: 20,
+        width: 900,
+        height: 700,
+      },
+    });
+    semanticChanged?.({
+      runId: 2,
+      trigger: "save",
+      rootUri: "file:///Zoom.ili",
+      documentVersion: 2,
+      generation: 2,
+      success: true,
+      freshness: "fresh",
+      sourceUris: ["file:///Zoom.ili"],
+    });
+
+    await vi.waitFor(() => {
+      expect(panel.webview.html).toContain("initialScrollX=10");
+      expect(panel.webview.html).toContain("initialScrollY=20");
+      expect(panel.webview.html).toContain("Math.max(MIN_ZOOM,2)");
+    });
   });
 
   it("refreshes an open diagram after a fresh semantic notification", async () => {
@@ -486,6 +584,10 @@ describe("VS Code startup diagram", () => {
     expect(sendRequest).toHaveBeenCalledTimes(1);
     expect(panel.webview.html).toContain("current model contains errors");
     expect(panel.webview.html).toContain('id="diagram"');
+    expect(rendered).toContain("MIN_ZOOM=0.25");
+    expect(rendered).toContain("event.button!==1");
+    expect(rendered).toContain("scrollX:viewport.scrollLeft/zoom");
+    expect(rendered).toContain("event.preventDefault()");
     expect(rendered).not.toBe("");
   });
 

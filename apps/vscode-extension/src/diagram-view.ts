@@ -76,17 +76,40 @@ function html(state: ViewState, svg: string, initial: Viewport | null): string {
     html,body{height:100%;margin:0;font-family:var(--vscode-font-family)}
     header{height:36px;display:flex;align-items:center;gap:8px;padding:0 10px;border-bottom:1px solid var(--vscode-panel-border)}
     #status{flex:1;color:${status.status === "stale" || status.status === "error" ? "var(--vscode-editorWarning-foreground)" : "var(--vscode-descriptionForeground)"}}
-    #viewport{height:calc(100% - 37px);overflow:auto;background:#fff} svg{min-width:100%;min-height:100%}
+    #viewport{height:calc(100% - 37px);overflow:auto;background:#fff;overscroll-behavior:contain}
+    #surface{position:relative;min-width:100%;min-height:100%}
+    #surface svg{display:block;min-width:0;min-height:0;user-select:none}
+    #viewport.is-panning{cursor:grabbing}
     button{color:var(--vscode-button-foreground);background:var(--vscode-button-background);border:0;padding:4px 9px}
     .ili-node{cursor:pointer}.ili-title{font-weight:600}.ili-members text,.ili-edge-label{font-size:12px}
-  </style></head><body><header><span id="status">${status.message}</span><button id="refresh">Refresh / Auto-layout</button><button id="fit">Fit</button></header><div id="viewport">${svg}</div><script>
-    const vscode=acquireVsCodeApi(); const viewport=document.getElementById('viewport');
+  </style></head><body><header><span id="status">${status.message}</span><button id="refresh">Refresh / Auto-layout</button><button id="fit">Fit</button></header><div id="viewport"><div id="surface">${svg}</div></div><script>
+    const vscode=acquireVsCodeApi();
+    const viewport=document.getElementById('viewport');
+    const surface=document.getElementById('surface');
+    const diagram=surface?.querySelector('svg');
+    const MIN_ZOOM=0.25; const MAX_ZOOM=3; const ZOOM_FACTOR=1.1;
+    let zoom=Math.min(MAX_ZOOM,Math.max(MIN_ZOOM,${initial?.zoom ?? 1}));
+    const initialScrollX=${initial?.scrollX ?? 0};
+    const initialScrollY=${initial?.scrollY ?? 0};
+    const viewBox=diagram?.viewBox?.baseVal;
+    const baseWidth=viewBox?.width || diagram?.getBoundingClientRect().width || 1;
+    const baseHeight=viewBox?.height || diagram?.getBoundingClientRect().height || 1;
+    const clampZoom=(value)=>Math.min(MAX_ZOOM,Math.max(MIN_ZOOM,value));
+    const sendViewport=()=>{clearTimeout(sendViewport.timer);sendViewport.timer=setTimeout(()=>vscode.postMessage({type:'viewport',value:{zoom,scrollX:viewport.scrollLeft/zoom,scrollY:viewport.scrollTop/zoom,width:viewport.clientWidth,height:viewport.clientHeight}}),50)};
+    const syncSurface=()=>{if(!diagram||!surface)return;diagram.style.width=(baseWidth*zoom)+'px';diagram.style.height=(baseHeight*zoom)+'px';surface.style.width=Math.max(baseWidth*zoom,viewport.clientWidth)+'px';surface.style.height=Math.max(baseHeight*zoom,viewport.clientHeight)+'px'};
+    const setZoom=(next,cursorX=viewport.clientWidth/2,cursorY=viewport.clientHeight/2)=>{const target=clampZoom(next);if(target===zoom)return;const worldX=(viewport.scrollLeft+cursorX)/zoom;const worldY=(viewport.scrollTop+cursorY)/zoom;zoom=target;syncSurface();viewport.scrollLeft=worldX*zoom-cursorX;viewport.scrollTop=worldY*zoom-cursorY;sendViewport()};
     document.getElementById('refresh').onclick=()=>vscode.postMessage({type:'refresh'});
-    document.getElementById('fit').onclick=()=>viewport.scrollTo(0,0);
+    document.getElementById('fit').onclick=()=>{zoom=1;syncSurface();viewport.scrollTo(0,0);sendViewport()};
     viewport.ondblclick=(event)=>{const node=event.target.closest('[data-symbol-id]');if(node)vscode.postMessage({type:'navigate',id:node.dataset.symbolId});};
-    let timer; const sendViewport=()=>{clearTimeout(timer);timer=setTimeout(()=>vscode.postMessage({type:'viewport',value:{zoom:1,scrollX:viewport.scrollLeft,scrollY:viewport.scrollTop,width:viewport.clientWidth,height:viewport.clientHeight}}),50)};
-    viewport.addEventListener('scroll',sendViewport); viewport.addEventListener('wheel',sendViewport);
-    viewport.scrollTo(${initial?.scrollX ?? 0},${initial?.scrollY ?? 0});
+    viewport.addEventListener('scroll',sendViewport);
+    viewport.addEventListener('wheel',(event)=>{event.preventDefault();if(event.deltaY===0)return;const bounds=viewport.getBoundingClientRect();setZoom(zoom*(event.deltaY<0?ZOOM_FACTOR:1/ZOOM_FACTOR),event.clientX-bounds.left,event.clientY-bounds.top)},{passive:false});
+    let panPointer=-1; let panStartX=0; let panStartY=0; let panScrollX=0; let panScrollY=0;
+    viewport.addEventListener('pointerdown',(event)=>{if(event.button!==1)return;event.preventDefault();panPointer=event.pointerId;panStartX=event.clientX;panStartY=event.clientY;panScrollX=viewport.scrollLeft;panScrollY=viewport.scrollTop;viewport.classList.add('is-panning');viewport.setPointerCapture?.(event.pointerId)});
+    viewport.addEventListener('pointermove',(event)=>{if(event.pointerId!==panPointer)return;event.preventDefault();viewport.scrollLeft=panScrollX-(event.clientX-panStartX);viewport.scrollTop=panScrollY-(event.clientY-panStartY)});
+    const stopPan=(event)=>{if(event.pointerId!==panPointer)return;const pointer=panPointer;panPointer=-1;viewport.classList.remove('is-panning');if(event.type!=='lostpointercapture'&&viewport.hasPointerCapture?.(pointer))viewport.releasePointerCapture(pointer);sendViewport()};
+    viewport.addEventListener('pointerup',stopPan); viewport.addEventListener('pointercancel',stopPan); viewport.addEventListener('lostpointercapture',stopPan);
+    viewport.addEventListener('auxclick',(event)=>{if(event.button===1)event.preventDefault()});
+    syncSurface(); viewport.scrollTo(initialScrollX*zoom,initialScrollY*zoom);
   </script></body></html>`;
 }
 
