@@ -1,4 +1,4 @@
-import { chmod, copyFile, mkdir, rm } from "node:fs/promises";
+import { access, chmod, copyFile, mkdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { build } from "esbuild";
 
@@ -6,6 +6,20 @@ const root = resolve(import.meta.dirname, "..");
 const extension = resolve(root, "apps/vscode-extension");
 const dist = resolve(extension, "dist");
 const compiler = resolve(root, "../ilic-fork/packages/compiler-wasm");
+const compilerWasm = resolve(compiler, "ilic.wasm");
+
+try {
+  await access(compilerWasm);
+} catch (error) {
+  if (error?.code === "ENOENT") {
+    throw new Error(
+      `The compiler WASM artifact is missing at ${compilerWasm}. Run ` +
+        "cd ../ilic-fork && ./scripts/build-wasm.sh" +
+        " before building the extension.",
+    );
+  }
+  throw error;
+}
 
 await rm(dist, { recursive: true, force: true });
 await mkdir(dist, { recursive: true });
@@ -67,7 +81,7 @@ const terminateProcess = resolve(
 const bundledTerminateProcess = resolve(dist, "terminateProcess.sh");
 
 await Promise.all([
-  copyFile(resolve(compiler, "ilic.wasm"), resolve(dist, "ilic.wasm")),
+  copyFile(compilerWasm, resolve(dist, "ilic.wasm")),
   copyFile(terminateProcess, bundledTerminateProcess),
 ]);
 await chmod(bundledTerminateProcess, 0o755);

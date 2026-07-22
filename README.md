@@ -54,11 +54,12 @@ interlis-language-tools/
 interlis-web-ide/
 ```
 
-Build the pinned compiler WASM once, then install and verify this workspace:
+Build the pinned compiler WASM once, then install and verify this workspace. The
+build script automatically installs and activates the pinned Emscripten SDK when
+it is not already available:
 
 ```sh
 cd ../ilic-fork
-emcc --version
 ./scripts/build-wasm.sh
 
 cd ../interlis-language-tools
@@ -77,8 +78,10 @@ the Development Host and opens `examples/dev-workspace`. The example resolves
 `LocalCatalog` from the workspace and `Units` from the configured repository.
 
 After C++ or WASM changes, run `../ilic-fork/scripts/build-wasm.sh` again before
-F5. Pure TypeScript changes need no separate build. To test the installable
-artifact instead:
+F5, or use the `build compiler WASM` task in VS Code. Pure TypeScript changes
+need no separate build. The default SDK location is `../emsdk`; set
+`ILIC_EMSDK_DIR` to use another location. Set `ILIC_WASM_AUTO_SETUP=0` to
+disable automatic installation. To test the installable artifact instead:
 
 ```sh
 corepack pnpm package:vsix

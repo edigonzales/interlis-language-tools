@@ -13,6 +13,15 @@
         "isDefault": true
       },
       "problemMatcher": "$tsc"
+    },
+    {
+      "label": "build compiler WASM",
+      "type": "shell",
+      "command": "./scripts/build-wasm.sh",
+      "options": {
+        "cwd": "${workspaceFolder}/../ilic-fork"
+      },
+      "problemMatcher": []
     }
   ]
 }

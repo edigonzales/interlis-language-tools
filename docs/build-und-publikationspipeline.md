@@ -24,11 +24,11 @@ flowchart LR
 
 ## Workflows und Verantwortung
 
-| Workflow                                                                                      | Trigger                                                | Verantwortung                                                                                     |
-| --------------------------------------------------------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
+| Workflow                                                                                      | Trigger                                                                                                                      | Verantwortung                                                                                     |
+| --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)                                     | Push auf `main` oder `codex/**` (ausser reine Markdown-Änderungen), Pull Request (ausser reine Markdown-Änderungen), manuell | Workspace, npm-Tarballs und universelle VSIX prüfen; installierbare Artefakte 14 Tage aufbewahren |
-| [`.github/workflows/publish-npm-snapshot.yml`](../.github/workflows/publish-npm-snapshot.yml) | erfolgreiche CI nach Push auf `main`, `release-train-requested`, manuell | Exakte Quellstände bauen, fünf Language-Pakete publizieren und Web IDE dispatchen                |
-| [`.github/workflows/release.yml`](../.github/workflows/release.yml)                           | nur manuell                                            | VSIX bauen und unabhängig zu VS Code Marketplace und Open VSX publizieren                         |
+| [`.github/workflows/publish-npm-snapshot.yml`](../.github/workflows/publish-npm-snapshot.yml) | erfolgreiche CI nach Push auf `main`, `release-train-requested`, manuell                                                     | Exakte Quellstände bauen, fünf Language-Pakete publizieren und Web IDE dispatchen                 |
+| [`.github/workflows/release.yml`](../.github/workflows/release.yml)                           | nur manuell                                                                                                                  | VSIX bauen und unabhängig zu VS Code Marketplace und Open VSX publizieren                         |
 
 CI, npm-Snapshots und Extension-Veröffentlichung sind getrennte Abläufe. Ein
 grüner CI-Artefakt wird nicht ungeprüft weitergereicht: Der Release-Train baut
@@ -83,11 +83,11 @@ Der Publish-Workflow serialisiert alle Läufe in der Concurrency-Gruppe
 `release-train`; ein neuer Lauf bricht einen laufenden nicht ab. Er kann auf
 drei Wegen beginnen:
 
-| Ereignis                              | Compiler-Revision                                              | Language-Tools-Revision                                                    |
-| ------------------------------------- | -------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| erfolgreicher `workflow_run` nach Push auf `main` | `gitHead` der einmalig vom npm-`snapshot`-Tag aufgelösten Compiler-Version (sonst Compiler-`main`) | exakter `github.event.workflow_run.head_sha` |
-| `repository_dispatch` aus `ilic-fork` | `client_payload.compiler_sha` und `client_payload.compiler_version` | aktueller Language-Tools-SHA, zu Beginn auf einen vollständigen Commit aufgelöst |
-| manueller Start                       | optionaler vollständiger `compiler_sha` und `compiler_version`, sonst Compiler-`main` und aktueller npm-Compiler-Snapshot | optionaler vollständiger `language_tools_sha`, sonst Language-Tools-`main` |
+| Ereignis                                          | Compiler-Revision                                                                                                         | Language-Tools-Revision                                                          |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| erfolgreicher `workflow_run` nach Push auf `main` | `gitHead` der einmalig vom npm-`snapshot`-Tag aufgelösten Compiler-Version (sonst Compiler-`main`)                        | exakter `github.event.workflow_run.head_sha`                                     |
+| `repository_dispatch` aus `ilic-fork`             | `client_payload.compiler_sha` und `client_payload.compiler_version`                                                       | aktueller Language-Tools-SHA, zu Beginn auf einen vollständigen Commit aufgelöst |
+| manueller Start                                   | optionaler vollständiger `compiler_sha` und `compiler_version`, sonst Compiler-`main` und aktueller npm-Compiler-Snapshot | optionaler vollständiger `language_tools_sha`, sonst Language-Tools-`main`       |
 
 `resolve-refs` akzeptiert nur vollständige, 40-stellige Commit-SHAs. Seine
 Outputs werden für alle folgenden Checkouts verwendet. Damit bleibt die
@@ -136,9 +136,9 @@ Der Stager verändert keine eingecheckten Manifeste. Er erzeugt unter
 `artifacts/npm/` sieben Tarballs mit zwei Basisversionslinien. Compiler- und
 Language-Pakete behalten dabei bewusst getrennte Zeitstempel und Run-IDs:
 
-| Paketgruppe    | Pakete                                                                                                   | Version                               |
-| -------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------- |
-| Compiler       | `@ilic/tools`, `@ilic/compiler-wasm`                                                                     | exakte publizierte `compilerVersion` aus dem Dispatch |
+| Paketgruppe    | Pakete                                                                                                   | Version                                                 |
+| -------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| Compiler       | `@ilic/tools`, `@ilic/compiler-wasm`                                                                     | exakte publizierte `compilerVersion` aus dem Dispatch   |
 | Language Tools | `@ilic/language-service`, `@ilic/monaco-adapter`, `@ilic/diagram`, `@ilic/docx`, `@ilic/language-server` | `0.1.0-SNAPSHOT.<language-timestamp>.<language-run-id>` |
 
 Alle internen Abhängigkeiten in den gepackten Manifesten zeigen auf exakte
@@ -282,8 +282,9 @@ Werte. Ein lokaler Erfolg beweist somit weder die npm-Berechtigung noch die
 
 ## Lokal dieselben Gates ausführen
 
-Die drei Repositories müssen als Geschwisterverzeichnisse vorliegen. Nach
-Aktivierung der zum Compiler passenden Emscripten-Umgebung:
+Die drei Repositories müssen als Geschwisterverzeichnisse vorliegen. Das
+Compiler-Skript richtet die passende Emscripten-Umgebung bei Bedarf automatisch
+ein:
 
 ```sh
 cd ../ilic-fork
