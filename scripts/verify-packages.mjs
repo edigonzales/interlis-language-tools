@@ -7,9 +7,10 @@ import { prepareNpmSnapshot } from "./prepare-npm-snapshot.mjs";
 const root = resolve(import.meta.dirname, "..");
 const artifacts = resolve(root, "artifacts/npm");
 const consumer = resolve(artifacts, "consumer");
-const timestamp = process.env.SNAPSHOT_TIMESTAMP ?? "20260101000000";
-const buildId = process.env.SNAPSHOT_BUILD_ID;
-const compilerVersion = process.env.COMPILER_VERSION;
+const timestamp = process.env.SNAPSHOT_TIMESTAMP || "20260101000000";
+const buildId = process.env.SNAPSHOT_BUILD_ID || undefined;
+const compilerVersion = process.env.COMPILER_VERSION || undefined;
+const expectedLanguageVersion = process.env.LANGUAGE_TOOLS_VERSION || undefined;
 
 function run(command, args, cwd = root) {
   const result = spawnSync(command, args, {
@@ -36,6 +37,9 @@ const result = await prepareNpmSnapshot({
   ...(buildId ? { buildId } : {}),
   ...(compilerVersion ? { compilerVersion } : {}),
 });
+if (expectedLanguageVersion) {
+  assert.equal(result.snapshotVersion, expectedLanguageVersion);
+}
 await mkdir(consumer, { recursive: true });
 
 const expectedVersions = new Map([
@@ -111,6 +115,8 @@ const snapshotManifest = JSON.parse(
 assert.equal(snapshotManifest.snapshotVersion, result.snapshotVersion);
 assert.equal(snapshotManifest.compilerVersion, result.compilerVersion);
 assert.equal(snapshotManifest.buildId, result.buildId ?? null);
+assert.equal(snapshotManifest.compilerTimestamp, result.compilerTimestamp);
+assert.equal(snapshotManifest.compilerBuildId, result.compilerBuildId ?? null);
 
 await writeFile(
   resolve(consumer, "package.json"),

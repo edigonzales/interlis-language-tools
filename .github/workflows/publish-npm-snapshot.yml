@@ -11,6 +11,10 @@ on:
         description: Optional ilic-fork commit SHA (40 hex characters)
         required: false
         type: string
+      compiler_version:
+        description: Optional exact published compiler snapshot version
+        required: false
+        type: string
       language_tools_sha:
         description: Optional language-tools commit SHA (40 hex characters)
         required: false
@@ -29,14 +33,17 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       compiler_sha: ${{ steps.resolve.outputs.compiler_sha }}
+      compiler_version: ${{ steps.resolve.outputs.compiler_version }}
       language_tools_sha: ${{ steps.resolve.outputs.language_tools_sha }}
     steps:
       - name: Resolve exact source revisions
         id: resolve
         env:
           EVENT_COMPILER_SHA: ${{ github.event.client_payload.compiler_sha }}
+          EVENT_COMPILER_VERSION: ${{ github.event.client_payload.compiler_version }}
           EVENT_LANGUAGE_TOOLS_SHA: ${{ github.event.client_payload.language_tools_sha }}
           INPUT_COMPILER_SHA: ${{ inputs.compiler_sha }}
+          INPUT_COMPILER_VERSION: ${{ inputs.compiler_version }}
           INPUT_LANGUAGE_TOOLS_SHA: ${{ inputs.language_tools_sha }}
         shell: bash
         run: |
@@ -47,10 +54,28 @@ jobs:
           }
 
           compiler_sha="${INPUT_COMPILER_SHA:-${EVENT_COMPILER_SHA:-}}"
+          compiler_version="${INPUT_COMPILER_VERSION:-${EVENT_COMPILER_VERSION:-}}"
           language_tools_sha="${INPUT_LANGUAGE_TOOLS_SHA:-${EVENT_LANGUAGE_TOOLS_SHA:-}}"
 
+          if [[ -n "$compiler_sha" && -z "$compiler_version" ]]; then
+            echo "compiler_version is required when compiler_sha is supplied" >&2
+            exit 1
+          fi
+          if [[ -n "$compiler_version" && -z "$compiler_sha" ]]; then
+            echo "compiler_sha is required when compiler_version is supplied" >&2
+            exit 1
+          fi
+
+          if [[ -z "$compiler_version" ]]; then
+            compiler_version=$(npm view @ilic/tools@snapshot version)
+          fi
           if [[ -z "$compiler_sha" ]]; then
-            compiler_sha=$(main_sha edigonzales/ilic-fork)
+            resolved_compiler_sha=$(npm view "@ilic/tools@$compiler_version" gitHead 2>/dev/null || true)
+            if [[ "$resolved_compiler_sha" =~ ^[0-9a-f]{40}$ ]]; then
+              compiler_sha="$resolved_compiler_sha"
+            else
+              compiler_sha=$(main_sha edigonzales/ilic-fork)
+            fi
           fi
           if [[ -z "$language_tools_sha" ]]; then
             if [[ "${{ github.event_name }}" == "push" ]]; then
@@ -66,10 +91,26 @@ jobs:
               exit 1
             fi
           done
+          if [[ ! "$compiler_version" =~ ^0\.9\.9-SNAPSHOT\.[0-9]{14}(\.[0-9]+)?$ ]]; then
+            echo "Expected an exact compiler snapshot version, received: $compiler_version" >&2
+            exit 1
+          fi
+          for package_name in @ilic/tools @ilic/compiler-wasm; do
+            if [[ "$(npm view "$package_name@$compiler_version" version 2>/dev/null || true)" != "$compiler_version" ]]; then
+              echo "$package_name@$compiler_version is not available on npm" >&2
+              exit 1
+            fi
+            package_git_head=$(npm view "$package_name@$compiler_version" gitHead 2>/dev/null || true)
+            if [[ -n "$package_git_head" && "$package_git_head" != "$compiler_sha" ]]; then
+              echo "$package_name@$compiler_version was built from $package_git_head, expected $compiler_sha" >&2
+              exit 1
+            fi
+          done
 
           echo "compiler_sha=$compiler_sha" >> "$GITHUB_OUTPUT"
+          echo "compiler_version=$compiler_version" >> "$GITHUB_OUTPUT"
           echo "language_tools_sha=$language_tools_sha" >> "$GITHUB_OUTPUT"
-          printf 'Compiler SHA: %s\nLanguage-tools SHA: %s\n' "$compiler_sha" "$language_tools_sha"
+          printf 'Compiler SHA: %s\nCompiler version: %s\nLanguage-tools SHA: %s\n' "$compiler_sha" "$compiler_version" "$language_tools_sha"
 
   build:
     name: Build and verify coordinated packages
@@ -81,6 +122,8 @@ jobs:
       compiler_version: ${{ steps.stage.outputs.compiler_version }}
       timestamp: ${{ steps.stage.outputs.timestamp }}
       build_id: ${{ steps.stage.outputs.build_id }}
+      language_timestamp: ${{ steps.stage.outputs.language_timestamp }}
+      language_build_id: ${{ steps.stage.outputs.language_build_id }}
     steps:
       - name: Checkout language tools
         uses: actions/checkout@v6
@@ -160,6 +203,7 @@ jobs:
         env:
           SNAPSHOT_TIMESTAMP: ${{ steps.stage_timestamp.outputs.timestamp }}
           SNAPSHOT_BUILD_ID: ${{ github.run_id }}
+          COMPILER_VERSION: ${{ needs.resolve-refs.outputs.compiler_version }}
         shell: bash
         run: |
           set -euo pipefail
@@ -168,6 +212,8 @@ jobs:
           echo "compiler_version=$(node -e 'const m=require("./artifacts/npm/snapshot-manifest.json"); console.log(m.compilerVersion)')" >> "$GITHUB_OUTPUT"
           echo "timestamp=$SNAPSHOT_TIMESTAMP" >> "$GITHUB_OUTPUT"
           echo "build_id=$SNAPSHOT_BUILD_ID" >> "$GITHUB_OUTPUT"
+          echo "language_timestamp=$SNAPSHOT_TIMESTAMP" >> "$GITHUB_OUTPUT"
+          echo "language_build_id=$SNAPSHOT_BUILD_ID" >> "$GITHUB_OUTPUT"
       - name: Create release manifest
         working-directory: interlis-language-tools
         env:
@@ -179,7 +225,15 @@ jobs:
             --arg compilerSha "$COMPILER_SHA" \
             --arg languageToolsSha "$LANGUAGE_TOOLS_SHA" \
             --arg releaseRunId "$RELEASE_RUN_ID" \
-            '. + {compilerSha: $compilerSha, languageToolsSha: $languageToolsSha, releaseRunId: $releaseRunId}' \
+            '. + {
+              compilerSha: $compilerSha,
+              languageToolsSha: $languageToolsSha,
+              releaseRunId: $releaseRunId,
+              languageTimestamp: .timestamp,
+              languageBuildId: .buildId,
+              compilerTimestamp,
+              compilerBuildId
+            }' \
             artifacts/npm/snapshot-manifest.json > artifacts/npm/release-manifest.json
       - name: Upload verified release artifacts
         uses: actions/upload-artifact@v6
@@ -234,8 +288,6 @@ jobs:
             npm publish "$tarball" --access public --tag snapshot
           }
 
-          publish_if_missing artifacts/npm/ilic-tools-snapshot.tgz
-          publish_if_missing artifacts/npm/ilic-compiler-wasm-snapshot.tgz
           publish_if_missing artifacts/npm/ilic-language-service-snapshot.tgz
           publish_if_missing artifacts/npm/ilic-monaco-adapter-snapshot.tgz
           publish_if_missing artifacts/npm/ilic-diagram-snapshot.tgz
@@ -246,7 +298,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          jq -e '.compilerSha and .languageToolsSha and .compilerVersion and .snapshotVersion' artifacts/npm/release-manifest.json >/dev/null
+          jq -e '.compilerSha and .languageToolsSha and .compilerVersion and .snapshotVersion and .languageTimestamp and .languageBuildId' artifacts/npm/release-manifest.json >/dev/null
           echo 'published=true' >> "$GITHUB_OUTPUT"
       - name: Dispatch coordinated release to Web IDE
         env:
@@ -258,7 +310,7 @@ jobs:
             echo "RELEASE_DISPATCH_TOKEN is required to deploy the coordinated Web IDE release" >&2
             exit 1
           fi
-          payload=$(jq -c '{compiler_sha: .compilerSha, language_tools_sha: .languageToolsSha, compiler_version: .compilerVersion, language_tools_version: .snapshotVersion, timestamp, build_id: (.buildId // ""), release_run_id: .releaseRunId}' artifacts/npm/release-manifest.json)
+          payload=$(jq -c '{compiler_sha: .compilerSha, language_tools_sha: .languageToolsSha, compiler_version: .compilerVersion, language_tools_version: .snapshotVersion, compiler_timestamp: .compilerTimestamp, compiler_build_id: (.compilerBuildId // ""), language_timestamp: .languageTimestamp, language_build_id: (.languageBuildId // ""), timestamp: .languageTimestamp, build_id: (.languageBuildId // ""), release_run_id: .releaseRunId}' artifacts/npm/release-manifest.json)
           jq -n --arg event "release-train-published" --argjson payload "$payload" '{event_type: $event, client_payload: $payload}' \
             | curl --fail-with-body --silent --show-error \
                 -X POST \

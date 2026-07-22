@@ -4,6 +4,7 @@ import {
   compilerSnapshotVersion,
   formatUtcTimestamp,
   languageSnapshotVersion,
+  parseCompilerSnapshotVersion,
   rewriteLanguageManifest,
   validateTimestamp,
 } from "../../scripts/prepare-npm-snapshot.mjs";
@@ -30,6 +31,17 @@ test("adds the same numeric build ID to compiler and language versions", () => {
   assert.equal(
     languageSnapshotVersion(timestamp, "12345"),
     `0.1.0-SNAPSHOT.${timestamp}.12345`,
+  );
+});
+
+test("keeps compiler and language build IDs independent", () => {
+  assert.deepEqual(
+    parseCompilerSnapshotVersion("0.9.9-SNAPSHOT.20260719190000.98765"),
+    { timestamp, buildId: "98765" },
+  );
+  assert.deepEqual(
+    parseCompilerSnapshotVersion("0.9.9-SNAPSHOT.20260719190000"),
+    { timestamp, buildId: undefined },
   );
 });
 

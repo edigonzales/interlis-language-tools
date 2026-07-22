@@ -98,15 +98,15 @@ export function compilerSnapshotVersion(timestamp, buildId) {
   return snapshotVersion(COMPILER_BASE_VERSION, timestamp, buildId);
 }
 
-function compilerTimestamp(version) {
-  const match = version.match(/^0\.9\.9-SNAPSHOT\.(\d{14})(?:\.\d+)?$/);
+export function parseCompilerSnapshotVersion(version) {
+  const match = version.match(/^0\.9\.9-SNAPSHOT\.(\d{14})(?:\.(\d+))?$/);
   if (!match) {
     throw new Error(
       `Compiler version must match 0.9.9-SNAPSHOT.YYYYMMDDHHmmss[.buildId], received ${version}`,
     );
   }
   validateTimestamp(match[1]);
-  return match[1];
+  return { timestamp: match[1], buildId: match[2] };
 }
 
 function isSameOrParent(parent, child) {
@@ -212,7 +212,7 @@ export async function prepareNpmSnapshot({
   const normalizedBuildId = validateBuildId(buildId);
   validateOutputRoot(projectRoot, outputRoot);
   const snapshotVersion = languageSnapshotVersion(timestamp, normalizedBuildId);
-  const resolvedCompilerTimestamp = compilerTimestamp(compilerVersion);
+  const compilerSnapshot = parseCompilerSnapshotVersion(compilerVersion);
 
   const workspaceManifest = await readJson(
     resolve(projectRoot, "package.json"),
@@ -234,8 +234,8 @@ export async function prepareNpmSnapshot({
   const compiler = await compilerModule.prepareNpmSnapshot({
     projectRoot: compilerProjectRoot,
     outputRoot: resolve(outputRoot, "staging/compiler"),
-    timestamp: resolvedCompilerTimestamp,
-    buildId: normalizedBuildId,
+    timestamp: compilerSnapshot.timestamp,
+    buildId: compilerSnapshot.buildId,
   });
   if (compiler.snapshotVersion !== compilerVersion) {
     throw new Error(
@@ -302,6 +302,8 @@ export async function prepareNpmSnapshot({
     buildId: normalizedBuildId ?? null,
     snapshotVersion,
     compilerVersion,
+    compilerTimestamp: compilerSnapshot.timestamp,
+    compilerBuildId: compilerSnapshot.buildId ?? null,
     outputRoot,
     packages: packageResults,
   };
@@ -314,6 +316,8 @@ export async function prepareNpmSnapshot({
         buildId: result.buildId,
         snapshotVersion,
         compilerVersion,
+        compilerTimestamp: compilerSnapshot.timestamp,
+        compilerBuildId: compilerSnapshot.buildId ?? null,
         packages: Object.fromEntries(
           Object.entries(packageResults).map(([name, value]) => [
             name,

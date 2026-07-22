@@ -1,13 +1,18 @@
 # Release process
 
+The end-to-end triggers, build gates, artifacts, permissions and hand-off to
+the Web IDE are documented in the
+[build and publication pipeline](build-und-publikationspipeline.md). This page
+covers the operational version, bootstrap, dist-tag and recovery policy.
+
 ## Version lines
 
 The coordinated development versions are:
 
-- `@ilic/compiler-wasm` and `@ilic/tools`:
-  `0.9.9-SNAPSHOT.YYYYMMDDHHmmss.<build-id>`;
-- the five language-tool packages:
-  `0.1.0-SNAPSHOT.YYYYMMDDHHmmss.<build-id>`;
+- `@ilic/compiler-wasm` and `@ilic/tools`: the exact compiler version supplied
+  by `ilic-fork`, `0.9.9-SNAPSHOT.YYYYMMDDHHmmss.<compiler-build-id>`;
+- the five language-tool packages: a separately generated version
+  `0.1.0-SNAPSHOT.YYYYMMDDHHmmss.<language-build-id>`;
 - VS Code/Open VSX extension: `0.1.0`, packaged as a pre-release;
 - browser IDE: an independently versioned private deployment package.
 
@@ -40,13 +45,14 @@ Extension publication is deliberately separate from repeatable npm snapshots.
 ## Pipelines
 
 `ci.yml` always builds and tests the sources, seven npm tarballs and the
-universal VSIX. The coordinated npm publication is started automatically for
-every successful `main` commit. The VSIX publication remains a separate manual
-release workflow:
+universal VSIX. A successful compiler publication dispatches the coordinated
+workflow with an exact compiler SHA and already published compiler version.
+This repository repeats the gates but publishes only its five language
+packages. The VSIX publication remains a separate manual release workflow:
 
 - `publish-npm-snapshot.yml` checks out exact compiler and language-tools SHAs,
-  publishes the two compiler packages followed by the five language packages,
-  and sends the completed release to the Web IDE with `repository_dispatch`;
+  verifies the two compiler packages and publishes the five language packages,
+  then sends the completed release to the Web IDE with `repository_dispatch`;
 - `release.yml` publishes the already verified VSIX to the VS Code Marketplace
   and Open VSX.
 
@@ -57,12 +63,13 @@ a coverage shortfall does not prevent the coordinated npm publication. The
 blocking gate is tracked in the [coverage backlog](../BACKLOG.md#coverage-gate-and-test-expansion)
 and will be restored after the targets are met consistently.
 
-The compiler repository dispatches its successful `main` CI revision to the
-language-tools workflow. A language-tools push starts the same workflow
-directly. The workflow captures both full commit SHAs before building, so it
-never resolves a moving compiler dist-tag. The staged manifests pin the exact
-compiler snapshot version, and `release-manifest.json` records both source
-revisions and all published versions.
+The compiler repository dispatches only after its own npm publication succeeds.
+The payload contains the full compiler SHA and exact compiler snapshot version.
+A language-tools push or manual run resolves the current compiler `snapshot`
+tag only once, verifies both compiler packages, and then uses the resulting
+immutable version. The staged manifests pin that exact compiler version, and
+`release-manifest.json` records both source revisions, both independent
+timestamps/build IDs and all published versions.
 
 Only the npm publish job receives:
 
@@ -91,13 +98,13 @@ IDE repository and needs no manually configured secret.
 ## npm trusted-publisher bootstrap
 
 `@ilic/tools` and `@ilic/compiler-wasm` already exist on npm. Their Trusted
-Publisher must point to the coordinated workflow in this repository:
-repository `interlis-language-tools`, workflow filename
-`publish-npm-snapshot.yml`. The five language packages use the same workflow.
+Publisher must point to `edigonzales/ilic-fork`, workflow filename
+`publish-npm-snapshot.yml`. The five language packages use the workflow in this
+repository.
 
-The five language packages do not yet exist and therefore need one interactive
-bootstrap publish. Generate or download the verified tarballs, authenticate
-locally with 2FA, and publish them in dependency order:
+For a new package or a one-time bootstrap, generate or download the verified
+tarballs, authenticate locally with 2FA, and publish the five language packages
+in dependency order:
 
 ```sh
 npm login
