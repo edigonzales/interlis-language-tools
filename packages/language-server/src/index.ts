@@ -11,6 +11,7 @@ export type {
   OnTypeEditParams,
   RepositoryConfigurationParams,
   RepositorySourceResult,
+  SemanticSnapshotChangedParams,
   WorkspaceSourceChangedParams,
   WorkspaceSourcePayload,
   WorkspaceSourcesParams,

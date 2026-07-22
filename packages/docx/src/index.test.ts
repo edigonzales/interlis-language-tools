@@ -26,6 +26,8 @@ const snapshot: SemanticSnapshot = {
       containerId: "",
       range: null,
       abstract: false,
+      selectionRange: null,
+      endRange: null,
     },
   ],
   references: [],

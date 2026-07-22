@@ -44,7 +44,7 @@ export interface AnalysisEvent {
   readonly affectedUris: readonly string[];
 }
 
-export type CompilationTrigger = "save" | "manual" | "startup";
+export type CompilationTrigger = "save" | "manual" | "startup" | "dependency";
 
 export interface CompilationOutputEvent {
   readonly runId: number;

@@ -3,7 +3,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const configurationGet = vi.fn(
   (_key: string, defaultValue: unknown): unknown => defaultValue,
 );
+interface ChangedDocumentEvent {
+  readonly document: {
+    readonly languageId: string;
+    readonly uri: { toString(): string };
+  };
+}
 const activeEditorListeners: Array<(editor: unknown) => void> = [];
+const documentChangeListeners: Array<(event: ChangedDocumentEvent) => void> =
+  [];
 const vscodeMock = {
   window: {
     activeTextEditor: undefined as { document: unknown } | undefined,
@@ -20,6 +28,12 @@ const vscodeMock = {
   workspace: {
     getConfiguration: vi.fn(() => ({ get: configurationGet })),
     openTextDocument: vi.fn(),
+    onDidChangeTextDocument: vi.fn(
+      (listener: (event: ChangedDocumentEvent) => void) => {
+        documentChangeListeners.push(listener);
+        return { dispose: vi.fn() };
+      },
+    ),
   },
   commands: {
     registerCommand: vi.fn(() => ({ dispose: vi.fn() })),
@@ -55,6 +69,11 @@ class FakeDiagramController {
     return this.state;
   }
 
+  stale(message = "stale"): typeof this.state {
+    this.state = { ...this.state, message };
+    return this.state;
+  }
+
   publish(snapshot: unknown): typeof this.state {
     this.state = {
       status: "ready",
@@ -85,7 +104,7 @@ doMock(
       showLocalEnumerationValues: true,
     },
     layoutAndRenderDiagram: vi.fn(() =>
-      Promise.resolve({ layout: {}, svg: "" }),
+      Promise.resolve({ layout: {}, svg: '<svg id="diagram"></svg>' }),
     ),
     restoreViewport: vi.fn(),
     sourceLocationForNode: vi.fn(),
@@ -129,6 +148,7 @@ describe("VS Code startup diagram", () => {
       (_key: string, defaultValue: unknown): unknown => defaultValue,
     );
     activeEditorListeners.length = 0;
+    documentChangeListeners.length = 0;
     vscodeMock.window.createWebviewPanel.mockReset();
     setActiveDocument(undefined);
   });
@@ -234,6 +254,7 @@ describe("VS Code startup diagram", () => {
       subscriptions: [],
     } as unknown as ExtensionContext;
     const client = {
+      onNotification: vi.fn(() => ({ dispose: vi.fn() })),
       sendRequest: vi.fn(() =>
         Promise.resolve({
           freshness: "fresh",
@@ -270,6 +291,7 @@ describe("VS Code startup diagram", () => {
       subscriptions: [],
     } as unknown as ExtensionContext;
     const client = {
+      onNotification: vi.fn(() => ({ dispose: vi.fn() })),
       sendRequest: vi.fn(() =>
         Promise.resolve({
           freshness: "fresh",
@@ -284,5 +306,343 @@ describe("VS Code startup diagram", () => {
 
     expect(vscodeMock.window.createWebviewPanel).toHaveBeenCalledOnce();
     expect(panel.reveal).toHaveBeenCalledWith(2, true);
+  });
+
+  it("refreshes an open diagram after a fresh semantic notification", async () => {
+    const active = document("file:///Auto.ili");
+    setActiveDocument(active);
+    const notifications = new Map<string, (params: unknown) => void>();
+    const panel = {
+      active: true,
+      webview: {
+        html: "",
+        onDidReceiveMessage: vi.fn(() => ({ dispose: vi.fn() })),
+      },
+      onDidDispose: vi.fn(),
+      reveal: vi.fn(),
+    };
+    vscodeMock.window.createWebviewPanel.mockReturnValue(panel);
+    let generation = 1;
+    const sendRequest = vi.fn(() =>
+      Promise.resolve({
+        freshness: "fresh",
+        generation,
+        snapshot: {
+          success: true,
+          documentVersions: { "file:///Auto.ili": generation },
+          diagram: { nodes: [], edges: [] },
+        },
+      }),
+    );
+    const client = {
+      sendRequest,
+      onNotification: vi.fn(
+        (method: string, handler: (params: unknown) => void) => {
+          notifications.set(method, handler);
+          return { dispose: vi.fn() };
+        },
+      ),
+    } as unknown as LanguageClient;
+    const workflows = registerDiagramWorkflows(
+      { subscriptions: [] } as unknown as ExtensionContext,
+      client,
+    );
+    await workflows.open(asDiagramUri(active.uri));
+    expect(sendRequest).toHaveBeenCalledTimes(1);
+
+    generation = 2;
+    notifications.get("interlis/semanticSnapshotChanged")?.({
+      runId: 2,
+      trigger: "save",
+      rootUri: "file:///Auto.ili",
+      documentVersion: 2,
+      generation,
+      success: true,
+      freshness: "fresh",
+      sourceUris: ["file:///Auto.ili"],
+    });
+
+    await vi.waitFor(() => expect(sendRequest).toHaveBeenCalledTimes(2));
+  });
+
+  it("recompiles an open diagram when one of its saved dependencies changes", async () => {
+    const active = document("file:///Dependent.ili");
+    setActiveDocument(active);
+    const notifications = new Map<string, (params: unknown) => void>();
+    const panel = {
+      active: true,
+      webview: {
+        html: "",
+        onDidReceiveMessage: vi.fn(() => ({ dispose: vi.fn() })),
+      },
+      onDidDispose: vi.fn(),
+      reveal: vi.fn(),
+    };
+    vscodeMock.window.createWebviewPanel.mockReturnValue(panel);
+    const sendRequest = vi.fn((method: string) =>
+      Promise.resolve(
+        method === "interlis/diagramSnapshot"
+          ? {
+              freshness: "fresh",
+              generation: 1,
+              snapshot: {
+                success: true,
+                documentVersions: {
+                  "file:///Dependent.ili": 1,
+                  "file:///Dependency.ili": 1,
+                },
+                diagram: { nodes: [], edges: [] },
+              },
+            }
+          : { success: true },
+      ),
+    );
+    const client = {
+      sendRequest,
+      onNotification: vi.fn(
+        (method: string, handler: (params: unknown) => void) => {
+          notifications.set(method, handler);
+          return { dispose: vi.fn() };
+        },
+      ),
+    } as unknown as LanguageClient;
+    const workflows = registerDiagramWorkflows(
+      { subscriptions: [] } as unknown as ExtensionContext,
+      client,
+    );
+    await workflows.open(asDiagramUri(active.uri));
+
+    notifications.get("interlis/semanticSnapshotChanged")?.({
+      runId: 2,
+      trigger: "save",
+      rootUri: "file:///Dependency.ili",
+      documentVersion: 2,
+      generation: 2,
+      success: true,
+      freshness: "fresh",
+      sourceUris: ["file:///Dependency.ili"],
+    });
+
+    await vi.waitFor(() =>
+      expect(sendRequest).toHaveBeenCalledWith("interlis/compile", {
+        uri: "file:///Dependent.ili",
+        trigger: "dependency",
+      }),
+    );
+  });
+
+  it("keeps the last rendered diagram on an invalid save", async () => {
+    const active = document("file:///Invalid.ili");
+    setActiveDocument(active);
+    const notifications = new Map<string, (params: unknown) => void>();
+    const panel = {
+      active: true,
+      webview: {
+        html: "",
+        onDidReceiveMessage: vi.fn(() => ({ dispose: vi.fn() })),
+      },
+      onDidDispose: vi.fn(),
+      reveal: vi.fn(),
+    };
+    vscodeMock.window.createWebviewPanel.mockReturnValue(panel);
+    const sendRequest = vi.fn(() =>
+      Promise.resolve({
+        freshness: "fresh",
+        generation: 1,
+        snapshot: {
+          success: true,
+          documentVersions: { "file:///Invalid.ili": 1 },
+          diagram: { nodes: [], edges: [] },
+        },
+      }),
+    );
+    const client = {
+      sendRequest,
+      onNotification: vi.fn(
+        (method: string, handler: (params: unknown) => void) => {
+          notifications.set(method, handler);
+          return { dispose: vi.fn() };
+        },
+      ),
+    } as unknown as LanguageClient;
+    const workflows = registerDiagramWorkflows(
+      { subscriptions: [] } as unknown as ExtensionContext,
+      client,
+    );
+    await workflows.open(asDiagramUri(active.uri));
+    const rendered = panel.webview.html;
+
+    notifications.get("interlis/semanticSnapshotChanged")?.({
+      runId: 2,
+      trigger: "save",
+      rootUri: "file:///Invalid.ili",
+      documentVersion: 2,
+      generation: 2,
+      success: false,
+      freshness: "fresh",
+      sourceUris: ["file:///Invalid.ili"],
+    });
+
+    expect(sendRequest).toHaveBeenCalledTimes(1);
+    expect(panel.webview.html).toContain("current model contains errors");
+    expect(panel.webview.html).toContain('id="diagram"');
+    expect(rendered).not.toBe("");
+  });
+
+  it("deduplicates dependency compiles and stops updating a closed panel", async () => {
+    const rootUri = "file:///OpenRoot.ili";
+    const dependencyUri = "file:///Shared.ili";
+    const active = document(rootUri);
+    setActiveDocument(active);
+    const notifications = new Map<string, (params: unknown) => void>();
+    let disposePanel!: () => void;
+    const panel = {
+      active: true,
+      webview: {
+        html: "",
+        onDidReceiveMessage: vi.fn(() => ({ dispose: vi.fn() })),
+      },
+      onDidDispose: vi.fn((listener: () => void) => {
+        disposePanel = listener;
+      }),
+      reveal: vi.fn(),
+    };
+    vscodeMock.window.createWebviewPanel.mockReturnValue(panel);
+    let finishCompile!: () => void;
+    const pendingCompile = new Promise((resolve) => {
+      finishCompile = () => resolve({ success: true });
+    });
+    const sendRequest = vi.fn((method: string) =>
+      method === "interlis/diagramSnapshot"
+        ? Promise.resolve({
+            freshness: "fresh",
+            generation: 1,
+            snapshot: {
+              success: true,
+              documentVersions: { [rootUri]: 1, [dependencyUri]: 1 },
+              diagram: { nodes: [], edges: [] },
+            },
+          })
+        : pendingCompile,
+    );
+    const client = {
+      sendRequest,
+      onNotification: vi.fn(
+        (method: string, handler: (params: unknown) => void) => {
+          notifications.set(method, handler);
+          return { dispose: vi.fn() };
+        },
+      ),
+    } as unknown as LanguageClient;
+    const workflows = registerDiagramWorkflows(
+      { subscriptions: [] } as unknown as ExtensionContext,
+      client,
+    );
+    await workflows.open(asDiagramUri(active.uri));
+    const event = {
+      runId: 2,
+      trigger: "save",
+      rootUri: dependencyUri,
+      documentVersion: 2,
+      generation: 2,
+      success: true,
+      freshness: "fresh",
+      sourceUris: [dependencyUri],
+    };
+
+    notifications.get("interlis/semanticSnapshotChanged")?.(event);
+    notifications.get("interlis/semanticSnapshotChanged")?.(event);
+    expect(
+      sendRequest.mock.calls.filter(
+        ([method]) => method === "interlis/compile",
+      ),
+    ).toHaveLength(1);
+
+    disposePanel();
+    notifications.get("interlis/semanticSnapshotChanged")?.({
+      ...event,
+      runId: 3,
+      generation: 3,
+    });
+    expect(
+      sendRequest.mock.calls.filter(
+        ([method]) => method === "interlis/compile",
+      ),
+    ).toHaveLength(1);
+    finishCompile();
+    await pendingCompile;
+  });
+
+  it("does not let an older refresh overwrite a later invalidation", async () => {
+    const uri = "file:///Race.ili";
+    const active = document(uri);
+    setActiveDocument(active);
+    const notifications = new Map<string, (params: unknown) => void>();
+    const panel = {
+      active: true,
+      webview: {
+        html: "",
+        onDidReceiveMessage: vi.fn(() => ({ dispose: vi.fn() })),
+      },
+      onDidDispose: vi.fn(),
+      reveal: vi.fn(),
+    };
+    vscodeMock.window.createWebviewPanel.mockReturnValue(panel);
+    let release!: (value: unknown) => void;
+    const delayed = new Promise((resolve) => {
+      release = resolve;
+    });
+    const initial = {
+      freshness: "fresh",
+      generation: 1,
+      snapshot: {
+        success: true,
+        documentVersions: { [uri]: 1 },
+        diagram: { nodes: [], edges: [] },
+      },
+    };
+    const sendRequest = vi
+      .fn()
+      .mockResolvedValueOnce(initial)
+      .mockReturnValueOnce(delayed);
+    const client = {
+      sendRequest,
+      onNotification: vi.fn(
+        (method: string, handler: (params: unknown) => void) => {
+          notifications.set(method, handler);
+          return { dispose: vi.fn() };
+        },
+      ),
+    } as unknown as LanguageClient;
+    const workflows = registerDiagramWorkflows(
+      { subscriptions: [] } as unknown as ExtensionContext,
+      client,
+    );
+    await workflows.open(asDiagramUri(active.uri));
+
+    notifications.get("interlis/semanticSnapshotChanged")?.({
+      runId: 2,
+      trigger: "save",
+      rootUri: uri,
+      documentVersion: 2,
+      generation: 2,
+      success: true,
+      freshness: "fresh",
+      sourceUris: [uri],
+    });
+    notifications.get("interlis/semanticSnapshotChanged")?.({
+      runId: 3,
+      trigger: "save",
+      rootUri: uri,
+      documentVersion: 3,
+      generation: 3,
+      success: false,
+      freshness: "fresh",
+      sourceUris: [uri],
+    });
+    release({ ...initial, generation: 2 });
+    await Promise.resolve();
+
+    expect(panel.webview.html).toContain("current model contains errors");
   });
 });

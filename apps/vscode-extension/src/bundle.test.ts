@@ -33,6 +33,46 @@ interface LspRange {
   readonly end: { readonly line: number; readonly character: number };
 }
 
+interface LspTextEdit {
+  readonly range: LspRange;
+  readonly newText: string;
+}
+
+interface LspWorkspaceEdit {
+  readonly changes?: Readonly<Record<string, readonly LspTextEdit[]>>;
+}
+
+const offsetAt = (text: string, position: LspRange["start"]): number => {
+  const lines = text.split("\n");
+  let offset = 0;
+  for (let line = 0; line < position.line; line++)
+    offset += (lines[line]?.length ?? 0) + 1;
+  return offset + position.character;
+};
+
+const positionAt = (text: string, offset: number): LspRange["start"] => {
+  const prefix = text.slice(0, offset);
+  const lines = prefix.split("\n");
+  return {
+    line: lines.length - 1,
+    character: lines.at(-1)?.length ?? 0,
+  };
+};
+
+const applyTextEdits = (text: string, edits: readonly LspTextEdit[]): string =>
+  [...edits]
+    .sort(
+      (left, right) =>
+        offsetAt(text, right.range.start) - offsetAt(text, left.range.start),
+    )
+    .reduce(
+      (current, edit) =>
+        current.slice(0, offsetAt(text, edit.range.start)) +
+        edit.newText +
+        current.slice(offsetAt(text, edit.range.end)),
+      text,
+    );
+
 const lspResponses = (output: string): LspResponse[] => {
   const bytes = Buffer.from(output);
   const separator = Buffer.from("\r\n\r\n");
@@ -117,7 +157,7 @@ describe("VS Code extension bundles", () => {
     expect(helper.mode & 0o111).not.toBe(0);
   });
 
-  it("serves valid document symbols from the real WASM compiler", async () => {
+  it("keeps real WASM document symbols synchronized across rename and save", async () => {
     const child = spawn(
       process.execPath,
       [resolve(dist, "server-node.js"), "--stdio"],
@@ -217,6 +257,68 @@ describe("VS Code extension bundles", () => {
         ),
       ).toBe(false);
       for (const symbol of symbols ?? []) expectValidSymbolRanges(symbol);
+
+      const topic = /TOPIC\s+([A-Za-z_][A-Za-z0-9_]*)/u.exec(text);
+      expect(topic?.[1]).toBeDefined();
+      const topicName = topic![1]!;
+      const topicOffset = topic!.index + topic![0].lastIndexOf(topicName);
+      child.stdin.write(
+        lspMessage({
+          jsonrpc: "2.0",
+          id: 4,
+          method: "textDocument/rename",
+          params: {
+            textDocument: { uri },
+            position: positionAt(text, topicOffset + 1),
+            newName: "RenamedTopic",
+          },
+        }),
+      );
+      const workspaceEdit = (await waitForResponse(4)).result as
+        LspWorkspaceEdit | undefined;
+      const edits = workspaceEdit?.changes?.[uri] ?? [];
+      expect(edits).toHaveLength(2);
+      expect(new Set(edits.map((edit) => edit.range.start.line)).size).toBe(2);
+      const renamedText = applyTextEdits(text, edits);
+      expect(renamedText).toContain("TOPIC RenamedTopic");
+      expect(renamedText).toContain("END RenamedTopic;");
+
+      child.stdin.write(
+        lspMessage({
+          jsonrpc: "2.0",
+          method: "textDocument/didChange",
+          params: {
+            textDocument: { uri, version: 2 },
+            contentChanges: [{ text: renamedText }],
+          },
+        }),
+      );
+      child.stdin.write(
+        lspMessage({
+          jsonrpc: "2.0",
+          id: 5,
+          method: "textDocument/documentSymbol",
+          params: { textDocument: { uri } },
+        }),
+      );
+      child.stdin.write(
+        lspMessage({
+          jsonrpc: "2.0",
+          method: "textDocument/didSave",
+          params: { textDocument: { uri } },
+        }),
+      );
+      const renamedSymbols = (await waitForResponse(5)).result as
+        LspDocumentSymbol[] | undefined;
+      expect(
+        flattenSymbols(renamedSymbols ?? []).some(
+          (symbol) => symbol.name === "RenamedTopic",
+        ),
+      ).toBe(true);
+      for (const symbol of renamedSymbols ?? [])
+        expectValidSymbolRanges(symbol);
+      expect(stderr).not.toContain("WebAssembly.LinkError");
+      expect(stderr).not.toContain("failed to asynchronously prepare wasm");
       expect(stderr).not.toContain("Dynamic require");
     } finally {
       if (child.exitCode === null && child.signalCode === null) {

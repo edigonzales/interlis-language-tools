@@ -176,8 +176,9 @@ export function locationsForDefinition(
       item.range?.uri === uri && item.range && contains(item.range, position),
   );
   const direct = semantic.symbols.find((item) => {
-    const selection = item.selectionRange ?? item.range;
-    return selection?.uri === uri && contains(selection, position);
+    return [item.selectionRange, item.endRange, item.range].some(
+      (candidate) => candidate?.uri === uri && contains(candidate, position),
+    );
   });
   const targetId = reference?.targetId ?? direct?.id;
   if (!targetId) return [];
@@ -204,11 +205,18 @@ export function locationsForReferences(
       (candidate) => candidate.id === symbolId,
     );
     const declaration = symbol?.selectionRange ?? symbol?.range;
-    if (declaration)
+    if (declaration) {
       result.unshift({
         uri: declaration.uri,
         range: toEditorRange(declaration),
       });
+    }
+    if (symbol?.endRange) {
+      result.splice(declaration ? 1 : 0, 0, {
+        uri: symbol.endRange.uri,
+        range: toEditorRange(symbol.endRange),
+      });
+    }
   }
   return result;
 }
@@ -225,8 +233,9 @@ export function symbolAt(
   if (reference)
     return semantic.symbols.find((item) => item.id === reference.targetId);
   return semantic.symbols.find((item) => {
-    const selection = item.selectionRange ?? item.range;
-    return selection?.uri === uri && contains(selection, position);
+    return [item.selectionRange, item.endRange, item.range].some(
+      (candidate) => candidate?.uri === uri && contains(candidate, position),
+    );
   });
 }
 
@@ -348,6 +357,9 @@ export function documentSymbols(
       kind: normalizedKind(symbol.kind),
       range: enclosingRange(sourceRange, [
         declaredSelection,
+        ...(symbol.endRange?.uri === source.uri
+          ? [toEditorRange(symbol.endRange)]
+          : []),
         ...localChildren.map((child) => child.range),
       ]),
       selectionRange,

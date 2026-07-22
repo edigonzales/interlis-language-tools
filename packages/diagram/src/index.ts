@@ -95,6 +95,15 @@ export class DiagramController {
     return this.#state;
   }
 
+  stale(
+    message = "Showing the last valid diagram; the model has changed.",
+  ): DiagramState {
+    this.#state = this.#lastGood
+      ? { status: "stale", snapshot: this.#lastGood, message }
+      : { status: "empty", snapshot: null, message };
+    return this.#state;
+  }
+
   publish(
     snapshot: SemanticSnapshot,
     freshness: "fresh" | "stale" = "fresh",

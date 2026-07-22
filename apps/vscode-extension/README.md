@@ -12,8 +12,10 @@ Web and compatible Theia products.
 - single-root, dependency-aware compilation with structured Problems and a
   fully replaced CLI-style compiler transcript with final error/warning
   summary; Debug remains append-only;
-- synchronized `elkjs` live UML diagram with last-good state, source navigation,
-  layout settings, anchored viewport and semantic SVG export;
+- synchronized `elkjs` live UML diagram that refreshes open views of the saved
+  root and transitively affected roots after a valid save, while preserving
+  the last-good SVG and anchored viewport for stale or invalid models; includes
+  source navigation, layout settings and semantic SVG export;
 - DOCX documentation export;
 - support for saved files, untitled buffers and browser-backed virtual files.
 - repository-aware `IMPORTS` completion and transitive model resolution;

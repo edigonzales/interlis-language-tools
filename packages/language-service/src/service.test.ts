@@ -44,6 +44,9 @@ function analysis(
     diagnostics?: Diagnostic[];
     missingModels?: string[];
     syntax?: SyntaxSnapshot[];
+    symbols?: SemanticSnapshot["symbols"];
+    dependencies?: SemanticSnapshot["dependencies"];
+    documentVersions?: Readonly<Record<string, number>>;
   } = {},
 ): CompilationAnalysisResult {
   const diagnostics = options.diagnostics ?? [];
@@ -59,11 +62,13 @@ function analysis(
     success: diagnostics.every((entry) => !entry.treatedAsError),
     cancelled: false,
     roots: [...roots],
-    documentVersions: Object.fromEntries(roots.map((uri) => [uri, 1])),
+    documentVersions:
+      options.documentVersions ??
+      Object.fromEntries(roots.map((uri) => [uri, 1])),
     missingModels,
-    symbols: [],
+    symbols: options.symbols ?? [],
     references: [],
-    dependencies: [],
+    dependencies: options.dependencies ?? [],
     diagram: { nodes: [], edges: [] },
     documentation: { title: "", sections: [] },
     diagnostics,
@@ -115,6 +120,31 @@ function syntax(
       importRange ? [{ model, unqualified: true, range: importRange }] : [],
     ),
     diagnostics: [],
+  };
+}
+
+function modelSymbol(
+  uri: string,
+  name: string,
+): SemanticSnapshot["symbols"][number] {
+  return {
+    id: `model:${name}`,
+    name,
+    qualifiedName: name,
+    kind: "model",
+    containerId: "",
+    range: {
+      uri,
+      start: { line: 0, character: 0, byteOffset: 0 },
+      end: { line: 0, character: 11, byteOffset: 11 },
+    },
+    selectionRange: {
+      uri,
+      start: { line: 0, character: 6, byteOffset: 6 },
+      end: { line: 0, character: 10, byteOffset: 10 },
+    },
+    endRange: null,
+    abstract: false,
   };
 }
 
@@ -265,6 +295,381 @@ describe("save-driven LanguageService", () => {
     service.changeDocument(rootUri, "MODEL Root =", 2);
     expect(service.getSemanticSnapshot()?.freshness).toBe("stale");
     expect(service.getSyntaxSnapshot(rootUri)).toBeNull();
+  });
+
+  it("keeps rename dirty until save, then restores symbols and outline", async () => {
+    const source = `TOPIC foo =
+  CLASS bar =
+  END bar;
+END foo;`;
+    let version = 1;
+    const symbol = (name: string): SemanticSnapshot["symbols"][number] => ({
+      id: "topic:foo",
+      name,
+      qualifiedName: name,
+      kind: "topic",
+      containerId: "",
+      range: {
+        uri: rootUri,
+        start: { line: 0, character: 0, byteOffset: 0 },
+        end: { line: 3, character: 8, byteOffset: source.length },
+      },
+      selectionRange: {
+        uri: rootUri,
+        start: { line: 0, character: 6, byteOffset: 6 },
+        end: { line: 0, character: 9, byteOffset: 9 },
+      },
+      endRange: {
+        uri: rootUri,
+        start: { line: 3, character: 4, byteOffset: source.length - 4 },
+        end: { line: 3, character: 7, byteOffset: source.length - 1 },
+      },
+      abstract: false,
+    });
+    const compiler = backend(() => {
+      const result = analysis([rootUri], {
+        symbols: [symbol(version === 1 ? "foo" : "foo2")],
+        syntax: [{ ...syntax(rootUri), documentVersion: version }],
+      });
+      return {
+        ...result,
+        semantic: {
+          ...result.semantic,
+          documentVersions: { [rootUri]: version },
+        },
+      };
+    });
+    const service = new LanguageService(compiler);
+    service.openDocument(rootUri, source, version);
+    service.markSaved(rootUri);
+    await service.compileDocument(rootUri, "save");
+
+    const rename = service.rename(rootUri, { line: 0, character: 7 }, "foo2");
+    expect(rename?.changes[rootUri]).toHaveLength(2);
+    expect(rename?.changes[rootUri]?.map((edit) => edit.newText)).toEqual([
+      "foo2",
+      "foo2",
+    ]);
+    expect(
+      rename?.changes[rootUri]?.map((edit) => edit.range.start.line),
+    ).toEqual([0, 3]);
+    expect(service.prepareRename(rootUri, { line: 3, character: 5 })).toEqual({
+      range: {
+        start: { line: 3, character: 4 },
+        end: { line: 3, character: 7 },
+      },
+      placeholder: "foo",
+    });
+
+    const changedSource = source
+      .replace("TOPIC foo", "TOPIC foo2")
+      .replace("END foo", "END foo2");
+    version = 2;
+    service.changeDocument(rootUri, changedSource, version);
+    expect(service.getDocument(rootUri)?.dirty).toBe(true);
+    expect(compiler.compileAndAnalyze).toHaveBeenCalledTimes(1);
+    expect(service.rename(rootUri, { line: 0, character: 7 }, "foo3")).toBe(
+      null,
+    );
+    expect(service.symbols(rootUri)).toEqual([]);
+
+    service.markSaved(rootUri);
+    await service.compileDocument(rootUri, "save");
+    expect(service.getDocument(rootUri)?.dirty).toBe(false);
+    expect(compiler.compileAndAnalyze).toHaveBeenCalledTimes(2);
+    expect(service.symbols(rootUri).map((item) => item.name)).toEqual(["foo2"]);
+    expect(
+      service.rename(rootUri, { line: 0, character: 7 }, "foo3")?.changes[
+        rootUri
+      ],
+    ).toHaveLength(2);
+
+    service.putWorkspaceSource(rootUri, changedSource, 3);
+    expect(service.symbols(rootUri).map((item) => item.name)).toEqual(["foo2"]);
+    expect(
+      service.rename(rootUri, { line: 3, character: 6 }, "foo3")?.changes[
+        rootUri
+      ],
+    ).toHaveLength(2);
+  });
+
+  it("does not invalidate a fresh open-document snapshot on workspace updates", async () => {
+    const source = "MODEL Root";
+    const symbol: SemanticSnapshot["symbols"][number] = {
+      id: "model:root",
+      name: "Root",
+      qualifiedName: "Root",
+      kind: "model",
+      containerId: "",
+      range: {
+        uri: rootUri,
+        start: { line: 0, character: 0, byteOffset: 0 },
+        end: { line: 0, character: source.length, byteOffset: source.length },
+      },
+      selectionRange: {
+        uri: rootUri,
+        start: { line: 0, character: 6, byteOffset: 6 },
+        end: { line: 0, character: 10, byteOffset: 10 },
+      },
+      endRange: null,
+      abstract: false,
+    };
+    const compiler = backend((request) =>
+      analysis(request.roots, { symbols: [symbol] }),
+    );
+    const service = new LanguageService(compiler);
+    service.openDocument(rootUri, source, 1);
+    service.markSaved(rootUri);
+    await service.compileDocument(rootUri, "save");
+
+    expect(service.getSemanticSnapshot()?.freshness).toBe("fresh");
+    service.putWorkspaceSource(rootUri, source, 2);
+
+    expect(service.getSemanticSnapshot()?.freshness).toBe("fresh");
+    expect(service.symbols(rootUri)).toHaveLength(1);
+  });
+
+  it("ignores identical watcher echoes before, during, and after an open-document compile", async () => {
+    let release!: (value: CompilationAnalysisResult) => void;
+    const pendingAnalysis = new Promise<CompilationAnalysisResult>(
+      (resolve) => {
+        release = resolve;
+      },
+    );
+    const compileAndAnalyze = vi.fn().mockReturnValueOnce(pendingAnalysis);
+    const events: CompilationEvent[] = [];
+    const service = new LanguageService(backend(compileAndAnalyze), {
+      onCompilation: (event) => events.push(event),
+    });
+    const source = "MODEL Root";
+    service.openDocument(rootUri, source, 1);
+    service.markSaved(rootUri);
+    service.putWorkspaceSource(rootUri, source, 10);
+
+    const compilation = service.compileDocument(rootUri, "save");
+    await vi.waitFor(() => expect(compileAndAnalyze).toHaveBeenCalledOnce());
+    service.putWorkspaceSource(rootUri, source, 11);
+    release(analysis([rootUri], { documentVersions: { [rootUri]: 1 } }));
+    await compilation;
+    service.putWorkspaceSource(rootUri, source, 12);
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.semantic.freshness).toBe("fresh");
+    expect(service.getSavedSemanticSnapshot(rootUri)?.freshness).toBe("fresh");
+  });
+
+  it("keeps an outline request pending until the exact saved version is compiled", async () => {
+    let version = 1;
+    const compiler = backend((request) =>
+      analysis(request.roots, {
+        documentVersions: { [rootUri]: version },
+        symbols: [modelSymbol(rootUri, version === 1 ? "Root" : "Renamed")],
+        syntax: [{ ...syntax(rootUri), documentVersion: version }],
+      }),
+    );
+    const service = new LanguageService(compiler);
+    service.openDocument(rootUri, "MODEL Root", version);
+    service.markSaved(rootUri);
+    await service.compileDocument(rootUri, "save");
+
+    version = 2;
+    service.changeDocument(rootUri, "MODEL Renamed", version);
+    const pending = service.waitForDocumentSymbols(rootUri, version);
+    let settled = false;
+    void pending.then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    service.markSaved(rootUri);
+    await service.compileDocument(rootUri, "save");
+    await expect(pending).resolves.toEqual([
+      expect.objectContaining({ name: "Renamed" }),
+    ]);
+  });
+
+  it("resolves an outline request after a manual compile of the exact dirty version", async () => {
+    const compiler = backend((request) =>
+      analysis(request.roots, {
+        documentVersions: { [rootUri]: 2 },
+        symbols: [modelSymbol(rootUri, "Renamed")],
+      }),
+    );
+    const service = new LanguageService(compiler);
+    service.openDocument(rootUri, "MODEL Root", 1);
+    service.changeDocument(rootUri, "MODEL Renamed", 2);
+    const pending = service.waitForDocumentSymbols(rootUri, 2);
+
+    await service.compileDocument(rootUri, "manual");
+
+    await expect(pending).resolves.toEqual([
+      expect.objectContaining({ name: "Renamed" }),
+    ]);
+  });
+
+  it("keeps the last valid outline after an invalid saved compilation", async () => {
+    let valid = true;
+    const compiler = backend((request) =>
+      analysis(request.roots, {
+        documentVersions: { [rootUri]: valid ? 1 : 2 },
+        symbols: [modelSymbol(rootUri, valid ? "Root" : "Partial")],
+        diagnostics: valid ? [] : [diagnostic("invalid")],
+      }),
+    );
+    const service = new LanguageService(compiler);
+    service.openDocument(rootUri, "MODEL Root", 1);
+    service.markSaved(rootUri);
+    await service.compileDocument(rootUri, "save");
+
+    valid = false;
+    service.changeDocument(rootUri, "MODEL Partial =", 2);
+    const pending = service.waitForDocumentSymbols(rootUri, 2);
+    service.markSaved(rootUri);
+    await service.compileDocument(rootUri, "save");
+
+    await expect(pending).resolves.toEqual([
+      expect.objectContaining({ name: "Root" }),
+    ]);
+    expect(service.symbols(rootUri)).toEqual([
+      expect.objectContaining({ name: "Root" }),
+    ]);
+  });
+
+  it("cancels an outline waiter superseded by a newer document version", async () => {
+    const service = new LanguageService(backend());
+    service.openDocument(rootUri, "MODEL Root", 1);
+    service.changeDocument(rootUri, "MODEL Root2", 2);
+    const pending = service.waitForDocumentSymbols(rootUri, 2);
+
+    service.changeDocument(rootUri, "MODEL Root3", 3);
+
+    await expect(pending).resolves.toEqual([]);
+  });
+
+  it("keeps semantic snapshots independent across root documents", async () => {
+    const otherUri = "memory:///Other.ili";
+    const compiler = backend((request) => {
+      const uri = request.roots[0]!;
+      const name = uri === rootUri ? "Root" : "Other";
+      return analysis(request.roots, { symbols: [modelSymbol(uri, name)] });
+    });
+    const service = new LanguageService(compiler);
+    service.openDocument(rootUri, "MODEL Root", 1);
+    service.openDocument(otherUri, "MODEL Other", 1);
+    service.markSaved(rootUri);
+    service.markSaved(otherUri);
+
+    await service.compileDocument(rootUri, "save");
+    await service.compileDocument(otherUri, "save");
+
+    expect(service.symbols(rootUri).map((symbol) => symbol.name)).toEqual([
+      "Root",
+    ]);
+    expect(service.symbols(otherUri).map((symbol) => symbol.name)).toEqual([
+      "Other",
+    ]);
+    service.changeDocument(rootUri, "MODEL Root2", 2);
+    expect(service.symbols(rootUri)).toEqual([]);
+    expect(service.symbols(otherUri).map((symbol) => symbol.name)).toEqual([
+      "Other",
+    ]);
+  });
+
+  it("invalidates only roots whose compiled closure contains a changed source", async () => {
+    const dependencyUri = "memory:///Dependency.ili";
+    const otherUri = "memory:///Other.ili";
+    const compiler = backend((request) =>
+      request.roots[0] === rootUri
+        ? analysis(request.roots, {
+            documentVersions: { [rootUri]: 1, [dependencyUri]: 7 },
+            dependencies: [
+              {
+                sourceUri: rootUri,
+                targetUri: dependencyUri,
+                model: "Dependency",
+              },
+            ],
+          })
+        : analysis(request.roots),
+    );
+    const service = new LanguageService(compiler);
+    service.putWorkspaceSource(dependencyUri, "MODEL Dependency", 7);
+    service.openDocument(rootUri, "MODEL Root", 1);
+    service.openDocument(otherUri, "MODEL Other", 1);
+    service.markSaved(rootUri);
+    service.markSaved(otherUri);
+    await service.compileDocument(rootUri, "save");
+    await service.compileDocument(otherUri, "save");
+
+    service.putWorkspaceSource(dependencyUri, "MODEL Dependency2", 8);
+
+    expect(service.getSavedSemanticSnapshot(rootUri)?.freshness).toBe("stale");
+    expect(service.getSavedSemanticSnapshot(otherUri)?.freshness).toBe("fresh");
+  });
+
+  it("conservatively invalidates roots when a newly added source was not in a compiled closure", async () => {
+    const service = new LanguageService(backend());
+    service.openDocument(rootUri, "MODEL Root", 1);
+    service.markSaved(rootUri);
+    await service.compileDocument(rootUri, "save");
+
+    service.putWorkspaceSource("memory:///New.ili", "MODEL New", 1);
+
+    expect(service.getSavedSemanticSnapshot(rootUri)?.freshness).toBe("stale");
+  });
+
+  it("discards an in-flight result when one of its sources was removed", async () => {
+    const dependencyUri = "memory:///Dependency.ili";
+    let release!: (value: CompilationAnalysisResult) => void;
+    const pendingAnalysis = new Promise<CompilationAnalysisResult>(
+      (resolve) => {
+        release = resolve;
+      },
+    );
+    const events: CompilationEvent[] = [];
+    const compileAndAnalyze = vi.fn().mockReturnValueOnce(pendingAnalysis);
+    const compiler = backend(compileAndAnalyze);
+    const service = new LanguageService(compiler, {
+      onCompilation: (event) => events.push(event),
+    });
+    service.putWorkspaceSource(dependencyUri, "MODEL Dependency", 7);
+    service.openDocument(rootUri, "MODEL Root", 1);
+    service.markSaved(rootUri);
+
+    const compilation = service.compileDocument(rootUri, "save");
+    await vi.waitFor(() =>
+      expect(compiler.compileAndAnalyze).toHaveBeenCalledOnce(),
+    );
+    service.removeWorkspaceSource(dependencyUri);
+    release(
+      analysis([rootUri], {
+        documentVersions: { [rootUri]: 1, [dependencyUri]: 7 },
+      }),
+    );
+
+    const result = await compilation;
+    expect(result.semantic.freshness).toBe("stale");
+    expect(events).toEqual([]);
+  });
+
+  it("publishes current compilations independently for different roots", async () => {
+    const otherUri = "memory:///Other.ili";
+    const events: CompilationEvent[] = [];
+    const service = new LanguageService(backend(), {
+      onCompilation: (event) => events.push(event),
+    });
+    service.openDocument(rootUri, "MODEL Root", 1);
+    service.openDocument(otherUri, "MODEL Other", 1);
+    service.markSaved(rootUri);
+    service.markSaved(otherUri);
+
+    await Promise.all([
+      service.compileDocument(rootUri, "save"),
+      service.compileDocument(otherUri, "save"),
+    ]);
+
+    expect(events.map((event) => event.rootUri)).toEqual([rootUri, otherUri]);
   });
 
   it("keeps a saved snapshot with closed imports fresh", async () => {

@@ -48,13 +48,29 @@ interface StoredSource {
   readonly version: number;
 }
 
+interface EffectiveSource {
+  readonly text: string;
+  readonly version: number;
+}
+
+interface SymbolWaiter {
+  readonly uri: string;
+  readonly documentVersion: number;
+  readonly resolve: (symbols: DocumentSymbol[]) => void;
+  dispose(): void;
+}
+
 export class LanguageService {
   readonly #documents = new Map<string, OpenDocument>();
   readonly #workspaceSources = new Map<string, StoredSource>();
   readonly #repositorySources = new Map<string, ResolvedRepositoryModel>();
+  readonly #repositorySourceVersions = new Map<string, number>();
+  readonly #effectiveSources = new Map<string, EffectiveSource>();
+  readonly #removedSourceUris = new Set<string>();
   readonly #readOnlyUris = new Set<string>();
   readonly #syntax = new Map<string, VersionedResult<SyntaxSnapshot>>();
   readonly #diagnostics = new Map<string, Diagnostic[]>();
+  readonly #diagnosticsByRoot = new Map<string, Map<string, Diagnostic[]>>();
   readonly #reverseDependencies = new Map<string, Set<string>>();
   readonly #analysisListeners = new Set<(event: AnalysisEvent) => void>();
   readonly #compilationListeners = new Set<(event: CompilationEvent) => void>();
@@ -65,13 +81,24 @@ export class LanguageService {
   #lastSemantic: VersionedResult<SemanticSnapshot> | null = null;
   #lastGoodSemantic: VersionedResult<SemanticSnapshot> | null = null;
   #lastSavedSemantic: VersionedResult<SemanticSnapshot> | null = null;
+  #lastSemanticRoot: string | null = null;
+  readonly #semanticByRoot = new Map<
+    string,
+    VersionedResult<SemanticSnapshot>
+  >();
+  readonly #lastGoodSemanticByRoot = new Map<
+    string,
+    VersionedResult<SemanticSnapshot>
+  >();
   readonly #savedSemanticByRoot = new Map<
     string,
     VersionedResult<SemanticSnapshot>
   >();
+  readonly #latestRequestedRunIdByRoot = new Map<string, number>();
+  readonly #symbolWaiters = new Set<SymbolWaiter>();
   #compileQueue: Promise<void> = Promise.resolve();
   #nextRunId = 0;
-  #latestRequestedRunId = 0;
+  #compilationEpoch = 0;
   #generation = 0;
   #sourceRevision = 1;
   #disposed = false;
@@ -134,7 +161,7 @@ export class LanguageService {
     if (!this.isReadOnlyUri(uri))
       this.#workspaceSources.set(uri, {
         text: document.text,
-        version: ++this.#sourceRevision,
+        version: document.version,
       });
   }
 
@@ -143,7 +170,7 @@ export class LanguageService {
     this.#documents.delete(uri);
     this.#refreshEffectiveSource(uri);
     if (!this.#repositorySources.has(uri)) this.#readOnlyUris.delete(uri);
-    this.#invalidate();
+    this.#resolveSupersededSymbolWaiters(uri);
   }
 
   replaceWorkspaceSources(sources: readonly WorkspaceSource[]): void {
@@ -162,8 +189,8 @@ export class LanguageService {
       });
       changed.add(source.uri);
     }
-    for (const uri of changed) this.#refreshEffectiveSource(uri);
-    if (changed.size > 0) this.#invalidate();
+    for (const uri of changed)
+      if (!this.#documents.has(uri)) this.#refreshEffectiveSource(uri, true);
   }
 
   putWorkspaceSource(uri: string, text: string, version?: number): void {
@@ -172,15 +199,15 @@ export class LanguageService {
       text,
       version: version ?? ++this.#sourceRevision,
     });
-    this.#refreshEffectiveSource(uri);
-    this.#invalidate();
+    if (this.#documents.has(uri)) return;
+    this.#refreshEffectiveSource(uri, true);
   }
 
   removeWorkspaceSource(uri: string): void {
     this.#assertActive();
     if (!this.#workspaceSources.delete(uri)) return;
-    this.#refreshEffectiveSource(uri);
-    this.#invalidate();
+    if (this.#documents.has(uri)) return;
+    this.#refreshEffectiveSource(uri, true);
   }
 
   async setModelRepository(repository?: ModelRepository): Promise<void> {
@@ -191,11 +218,12 @@ export class LanguageService {
     this.#catalogPromise = null;
     const uris = [...this.#repositorySources.keys()];
     this.#repositorySources.clear();
+    this.#repositorySourceVersions.clear();
     for (const uri of uris) {
       this.#refreshEffectiveSource(uri);
       if (!this.#documents.has(uri)) this.#readOnlyUris.delete(uri);
     }
-    this.#invalidate();
+    this.#invalidateAll();
     if (previous && previous !== repository) await previous.dispose?.();
   }
 
@@ -235,10 +263,11 @@ export class LanguageService {
   getSyntaxSnapshot(uri: string): VersionedResult<SyntaxSnapshot> | null {
     const result = this.#syntax.get(uri) ?? null;
     const document = this.#documents.get(uri);
+    const effective = this.#effectiveSources.get(uri);
     if (
       result?.freshness !== "fresh" ||
       document?.dirty ||
-      (document && result?.value?.documentVersion !== document.version)
+      (effective && result?.value?.documentVersion !== effective.version)
     )
       return null;
     return result;
@@ -256,7 +285,7 @@ export class LanguageService {
     if (!syntax) return [];
     const base = completionsAt(
       syntax,
-      this.getSemanticSnapshot()?.value ?? null,
+      this.#semanticForDocument(uri)?.value ?? null,
       position,
     );
     if (
@@ -303,7 +332,7 @@ export class LanguageService {
 
   definition(uri: string, position: EditorPosition): Location[] {
     if (!this.#hasFreshSemanticFor(uri)) return [];
-    const semantic = this.getSemanticSnapshot()?.value;
+    const semantic = this.#semanticForDocument(uri)?.value;
     return semantic ? locationsForDefinition(semantic, uri, position) : [];
   }
 
@@ -313,7 +342,7 @@ export class LanguageService {
     includeDeclaration = true,
   ): Location[] {
     if (!this.#hasFreshSemanticFor(uri)) return [];
-    const semantic = this.getSemanticSnapshot()?.value;
+    const semantic = this.#semanticForDocument(uri)?.value;
     if (!semantic) return [];
     const symbol = symbolAt(semantic, uri, position);
     return symbol
@@ -326,18 +355,18 @@ export class LanguageService {
     position: EditorPosition,
   ): { range: TextEdit["range"]; placeholder: string } | null {
     if (!this.#hasFreshSemanticFor(uri)) return null;
-    const semantic = this.getSemanticSnapshot()?.value;
+    const semantic = this.#semanticForDocument(uri)?.value;
     const symbol = semantic ? symbolAt(semantic, uri, position) : undefined;
     const declaration = symbol?.selectionRange ?? symbol?.range;
     if (!symbol || !declaration || this.isReadOnlyUri(declaration.uri))
       return null;
-    const occurrence = semantic?.references.find(
-      (reference) =>
-        reference.targetId === symbol.id &&
-        reference.range?.uri === uri &&
-        reference.range &&
-        this.#contains(reference.range, position),
-    )?.range;
+    const occurrence = [
+      symbol.selectionRange,
+      symbol.endRange,
+      ...(semantic?.references
+        .filter((reference) => reference.targetId === symbol.id)
+        .map((reference) => reference.range) ?? []),
+    ].find((range) => range?.uri === uri && this.#contains(range, position));
     return {
       range: toEditorRange(occurrence ?? declaration),
       placeholder: symbol.name,
@@ -350,7 +379,7 @@ export class LanguageService {
     newName: string,
   ): RenameResult | null {
     if (!this.#hasFreshSemanticFor(uri)) return null;
-    const semantic = this.getSemanticSnapshot()?.value;
+    const semantic = this.#semanticForDocument(uri)?.value;
     const symbol = semantic ? symbolAt(semantic, uri, position) : undefined;
     const declaration = symbol?.selectionRange ?? symbol?.range;
     if (
@@ -364,22 +393,67 @@ export class LanguageService {
     const result = renameSymbol(semantic, symbol.id, newName);
     return {
       changes: Object.fromEntries(
-        Object.entries(result.changes).filter(
-          ([resource]) => !this.isReadOnlyUri(resource),
-        ),
+        Object.entries(result.changes)
+          .filter(([resource]) => !this.isReadOnlyUri(resource))
+          .map(([resource, edits]) => [
+            resource,
+            this.#deduplicateEdits(edits),
+          ]),
       ),
     };
   }
 
   symbols(uri: string): DocumentSymbol[] {
+    const document = this.#documents.get(uri);
+    if (document) {
+      const exact = this.#symbolsForDocumentVersion(uri, document.version);
+      if (exact !== null) return exact;
+    }
     if (!this.#hasFreshSemanticFor(uri)) return [];
-    const semantic = this.getSemanticSnapshot()?.value;
+    const semantic = this.#semanticForDocument(uri)?.value;
     return semantic ? documentSymbols(semantic, uri) : [];
+  }
+
+  async waitForDocumentSymbols(
+    uri: string,
+    documentVersion: number,
+    signal?: AbortSignal,
+  ): Promise<DocumentSymbol[]> {
+    const immediate = this.#symbolsForDocumentVersion(uri, documentVersion);
+    if (immediate) return immediate;
+    if (signal?.aborted) return [];
+
+    return new Promise<DocumentSymbol[]>((resolve) => {
+      let settled = false;
+      const finish = (symbols: DocumentSymbol[]) => {
+        if (settled) return;
+        settled = true;
+        waiter.dispose();
+        resolve(symbols);
+      };
+      const onAbort = () => finish([]);
+      const waiter: SymbolWaiter = {
+        uri,
+        documentVersion,
+        resolve: finish,
+        dispose: () => {
+          this.#symbolWaiters.delete(waiter);
+          signal?.removeEventListener("abort", onAbort);
+        },
+      };
+      this.#symbolWaiters.add(waiter);
+      signal?.addEventListener("abort", onAbort, { once: true });
+      const afterRegistration = this.#symbolsForDocumentVersion(
+        uri,
+        documentVersion,
+      );
+      if (afterRegistration) finish(afterRegistration);
+    });
   }
 
   hover(uri: string, position: EditorPosition): HoverResult | null {
     if (!this.#hasFreshSemanticFor(uri)) return null;
-    const semanticResult = this.getSemanticSnapshot();
+    const semanticResult = this.#semanticForDocument(uri);
     const symbol = semanticResult?.value
       ? symbolAt(semanticResult.value, uri, position)
       : undefined;
@@ -440,9 +514,19 @@ export class LanguageService {
     this.#assertActive();
     if (!rootUri) throw new Error("A root URI is required for compilation");
     const runId = ++this.#nextRunId;
-    this.#latestRequestedRunId = runId;
+    this.#latestRequestedRunIdByRoot.set(rootUri, runId);
+    const compilationEpoch = this.#compilationEpoch;
+    const requestedDocumentVersion = this.#documents.get(rootUri)?.version ?? 0;
+    const requestedSourceVersion = this.#effectiveSources.get(rootUri)?.version;
     const operation = this.#compileQueue.then(() =>
-      this.#runCompilation(rootUri, trigger, runId),
+      this.#runCompilation(
+        rootUri,
+        trigger,
+        runId,
+        compilationEpoch,
+        requestedDocumentVersion,
+        requestedSourceVersion,
+      ),
     );
     this.#compileQueue = operation.then(
       () => undefined,
@@ -452,12 +536,26 @@ export class LanguageService {
   }
 
   getSemanticSnapshot(
+    rootUriOrAllowStale: string | boolean = true,
     allowStale = true,
   ): VersionedResult<SemanticSnapshot> | null {
-    if (this.#lastSemantic?.freshness === "fresh") return this.#lastSemantic;
-    if (!allowStale || !this.#lastGoodSemantic) return this.#lastSemantic;
+    const rootUri =
+      typeof rootUriOrAllowStale === "string" ? rootUriOrAllowStale : null;
+    const mayUseStale =
+      typeof rootUriOrAllowStale === "boolean"
+        ? rootUriOrAllowStale
+        : allowStale;
+    const current = rootUri
+      ? (this.#semanticByRoot.get(rootUri) ?? null)
+      : this.#lastSemantic;
+    const lastGood = rootUri
+      ? (this.#lastGoodSemanticByRoot.get(rootUri) ?? null)
+      : this.#lastGoodSemantic;
+    if (current?.freshness === "fresh" && this.#snapshotIsCurrent(current))
+      return current;
+    if (!mayUseStale || !lastGood) return current;
     return {
-      ...this.#lastGoodSemantic,
+      ...lastGood,
       freshness: "stale",
       generation: this.#generation,
     };
@@ -470,12 +568,7 @@ export class LanguageService {
       ? (this.#savedSemanticByRoot.get(rootUri) ?? null)
       : this.#lastSavedSemantic;
     if (!saved) return null;
-    const freshness = Object.entries(saved.documentVersions).every(
-      ([uri, version]) => {
-        const document = this.#documents.get(uri);
-        return !document || document.version === version;
-      },
-    )
+    const freshness = this.#snapshotIsCurrent(saved)
       ? saved.freshness
       : "stale";
     return { ...saved, freshness };
@@ -495,9 +588,11 @@ export class LanguageService {
     rootUri: string,
     trigger: CompilationTrigger,
     runId: number,
+    compilationEpoch: number,
+    requestedDocumentVersion: number,
+    requestedSourceVersion: number | undefined,
   ): Promise<CompilationEvent> {
     const generation = this.#generation;
-    const versions = this.#versions();
     let analysis: CompilationAnalysisResult;
     try {
       analysis = await Promise.resolve().then(() =>
@@ -511,50 +606,56 @@ export class LanguageService {
 
     const current = this.#documents.get(rootUri);
     const fresh =
-      generation === this.#generation &&
-      (!current || current.version === versions[rootUri]);
+      !this.#disposed &&
+      this.#compilationEpoch === compilationEpoch &&
+      this.#latestRequestedRunIdByRoot.get(rootUri) === runId &&
+      (!current || current.version === requestedDocumentVersion) &&
+      this.#effectiveSources.get(rootUri)?.version === requestedSourceVersion &&
+      this.#semanticValueIsCurrent(analysis.semantic);
     for (const syntax of analysis.syntax) {
-      this.#syntax.set(syntax.uri, {
-        value: syntax,
-        freshness: fresh ? "fresh" : "stale",
-        generation,
-        documentVersions: analysis.semantic.documentVersions,
-      });
+      const existing = this.#syntax.get(syntax.uri);
+      if (fresh || existing?.freshness !== "fresh")
+        this.#syntax.set(syntax.uri, {
+          value: syntax,
+          freshness: fresh ? "fresh" : "stale",
+          generation: fresh ? this.#generation : generation,
+          documentVersions: analysis.semantic.documentVersions,
+        });
     }
     const semantic = {
       value: analysis.semantic,
       freshness: fresh ? ("fresh" as const) : ("stale" as const),
-      generation,
+      generation: fresh ? this.#generation : generation,
       documentVersions: analysis.semantic.documentVersions,
     };
-    this.#lastSemantic = semantic;
-    if (analysis.semantic.success && !analysis.semantic.cancelled)
-      this.#lastGoodSemantic = semantic;
-    if (!current?.dirty) {
-      this.#lastSavedSemantic = semantic;
-      this.#savedSemanticByRoot.set(rootUri, semantic);
-    }
-    this.#rebuildDependencies(analysis.semantic);
 
     const event: CompilationEvent = {
       runId,
       timestamp: new Date().toISOString(),
       trigger,
       rootUri,
-      documentVersion: versions[rootUri] ?? 0,
+      documentVersion: requestedDocumentVersion,
       compilation: analysis.compilation,
       semantic,
     };
-    if (runId === this.#latestRequestedRunId) {
+    if (fresh) {
+      this.#semanticByRoot.set(rootUri, semantic);
+      this.#lastSemantic = semantic;
+      this.#lastSemanticRoot = rootUri;
+      if (analysis.semantic.success && !analysis.semantic.cancelled) {
+        this.#lastGoodSemanticByRoot.set(rootUri, semantic);
+        this.#lastGoodSemantic = semantic;
+      }
+      if (!current?.dirty) {
+        this.#lastSavedSemantic = semantic;
+        this.#savedSemanticByRoot.set(rootUri, semantic);
+      }
+      this.#rebuildDependencies(analysis.semantic);
       this.#replaceDiagnostics(rootUri, analysis.compilation.diagnostics);
+      this.#resolveSymbolWaiters(rootUri, requestedDocumentVersion);
       for (const listener of this.#compilationListeners) listener(event);
-      const affectedUris = [
-        ...new Set(
-          analysis.compilation.diagnostics.map(
-            (diagnostic) => diagnostic.range?.uri ?? rootUri,
-          ),
-        ),
-      ];
+      const affectedUris = Object.keys(analysis.semantic.documentVersions);
+      if (!affectedUris.includes(rootUri)) affectedUris.unshift(rootUri);
       const analysisEvent = { result: semantic, affectedUris };
       for (const listener of this.#analysisListeners) listener(analysisEvent);
     }
@@ -562,6 +663,7 @@ export class LanguageService {
   }
 
   async cancelAnalysis(): Promise<void> {
+    this.#compilationEpoch++;
     this.#generation++;
     await this.compiler.restart?.();
     this.#lastSemantic = {
@@ -575,7 +677,9 @@ export class LanguageService {
   dispose(): void {
     if (this.#disposed) return;
     this.#disposed = true;
+    this.#compilationEpoch++;
     this.#generation++;
+    for (const waiter of [...this.#symbolWaiters]) waiter.resolve([]);
     this.#analysisListeners.clear();
     this.#compilationListeners.clear();
     this.#readOnlyUris.clear();
@@ -594,8 +698,8 @@ export class LanguageService {
     if (current && version <= current.version)
       throw new Error(`Document version must increase for ${uri}`);
     this.#documents.set(uri, { uri, text, version, dirty });
-    this.compiler.putSource(uri, text, version);
-    this.#invalidate();
+    this.#applyEffectiveSource(uri, text, version);
+    this.#resolveSupersededSymbolWaiters(uri);
     return {
       value: null,
       freshness: "stale",
@@ -616,30 +720,50 @@ export class LanguageService {
     return result;
   }
 
-  #refreshEffectiveSource(uri: string): void {
+  #refreshEffectiveSource(uri: string, conservativeIfUnknown = false): void {
     const document = this.#documents.get(uri);
     if (document) {
-      this.compiler.putSource(uri, document.text, document.version);
+      this.#applyEffectiveSource(
+        uri,
+        document.text,
+        document.version,
+        conservativeIfUnknown,
+      );
       return;
     }
     const workspace = this.#workspaceSources.get(uri);
     if (workspace) {
-      this.compiler.putSource(uri, workspace.text, workspace.version);
+      this.#applyEffectiveSource(
+        uri,
+        workspace.text,
+        workspace.version,
+        conservativeIfUnknown,
+      );
       return;
     }
     const repository = this.#repositorySources.get(uri);
     if (repository) {
-      this.compiler.putSource(uri, repository.source, ++this.#sourceRevision);
+      this.#applyEffectiveSource(
+        uri,
+        repository.source,
+        this.#repositorySourceVersions.get(uri),
+        conservativeIfUnknown,
+      );
       return;
     }
-    this.compiler.removeSource(uri);
-    this.#syntax.delete(uri);
+    if (this.#effectiveSources.delete(uri)) {
+      this.#removedSourceUris.add(uri);
+      this.compiler.removeSource(uri);
+      this.#syntax.delete(uri);
+      this.#invalidateSource(uri, conservativeIfUnknown);
+    }
   }
 
   #putRepositorySource(source: ResolvedRepositoryModel): void {
     this.#repositorySources.set(source.uri, source);
+    this.#repositorySourceVersions.set(source.uri, ++this.#sourceRevision);
     this.#readOnlyUris.add(source.uri);
-    this.compiler.putSource(source.uri, source.source, ++this.#sourceRevision);
+    this.#refreshEffectiveSource(source.uri, true);
   }
 
   async #resolveMissingModels(
@@ -786,19 +910,65 @@ export class LanguageService {
     rootUri: string,
     diagnostics: readonly Diagnostic[],
   ): void {
-    this.#diagnostics.clear();
+    const grouped = new Map<string, Diagnostic[]>();
     for (const diagnostic of diagnostics) {
       const uri = diagnostic.range?.uri ?? rootUri;
-      const values = this.#diagnostics.get(uri) ?? [];
+      const values = grouped.get(uri) ?? [];
       values.push(diagnostic);
-      this.#diagnostics.set(uri, values);
+      grouped.set(uri, values);
+    }
+    this.#diagnosticsByRoot.set(rootUri, grouped);
+    this.#diagnostics.clear();
+    for (const rootDiagnostics of this.#diagnosticsByRoot.values())
+      for (const [uri, values] of rootDiagnostics)
+        this.#diagnostics.set(uri, [
+          ...(this.#diagnostics.get(uri) ?? []),
+          ...values,
+        ]);
+  }
+
+  #invalidateSource(uri: string, conservativeIfUnknown = false): void {
+    this.#generation++;
+    const syntax = this.#syntax.get(uri);
+    if (syntax) this.#syntax.set(uri, { ...syntax, freshness: "stale" });
+    let matched = this.#invalidateSemanticMap(this.#semanticByRoot, uri);
+    matched =
+      this.#invalidateSemanticMap(this.#savedSemanticByRoot, uri) || matched;
+    if (
+      this.#lastSemantic &&
+      (this.#lastSemanticRoot === uri ||
+        uri in this.#lastSemantic.documentVersions)
+    )
+      this.#lastSemantic = { ...this.#lastSemantic, freshness: "stale" };
+    if (
+      this.#lastSavedSemantic &&
+      uri in this.#lastSavedSemantic.documentVersions
+    )
+      this.#lastSavedSemantic = {
+        ...this.#lastSavedSemantic,
+        freshness: "stale",
+      };
+    if (conservativeIfUnknown && !matched) {
+      for (const map of [this.#semanticByRoot, this.#savedSemanticByRoot])
+        for (const [rootUri, snapshot] of map)
+          map.set(rootUri, { ...snapshot, freshness: "stale" });
+      if (this.#lastSemantic)
+        this.#lastSemantic = { ...this.#lastSemantic, freshness: "stale" };
+      if (this.#lastSavedSemantic)
+        this.#lastSavedSemantic = {
+          ...this.#lastSavedSemantic,
+          freshness: "stale",
+        };
     }
   }
 
-  #invalidate(): void {
+  #invalidateAll(): void {
     this.#generation++;
     for (const [uri, snapshot] of this.#syntax)
       this.#syntax.set(uri, { ...snapshot, freshness: "stale" });
+    for (const map of [this.#semanticByRoot, this.#savedSemanticByRoot])
+      for (const [rootUri, snapshot] of map)
+        map.set(rootUri, { ...snapshot, freshness: "stale" });
     if (this.#lastSemantic)
       this.#lastSemantic = { ...this.#lastSemantic, freshness: "stale" };
     if (this.#lastSavedSemantic)
@@ -806,11 +976,57 @@ export class LanguageService {
         ...this.#lastSavedSemantic,
         freshness: "stale",
       };
-    for (const [rootUri, snapshot] of this.#savedSemanticByRoot)
-      this.#savedSemanticByRoot.set(rootUri, {
-        ...snapshot,
-        freshness: "stale",
-      });
+  }
+
+  #invalidateSemanticMap(
+    map: Map<string, VersionedResult<SemanticSnapshot>>,
+    uri: string,
+  ): boolean {
+    let matched = false;
+    for (const [rootUri, snapshot] of map) {
+      if (rootUri !== uri && !(uri in snapshot.documentVersions)) continue;
+      matched = true;
+      map.set(rootUri, { ...snapshot, freshness: "stale" });
+    }
+    return matched;
+  }
+
+  #applyEffectiveSource(
+    uri: string,
+    source: string | Uint8Array,
+    preferredVersion?: number,
+    conservativeIfUnknown = false,
+  ): boolean {
+    const text =
+      typeof source === "string" ? source : new TextDecoder().decode(source);
+    const current = this.#effectiveSources.get(uri);
+    if (current?.text === text) return false;
+    let version = preferredVersion;
+    if (version === undefined || (current && version <= current.version))
+      version = ++this.#sourceRevision;
+    this.#sourceRevision = Math.max(this.#sourceRevision, version);
+    this.#effectiveSources.set(uri, { text, version });
+    this.#removedSourceUris.delete(uri);
+    this.compiler.putSource(uri, text, version);
+    this.#invalidateSource(uri, conservativeIfUnknown);
+    return true;
+  }
+
+  #snapshotIsCurrent(snapshot: VersionedResult<SemanticSnapshot>): boolean {
+    return this.#semanticValueIsCurrent({
+      documentVersions: snapshot.documentVersions,
+    });
+  }
+
+  #semanticValueIsCurrent(value: {
+    readonly documentVersions: Readonly<Record<string, number>>;
+  }): boolean {
+    return Object.entries(value.documentVersions).every(([uri, version]) => {
+      const effective = this.#effectiveSources.get(uri);
+      return effective
+        ? effective.version === version
+        : !this.#removedSourceUris.has(uri);
+    });
   }
 
   #rebuildDependencies(snapshot: SemanticSnapshot): void {
@@ -826,7 +1042,7 @@ export class LanguageService {
 
   #versions(): Readonly<Record<string, number>> {
     return Object.fromEntries(
-      [...this.#documents].map(([uri, document]) => [uri, document.version]),
+      [...this.#effectiveSources].map(([uri, source]) => [uri, source.version]),
     );
   }
 
@@ -917,12 +1133,82 @@ export class LanguageService {
     }));
   }
 
+  #semanticForDocument(uri: string): VersionedResult<SemanticSnapshot> | null {
+    const candidates = [...this.#semanticByRoot.entries()]
+      .filter(
+        ([rootUri, snapshot]) =>
+          rootUri === uri ||
+          uri in snapshot.documentVersions ||
+          snapshot.value?.symbols.some((symbol) => symbol.range?.uri === uri),
+      )
+      .sort(([leftRoot, left], [rightRoot, right]) => {
+        if (leftRoot === uri && rightRoot !== uri) return -1;
+        if (rightRoot === uri && leftRoot !== uri) return 1;
+        return right.generation - left.generation;
+      });
+    return (
+      candidates
+        .map(([, snapshot]) => snapshot)
+        .find(
+          (snapshot) =>
+            snapshot.freshness === "fresh" && this.#snapshotIsCurrent(snapshot),
+        ) ?? null
+    );
+  }
+
+  #symbolsForDocumentVersion(
+    uri: string,
+    documentVersion: number,
+  ): DocumentSymbol[] | null {
+    const document = this.#documents.get(uri);
+    if (!document || document.version !== documentVersion) return null;
+    const current = this.#semanticByRoot.get(uri);
+    if (
+      !current ||
+      current.freshness !== "fresh" ||
+      !this.#snapshotIsCurrent(current)
+    )
+      return null;
+    const selected = current.value?.success
+      ? current
+      : this.#lastGoodSemanticByRoot.get(uri);
+    return selected?.value ? documentSymbols(selected.value, uri) : [];
+  }
+
+  #resolveSymbolWaiters(rootUri: string, documentVersion: number): void {
+    for (const waiter of [...this.#symbolWaiters]) {
+      if (waiter.uri !== rootUri || waiter.documentVersion !== documentVersion)
+        continue;
+      waiter.resolve(
+        this.#symbolsForDocumentVersion(rootUri, documentVersion) ?? [],
+      );
+    }
+  }
+
+  #resolveSupersededSymbolWaiters(uri: string): void {
+    const version = this.#documents.get(uri)?.version;
+    for (const waiter of [...this.#symbolWaiters])
+      if (waiter.uri === uri && waiter.documentVersion !== version)
+        waiter.resolve([]);
+  }
+
+  #deduplicateEdits(edits: readonly TextEdit[]): TextEdit[] {
+    const seen = new Set<string>();
+    return edits.filter((edit) => {
+      const key = `${edit.range.start.line}:${edit.range.start.character}:${edit.range.end.line}:${edit.range.end.character}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
   #hasFreshSemanticFor(uri: string): boolean {
     const document = this.#documents.get(uri);
-    if (document?.dirty || this.#lastSemantic?.freshness !== "fresh")
-      return false;
-    if (!document) return true;
-    return this.#lastSemantic.documentVersions[uri] === document.version;
+    if (document?.dirty) return false;
+    const semantic = this.#semanticForDocument(uri);
+    if (!semantic) return false;
+    const effective = this.#effectiveSources.get(uri);
+    return !effective || semantic.documentVersions[uri] === effective.version;
   }
 
   #contains(

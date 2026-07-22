@@ -66,9 +66,19 @@ function contractHarness() {
     closeDocument: vi.fn(),
     dispose: vi.fn(),
     isReadOnlyUri: vi.fn(() => false),
+    getDocument: vi.fn((): unknown => undefined),
     getRepositoryDocument: vi.fn(),
     compileDocument: vi.fn(() => Promise.resolve({ compilation: {} })),
     getSavedSemanticSnapshot: vi.fn(() => null),
+    waitForDocumentSymbols: vi.fn(
+      (uri: string, version: number, signal?: AbortSignal) => {
+        void uri;
+        void version;
+        void signal;
+        return Promise.resolve([]);
+      },
+    ),
+    rename: vi.fn((): unknown => null),
   };
   const service = {
     ...spies,
@@ -80,7 +90,7 @@ function contractHarness() {
     definition: vi.fn(() => []),
     references: vi.fn(() => []),
     prepareRename: vi.fn(() => null),
-    rename: vi.fn(() => null),
+    rename: spies.rename,
     symbols: vi.fn(() => []),
     hover: vi.fn(() => null),
     formatting: vi.fn(() => []),
@@ -217,7 +227,7 @@ describe("language server repository contract", () => {
     expect(harness.spies.changeDocument).not.toHaveBeenCalled();
   });
 
-  it("clears previous diagnostics, publishes the exact new set, and notifies", () => {
+  it("keeps diagnostics independent per root and publishes notifications", () => {
     const harness = contractHarness();
     bindLanguageServer(harness.connection, harness.service);
     const makeEvent = (uri: string, code: string): CompilationEvent => ({
@@ -263,17 +273,17 @@ describe("language server repository contract", () => {
     });
     harness.fireCompilation(makeEvent("file:///A.ili", "first"));
     harness.fireCompilation(makeEvent("file:///B.ili", "second"));
-    expect(harness.sendDiagnostics).toHaveBeenCalledTimes(3);
-    expect(harness.sendDiagnostics.mock.calls[1]?.[0]).toEqual({
+    expect(harness.sendDiagnostics).toHaveBeenCalledTimes(2);
+    expect(harness.sendDiagnostics).not.toHaveBeenCalledWith({
       uri: "file:///A.ili",
       diagnostics: [],
     });
-    expect(harness.sendDiagnostics.mock.calls[2]?.[0]).toEqual(
+    expect(harness.sendDiagnostics.mock.calls[1]?.[0]).toEqual(
       expect.objectContaining({ uri: "file:///B.ili" }),
     );
     expect(
       (
-        harness.sendDiagnostics.mock.calls[2]?.[0] as {
+        harness.sendDiagnostics.mock.calls[1]?.[0] as {
           diagnostics: Array<{ severity: number; data: unknown }>;
         }
       ).diagnostics[0],
@@ -287,9 +297,18 @@ describe("language server repository contract", () => {
         },
       }),
     );
-    expect(harness.sendNotification).toHaveBeenLastCalledWith(
+    expect(harness.sendNotification).toHaveBeenCalledWith(
       InterlisProtocol.compilationCompleted,
       expect.objectContaining({ rootUri: "file:///B.ili" }),
+    );
+    expect(harness.sendNotification).toHaveBeenLastCalledWith(
+      InterlisProtocol.semanticSnapshotChanged,
+      expect.objectContaining({
+        rootUri: "file:///B.ili",
+        generation: 1,
+        freshness: "fresh",
+        sourceUris: ["file:///B.ili"],
+      }),
     );
     harness.handler<() => void>("onShutdown")();
     expect(harness.compilationDispose).toHaveBeenCalledOnce();
@@ -317,5 +336,199 @@ describe("language server repository contract", () => {
       trigger: "startup",
     });
     expect(harness.spies.compileDocument).toHaveBeenCalledWith(uri, "startup");
+  });
+
+  it("waits for the saved document version before answering document symbols", async () => {
+    const harness = contractHarness();
+    bindLanguageServer(harness.connection, harness.service);
+    const uri = "file:///Root.ili";
+    harness.spies.getDocument.mockReturnValue({ version: 2 });
+    let release!: () => void;
+    harness.spies.waitForDocumentSymbols.mockImplementation(
+      () =>
+        new Promise<[]>((resolve) => {
+          release = () => resolve([]);
+        }),
+    );
+
+    const request = harness.handler<
+      (
+        params: { textDocument: { uri: string } },
+        token?: {
+          onCancellationRequested(listener: () => void): { dispose(): void };
+        },
+      ) => Promise<unknown>
+    >("onDocumentSymbol")({ textDocument: { uri } });
+    let settled = false;
+    void request.then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    expect(harness.spies.waitForDocumentSymbols).toHaveBeenCalledWith(
+      uri,
+      2,
+      expect.any(AbortSignal),
+    );
+
+    harness.handler<(params: unknown) => void>("onDidSaveTextDocument")({
+      textDocument: { uri },
+    });
+    release();
+    await expect(request).resolves.toEqual([]);
+    expect(harness.spies.compileDocument).toHaveBeenCalledWith(uri, "save");
+  });
+
+  it("cancels a waiting document-symbol request", async () => {
+    const harness = contractHarness();
+    bindLanguageServer(harness.connection, harness.service);
+    const uri = "file:///Root.ili";
+    harness.spies.getDocument.mockReturnValue({ version: 2 });
+    let observedSignal: AbortSignal | undefined;
+    harness.spies.waitForDocumentSymbols.mockImplementation(
+      (_uri, _version, signal) =>
+        new Promise<[]>((resolve) => {
+          observedSignal = signal;
+          signal?.addEventListener("abort", () => resolve([]), { once: true });
+        }),
+    );
+    let cancel!: () => void;
+    const request = harness.handler<
+      (
+        params: { textDocument: { uri: string } },
+        token: {
+          onCancellationRequested(listener: () => void): { dispose(): void };
+        },
+      ) => Promise<unknown>
+    >("onDocumentSymbol")(
+      { textDocument: { uri } },
+      {
+        onCancellationRequested(listener) {
+          cancel = listener;
+          return { dispose: vi.fn() };
+        },
+      },
+    );
+
+    cancel();
+
+    await expect(request).resolves.toEqual([]);
+    expect(observedSignal?.aborted).toBe(true);
+  });
+
+  it("publishes semantic dependency results without replacing compiler output", () => {
+    const harness = contractHarness();
+    bindLanguageServer(harness.connection, harness.service);
+    const uri = "file:///Root.ili";
+    harness.fireCompilation({
+      runId: 3,
+      timestamp: "2026-07-20T12:00:00.000Z",
+      trigger: "dependency",
+      rootUri: uri,
+      documentVersion: 2,
+      compilation: {
+        schemaVersion: 1,
+        abiVersion: 1,
+        compilerVersion: "test",
+        kind: "compilation",
+        success: true,
+        cancelled: false,
+        errorCount: 0,
+        warningCount: 0,
+        missingModels: [],
+        models: [],
+        diagnostics: [],
+        logs: [],
+      },
+      semantic: {
+        value: null,
+        freshness: "fresh",
+        generation: 4,
+        documentVersions: { [uri]: 2 },
+      },
+    });
+
+    expect(harness.sendNotification).not.toHaveBeenCalledWith(
+      InterlisProtocol.compilationCompleted,
+      expect.anything(),
+    );
+    expect(harness.sendNotification).toHaveBeenCalledWith(
+      InterlisProtocol.semanticSnapshotChanged,
+      expect.objectContaining({ trigger: "dependency", rootUri: uri }),
+    );
+  });
+
+  it("forwards rename edits without compiling until the document is saved", () => {
+    const harness = contractHarness();
+    bindLanguageServer(harness.connection, harness.service);
+    const uri = "file:///Root.ili";
+    harness.spies.rename.mockReturnValue({
+      changes: {
+        [uri]: [
+          {
+            range: {
+              start: { line: 0, character: 6 },
+              end: { line: 0, character: 9 },
+            },
+            newText: "foo2",
+          },
+          {
+            range: {
+              start: { line: 3, character: 4 },
+              end: { line: 3, character: 7 },
+            },
+            newText: "foo2",
+          },
+        ],
+      },
+    });
+
+    harness.handler<(params: unknown) => void>("onDidChangeTextDocument")({
+      textDocument: { uri, version: 2 },
+      contentChanges: [{ text: "TOPIC foo2 =\nEND foo2;" }],
+    });
+    const rename = harness.handler<
+      (params: {
+        textDocument: { uri: string };
+        position: { line: number; character: number };
+        newName: string;
+      }) => unknown
+    >("onRenameRequest")({
+      textDocument: { uri },
+      position: { line: 0, character: 7 },
+      newName: "foo2",
+    });
+
+    expect(harness.spies.changeDocument).toHaveBeenCalledWith(
+      uri,
+      "TOPIC foo2 =\nEND foo2;",
+      2,
+    );
+    expect(harness.spies.rename).toHaveBeenCalledWith(
+      uri,
+      { line: 0, character: 7 },
+      "foo2",
+    );
+    expect(rename).toEqual({
+      changes: {
+        [uri]: [
+          {
+            range: {
+              start: { line: 0, character: 6 },
+              end: { line: 0, character: 9 },
+            },
+            newText: "foo2",
+          },
+          {
+            range: {
+              start: { line: 3, character: 4 },
+              end: { line: 3, character: 7 },
+            },
+            newText: "foo2",
+          },
+        ],
+      },
+    });
+    expect(harness.spies.compileDocument).not.toHaveBeenCalled();
   });
 });

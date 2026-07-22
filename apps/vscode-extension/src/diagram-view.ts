@@ -15,9 +15,12 @@ import type {
 } from "@ilic/diagram";
 import { InterlisProtocol } from "@ilic/language-server/protocol";
 import type {
+  CompileParams,
   DiagramSnapshotParams,
   DiagramSnapshotResult,
+  SemanticSnapshotChangedParams,
 } from "@ilic/language-server/protocol";
+import type { CompilationResult } from "@ilic/language-service";
 import type { LanguageClientFacade } from "./common.js";
 
 interface ViewState {
@@ -27,6 +30,9 @@ interface ViewState {
   snapshot: DiagramSnapshotResult | null;
   layout: LayoutDiagram | null;
   viewport: AnchoredViewport | null;
+  svg: string;
+  refreshRequest: number;
+  disposed: boolean;
 }
 
 export interface DiagramWorkflows {
@@ -84,39 +90,71 @@ function html(state: ViewState, svg: string, initial: Viewport | null): string {
   </script></body></html>`;
 }
 
+function restoredViewport(state: ViewState): Viewport | null {
+  return state.layout && state.viewport
+    ? restoreViewport(state.layout, state.viewport, {
+        width: 900,
+        height: 700,
+      })
+    : null;
+}
+
+function renderCurrent(state: ViewState): void {
+  if (!state.disposed)
+    state.panel.webview.html = html(state, state.svg, restoredViewport(state));
+}
+
+function markStale(state: ViewState, message?: string): void {
+  state.refreshRequest++;
+  state.controller.stale(message);
+  renderCurrent(state);
+}
+
 async function refresh(
   client: LanguageClientFacade,
   state: ViewState,
 ): Promise<void> {
+  const request = ++state.refreshRequest;
   state.controller.loading();
-  state.panel.webview.html = html(state, "", null);
+  renderCurrent(state);
   try {
     const result = await client.sendRequest<DiagramSnapshotResult | null>(
       InterlisProtocol.diagramSnapshot,
       { uri: state.source.toString() } satisfies DiagramSnapshotParams,
     );
     if (!result) throw new Error("No semantic snapshot is available yet.");
-    state.snapshot = result;
-    state.controller.publish(
-      result.snapshot,
-      result.freshness === "fresh" ? "fresh" : "stale",
+    if (
+      state.disposed ||
+      request !== state.refreshRequest ||
+      (state.snapshot && result.generation < state.snapshot.generation)
+    )
+      return;
+    if (!result.snapshot.success) {
+      state.controller.publish(result.snapshot, "stale");
+      renderCurrent(state);
+      return;
+    }
+    if (result.freshness !== "fresh") {
+      state.controller.stale();
+      renderCurrent(state);
+      return;
+    }
+    const rendered = await layoutAndRenderDiagram(
+      result.snapshot.diagram,
+      settings(),
     );
-    const visible = state.controller.state.snapshot;
-    if (!visible) throw new Error(state.controller.state.message);
-    const rendered = await layoutAndRenderDiagram(visible.diagram, settings());
+    if (state.disposed || request !== state.refreshRequest) return;
+    state.controller.publish(result.snapshot, "fresh");
+    state.snapshot = result;
     state.layout = rendered.layout;
-    const restored = state.viewport
-      ? restoreViewport(rendered.layout, state.viewport, {
-          width: 900,
-          height: 700,
-        })
-      : null;
-    state.panel.webview.html = html(state, rendered.svg, restored);
+    state.svg = rendered.svg;
+    renderCurrent(state);
   } catch (error) {
+    if (state.disposed || request !== state.refreshRequest) return;
     state.controller.fail(
       error instanceof Error ? error.message : String(error),
     );
-    state.panel.webview.html = html(state, "", null);
+    renderCurrent(state);
   }
 }
 
@@ -150,6 +188,37 @@ export function registerDiagramWorkflows(
   options: { readonly startupReady?: Promise<void> } = {},
 ): DiagramWorkflows {
   const startupReady = options.startupReady ?? Promise.resolve();
+  const dependencyCompilations = new Set<string>();
+
+  const dependsOn = (state: ViewState, uri: string): boolean =>
+    state.source.toString() === uri ||
+    Boolean(state.snapshot?.snapshot.documentVersions?.[uri]);
+
+  const compileDependency = (
+    state: ViewState,
+    event: SemanticSnapshotChangedParams,
+  ): void => {
+    const rootUri = state.source.toString();
+    const key = `${rootUri}\n${event.rootUri}\n${event.generation}`;
+    if (dependencyCompilations.has(key)) return;
+    dependencyCompilations.add(key);
+    markStale(state, "Updating diagram after a dependency changed…");
+    const request = state.refreshRequest;
+    void client
+      .sendRequest<CompilationResult>(InterlisProtocol.compile, {
+        uri: rootUri,
+        trigger: "dependency",
+      } satisfies CompileParams)
+      .catch((error: unknown) => {
+        if (state.disposed || request !== state.refreshRequest) return;
+        state.controller.fail(
+          error instanceof Error ? error.message : String(error),
+        );
+        renderCurrent(state);
+      })
+      .finally(() => dependencyCompilations.delete(key));
+  };
+
   const open = async (source?: vscode.Uri): Promise<void> => {
     const uri = source ?? vscode.window.activeTextEditor?.document.uri;
     if (!uri) return;
@@ -182,9 +251,20 @@ export function registerDiagramWorkflows(
       snapshot: null,
       layout: null,
       viewport: null,
+      svg: "",
+      refreshRequest: 0,
+      disposed: false,
     };
     views.set(key, state);
-    panel.onDidDispose(() => views.delete(key), null, context.subscriptions);
+    panel.onDidDispose(
+      () => {
+        state.disposed = true;
+        state.refreshRequest++;
+        views.delete(key);
+      },
+      null,
+      context.subscriptions,
+    );
     panel.webview.onDidReceiveMessage(
       (message: { type?: string; id?: string; value?: Viewport }) => {
         if (message.type === "refresh") void refresh(client, state);
@@ -220,6 +300,38 @@ export function registerDiagramWorkflows(
           return open(editor.document.uri);
         });
     }),
+    vscode.workspace.onDidChangeTextDocument((event) => {
+      if (event.document.languageId !== "interlis") return;
+      const uri = event.document.uri.toString();
+      for (const state of views.values())
+        if (dependsOn(state, uri))
+          markStale(
+            state,
+            "Showing the last valid diagram; save to update it.",
+          );
+    }),
+    client.onNotification(
+      InterlisProtocol.semanticSnapshotChanged,
+      (params) => {
+        const event = params as SemanticSnapshotChangedParams;
+        for (const state of views.values()) {
+          if (!dependsOn(state, event.rootUri)) continue;
+          const direct = state.source.toString() === event.rootUri;
+          if (event.freshness !== "fresh" || !event.success) {
+            markStale(
+              state,
+              "Showing the last valid diagram; the current model contains errors.",
+            );
+            continue;
+          }
+          if (direct) {
+            void refresh(client, state);
+            continue;
+          }
+          if (event.trigger === "save") compileDependency(state, event);
+        }
+      },
+    ),
   );
 
   return { open };

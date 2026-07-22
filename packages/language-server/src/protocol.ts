@@ -68,8 +68,8 @@ export interface DiagramSnapshotResult {
 }
 export interface CompileParams {
   readonly uri: string;
-  /** A client-initiated compile is manual unless explicitly marked as startup. */
-  readonly trigger?: "manual" | "startup";
+  /** A client-initiated compile is manual unless another internal trigger is supplied. */
+  readonly trigger?: Exclude<CompilationTrigger, "save">;
 }
 export interface CompilationCompletedParams {
   readonly runId: number;
@@ -78,6 +78,16 @@ export interface CompilationCompletedParams {
   readonly rootUri: string;
   readonly documentVersion: number;
   readonly compilation: CompilationResult;
+}
+export interface SemanticSnapshotChangedParams {
+  readonly runId: number;
+  readonly trigger: CompilationTrigger;
+  readonly rootUri: string;
+  readonly documentVersion: number;
+  readonly generation: number;
+  readonly success: boolean;
+  readonly freshness: "fresh" | "stale" | "cancelled";
+  readonly sourceUris: readonly string[];
 }
 export interface ExportDocxParams {
   readonly uri: string;

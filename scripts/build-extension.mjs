@@ -6,19 +6,23 @@ const root = resolve(import.meta.dirname, "..");
 const extension = resolve(root, "apps/vscode-extension");
 const dist = resolve(extension, "dist");
 const compiler = resolve(root, "../ilic-fork/packages/compiler-wasm");
+const compilerEntry = resolve(compiler, "index.js");
+const compilerModule = resolve(compiler, "ilic.mjs");
 const compilerWasm = resolve(compiler, "ilic.wasm");
 
-try {
-  await access(compilerWasm);
-} catch (error) {
-  if (error?.code === "ENOENT") {
-    throw new Error(
-      `The compiler WASM artifact is missing at ${compilerWasm}. Run ` +
-        "cd ../ilic-fork && ./scripts/build-wasm.sh" +
-        " before building the extension.",
-    );
+for (const artifact of [compilerEntry, compilerModule, compilerWasm]) {
+  try {
+    await access(artifact);
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      throw new Error(
+        `The compiler artifact is missing at ${artifact}. Run ` +
+          "cd ../ilic-fork && ./scripts/build-wasm.sh" +
+          " before building the extension.",
+      );
+    }
+    throw error;
   }
-  throw error;
 }
 
 await rm(dist, { recursive: true, force: true });
@@ -32,6 +36,7 @@ const shared = {
   logLevel: "warning",
   sourcemap: true,
   target: "es2022",
+  alias: { "@ilic/compiler-wasm": compilerEntry },
 };
 
 const nodeRuntimeBanner = [

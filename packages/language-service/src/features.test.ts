@@ -80,6 +80,8 @@ const semantic = (): SemanticSnapshot => ({
       containerId: "",
       range: range(0, 6, 0, 11),
       abstract: false,
+      selectionRange: range(0, 6, 0, 11),
+      endRange: range(10, 4, 10, 9),
     },
     {
       id: "class",
@@ -89,6 +91,8 @@ const semantic = (): SemanticSnapshot => ({
       containerId: "model",
       range: range(2, 8, 2, 16),
       abstract: false,
+      selectionRange: range(2, 8, 2, 16),
+      endRange: range(5, 8, 5, 16),
     },
   ],
   references: [
@@ -117,6 +121,7 @@ const inheritanceSemantic = (): SemanticSnapshot => ({
       containerId: "",
       range: range(0, 0, 12, 1),
       selectionRange: range(0, 6, 0, 11),
+      endRange: range(12, 4, 12, 9),
       abstract: false,
     },
     {
@@ -127,6 +132,7 @@ const inheritanceSemantic = (): SemanticSnapshot => ({
       containerId: "model",
       range: range(2, 0, 6, 1),
       selectionRange: range(2, 6, 2, 10),
+      endRange: range(6, 8, 6, 12),
       abstract: false,
     },
     {
@@ -137,6 +143,7 @@ const inheritanceSemantic = (): SemanticSnapshot => ({
       containerId: "base",
       range: range(3, 2, 3, 16),
       selectionRange: range(3, 2, 3, 6),
+      endRange: null,
       abstract: false,
     },
     {
@@ -147,6 +154,7 @@ const inheritanceSemantic = (): SemanticSnapshot => ({
       containerId: "base",
       range: range(4, 2, 4, 16),
       selectionRange: range(4, 2, 4, 7),
+      endRange: null,
       abstract: false,
     },
     {
@@ -157,6 +165,7 @@ const inheritanceSemantic = (): SemanticSnapshot => ({
       containerId: "model",
       range: range(8, 0, 12, 1),
       selectionRange: range(8, 6, 8, 11),
+      endRange: range(12, 8, 12, 13),
       abstract: false,
     },
     {
@@ -167,6 +176,7 @@ const inheritanceSemantic = (): SemanticSnapshot => ({
       containerId: "child",
       range: range(9, 2, 9, 16),
       selectionRange: range(9, 2, 9, 6),
+      endRange: null,
       abstract: false,
     },
     {
@@ -177,6 +187,7 @@ const inheritanceSemantic = (): SemanticSnapshot => ({
       containerId: "child",
       range: range(10, 2, 10, 8),
       selectionRange: range(10, 2, 10, 8),
+      endRange: null,
       abstract: false,
     },
   ],
@@ -279,12 +290,16 @@ describe("semantic feature helpers", () => {
       locationsForDefinition(snapshot, uri, { line: 2, character: 9 })[0]?.range
         .start.line,
     ).toBe(2);
+    expect(
+      locationsForDefinition(snapshot, uri, { line: 5, character: 9 })[0]?.range
+        .start,
+    ).toEqual({ line: 2, character: 8 });
     expect(locationsForReferences(snapshot, "model", false)).toHaveLength(1);
-    expect(locationsForReferences(snapshot, "model", true)).toHaveLength(2);
+    expect(locationsForReferences(snapshot, "model", true)).toHaveLength(3);
     expect(locationsForReferences(snapshot, "missing", true)).toEqual([]);
     expect(
       renameSymbol(snapshot, "model", "Renamed").changes[uri],
-    ).toHaveLength(2);
+    ).toHaveLength(3);
     expect(symbolAt(snapshot, uri, { line: 4, character: 5 })?.id).toBe(
       "model",
     );
@@ -292,9 +307,17 @@ describe("semantic feature helpers", () => {
     expect(symbolAt(snapshot, uri, { line: 2, character: 9 })?.id).toBe(
       "class",
     );
+    expect(symbolAt(snapshot, uri, { line: 5, character: 9 })?.id).toBe(
+      "class",
+    );
 
     const withoutRange = semantic();
-    withoutRange.symbols[0] = { ...withoutRange.symbols[0]!, range: null };
+    withoutRange.symbols[0] = {
+      ...withoutRange.symbols[0]!,
+      range: null,
+      selectionRange: null,
+      endRange: null,
+    };
     expect(
       locationsForDefinition(withoutRange, uri, { line: 4, character: 5 }),
     ).toEqual([]);
@@ -318,7 +341,7 @@ describe("semantic feature helpers", () => {
       name: "Model",
       range: {
         start: { line: 0, character: 0 },
-        end: { line: 2, character: 16 },
+        end: { line: 10, character: 9 },
       },
       selectionRange: {
         start: { line: 0, character: 6 },
@@ -329,7 +352,7 @@ describe("semantic feature helpers", () => {
       name: "Building",
       range: {
         start: { line: 2, character: 0 },
-        end: { line: 2, character: 16 },
+        end: { line: 5, character: 16 },
       },
       selectionRange: {
         start: { line: 2, character: 8 },

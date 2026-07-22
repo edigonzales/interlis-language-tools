@@ -73,6 +73,7 @@ describe("DiagramController", () => {
     expect(controller.state.status).toBe("empty");
     expect(controller.loading().status).toBe("loading");
     expect(controller.publish(snapshot()).status).toBe("ready");
+    expect(controller.stale().status).toBe("stale");
     expect(controller.publish(snapshot(false)).status).toBe("stale");
     expect(controller.fail("layout failed")).toMatchObject({
       status: "stale",

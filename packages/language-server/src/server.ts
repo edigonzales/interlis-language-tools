@@ -1,4 +1,4 @@
-import type { LanguageService } from "@ilic/language-service";
+import type { CompilationEvent, LanguageService } from "@ilic/language-service";
 import type {
   Connection,
   InitializeParams,
@@ -24,6 +24,7 @@ import type {
   OnTypeEditParams,
   RepositoryConfigurationParams,
   RepositorySourceResult,
+  SemanticSnapshotChangedParams,
   WorkspaceSourceChangedParams,
   WorkspaceSourcesParams,
 } from "./protocol.js";
@@ -42,29 +43,56 @@ export function bindLanguageServer(
   hooks: LanguageServerHooks = {},
 ): void {
   let initializationOptions: InterlisInitializationOptions = {};
-  let publishedDiagnosticUris = new Set<string>();
+  type CompilationDiagnostics = CompilationEvent["compilation"]["diagnostics"];
+  const diagnosticsByRoot = new Map<
+    string,
+    Map<string, CompilationDiagnostics>
+  >();
   const compilationSubscription = service.onCompilation((event) => {
-    for (const uri of publishedDiagnosticUris)
-      void connection.sendDiagnostics({ uri, diagnostics: [] });
-    const grouped = new Map<string, typeof event.compilation.diagnostics>();
+    const grouped = new Map<string, CompilationDiagnostics>();
     for (const diagnostic of event.compilation.diagnostics) {
       const uri = diagnostic.range?.uri ?? event.rootUri;
       grouped.set(uri, [...(grouped.get(uri) ?? []), diagnostic]);
     }
-    publishedDiagnosticUris = new Set(grouped.keys());
-    for (const [uri, diagnostics] of grouped)
+    const previous = diagnosticsByRoot.get(event.rootUri);
+    diagnosticsByRoot.set(event.rootUri, grouped);
+    const affectedUris = new Set([
+      ...(previous?.keys() ?? []),
+      ...grouped.keys(),
+    ]);
+    for (const uri of affectedUris) {
+      const diagnostics = [...diagnosticsByRoot.values()].flatMap(
+        (rootDiagnostics) => rootDiagnostics.get(uri) ?? [],
+      );
       void connection.sendDiagnostics({
         uri,
         diagnostics: diagnostics.map(toDiagnostic),
       });
-    void connection.sendNotification(InterlisProtocol.compilationCompleted, {
+    }
+    if (event.trigger !== "dependency")
+      void connection.sendNotification(InterlisProtocol.compilationCompleted, {
+        runId: event.runId,
+        timestamp: event.timestamp,
+        trigger: event.trigger,
+        rootUri: event.rootUri,
+        documentVersion: event.documentVersion,
+        compilation: event.compilation,
+      } satisfies CompilationCompletedParams);
+    void connection.sendNotification(InterlisProtocol.semanticSnapshotChanged, {
       runId: event.runId,
-      timestamp: event.timestamp,
       trigger: event.trigger,
       rootUri: event.rootUri,
       documentVersion: event.documentVersion,
-      compilation: event.compilation,
-    } satisfies CompilationCompletedParams);
+      generation: event.semantic.generation,
+      success: event.semantic.value?.success ?? event.compilation.success,
+      freshness: event.semantic.freshness,
+      sourceUris: [
+        ...new Set([
+          event.rootUri,
+          ...Object.keys(event.semantic.documentVersions),
+        ]),
+      ],
+    } satisfies SemanticSnapshotChangedParams);
   });
 
   connection.onInitialize(
@@ -167,9 +195,26 @@ export function bindLanguageServer(
     );
     return result ? toWorkspaceEdit(result) : null;
   });
-  connection.onDocumentSymbol((params) =>
-    service.symbols(params.textDocument.uri).map(toDocumentSymbol),
-  );
+  connection.onDocumentSymbol(async (params, token) => {
+    const uri = params.textDocument.uri;
+    const document = service.getDocument(uri);
+    if (!document) return service.symbols(uri).map(toDocumentSymbol);
+    const controller = new AbortController();
+    const cancellation = token?.onCancellationRequested(() =>
+      controller.abort(),
+    );
+    try {
+      return (
+        await service.waitForDocumentSymbols(
+          uri,
+          document.version,
+          controller.signal,
+        )
+      ).map(toDocumentSymbol);
+    } finally {
+      cancellation?.dispose();
+    }
+  });
   connection.onHover((params) => {
     const result = service.hover(params.textDocument.uri, params.position);
     return result
