@@ -54,6 +54,9 @@ interlis-language-tools/
 interlis-web-ide/
 ```
 
+The complete local setup, prerequisites, WASM artifact flow and LSP/VS-Code
+workflow are described in [Local development](docs/local-development.md).
+
 Build the pinned compiler WASM once, then install and verify this workspace. The
 build script automatically installs and activates the pinned Emscripten SDK when
 it is not already available:
