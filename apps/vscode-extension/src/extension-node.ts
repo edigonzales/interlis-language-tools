@@ -14,7 +14,10 @@ import {
   registerRepositoryWorkflows,
 } from "./common.js";
 import type { PendingSelection } from "./common.js";
-import { registerDiagramWorkflows } from "./diagram-view.js";
+import {
+  openDiagramOnStartup,
+  registerDiagramWorkflows,
+} from "./diagram-view.js";
 
 let client: LanguageClient | undefined;
 
@@ -66,10 +69,25 @@ export async function activate(
   registerClientWorkflows(context, client, output, debug, pending);
   await client.start();
   registerRepositoryWorkflows(context, client, false);
-  registerDiagramWorkflows(context, client);
-  void compileActiveDocumentOnStartup(client).catch((error: unknown) =>
+  const startupDocument = vscode.window.activeTextEditor?.document;
+  const startupReady = compileActiveDocumentOnStartup(
+    client,
+    startupDocument,
+  ).catch((error: unknown) => {
     debug.appendLine(
       `[${new Date().toISOString()}] startup compilation request failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
+  const diagramWorkflows = registerDiagramWorkflows(context, client, {
+    startupReady,
+  });
+  void openDiagramOnStartup(
+    diagramWorkflows,
+    startupDocument,
+    startupReady,
+  ).catch((error: unknown) =>
+    debug.appendLine(
+      `[${new Date().toISOString()}] startup diagram request failed: ${error instanceof Error ? error.message : String(error)}`,
     ),
   );
 }

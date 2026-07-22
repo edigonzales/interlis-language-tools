@@ -29,6 +29,12 @@ interface ViewState {
   viewport: AnchoredViewport | null;
 }
 
+export interface DiagramWorkflows {
+  readonly open: (source?: vscode.Uri) => Promise<void>;
+}
+
+export type StartupDocument = Pick<vscode.TextDocument, "languageId" | "uri">;
+
 const views = new Map<string, ViewState>();
 
 function settings(): DiagramSettings {
@@ -141,7 +147,9 @@ async function navigate(state: ViewState, nodeId: string): Promise<void> {
 export function registerDiagramWorkflows(
   context: vscode.ExtensionContext,
   client: LanguageClientFacade,
-): void {
+  options: { readonly startupReady?: Promise<void> } = {},
+): DiagramWorkflows {
+  const startupReady = options.startupReady ?? Promise.resolve();
   const open = async (source?: vscode.Uri): Promise<void> => {
     const uri = source ?? vscode.window.activeTextEditor?.document.uri;
     if (!uri) return;
@@ -201,14 +209,36 @@ export function registerDiagramWorkflows(
       },
     ),
     vscode.window.onDidChangeActiveTextEditor((editor) => {
-      if (
-        editor?.document.languageId === "interlis" &&
-        vscode.workspace
-          .getConfiguration("interlisLanguageTools")
-          .get("diagram.autoOpenBeside", true) &&
-        !views.has(editor.document.uri.toString())
-      )
-        void open(editor.document.uri);
+      if (editor?.document.languageId === "interlis")
+        void startupReady.then(() => {
+          if (
+            !vscode.workspace
+              .getConfiguration("interlisLanguageTools")
+              .get("diagram.autoOpenBeside", true)
+          )
+            return;
+          return open(editor.document.uri);
+        });
     }),
   );
+
+  return { open };
+}
+
+export async function openDiagramOnStartup(
+  workflows: DiagramWorkflows,
+  document: StartupDocument | undefined,
+  startupReady: Promise<void>,
+): Promise<void> {
+  await startupReady;
+  if (!document || document.languageId !== "interlis") return;
+  if (
+    !vscode.workspace
+      .getConfiguration("interlisLanguageTools")
+      .get("diagram.autoOpenBeside", true)
+  )
+    return;
+  const active = vscode.window.activeTextEditor?.document;
+  if (!active || active.uri.toString() !== document.uri.toString()) return;
+  await workflows.open(document.uri);
 }
