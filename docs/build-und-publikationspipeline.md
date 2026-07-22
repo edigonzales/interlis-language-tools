@@ -183,13 +183,20 @@ Ereignis `release-train-published` an `interlis-web-ide`. Der Payload enthält:
   "language_tools_sha": "<SHA>",
   "compiler_version": "0.9.9-SNAPSHOT....",
   "language_tools_version": "0.1.0-SNAPSHOT....",
-  "timestamp": "YYYYMMDDHHmmss",
-  "build_id": "<Run-ID>",
+  "compiler_timestamp": "YYYYMMDDHHmmss",
+  "compiler_build_id": "<Compiler-Run-ID>",
+  "language_timestamp": "YYYYMMDDHHmmss",
+  "language_build_id": "<Language-Run-ID>",
   "release_run_id": "<Run-ID>"
 }
 ```
 
-Der Dispatch erfolgt nach der Publikation der fünf Language-Pakete; die beiden
+Der Dispatch enthält bewusst höchstens zehn Eigenschaften, weil GitHub für
+`repository_dispatch.client_payload` dieses Limit erzwingt. Die früheren
+Alias-Felder `timestamp` und `build_id` werden nicht zusätzlich übertragen;
+`language_timestamp` und `language_build_id` sind die eindeutigen Felder für
+den Language-Tools-Build. Der Dispatch erfolgt nach der Publikation der fünf
+Language-Pakete; die beiden
 Compiler-Pakete wurden zuvor aus `ilic-fork` publiziert. Fehlt das Secret
 `RELEASE_DISPATCH_TOKEN` oder scheitert der API-Aufruf, können die Pakete daher
 bereits vollständig publiziert sein. Ein erneuter Lauf mit derselben

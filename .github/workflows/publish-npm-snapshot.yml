@@ -312,7 +312,8 @@ jobs:
             echo "RELEASE_DISPATCH_TOKEN is required to deploy the coordinated Web IDE release" >&2
             exit 1
           fi
-          payload=$(jq -c '{compiler_sha: .compilerSha, language_tools_sha: .languageToolsSha, compiler_version: .compilerVersion, language_tools_version: .snapshotVersion, compiler_timestamp: .compilerTimestamp, compiler_build_id: (.compilerBuildId // ""), language_timestamp: .languageTimestamp, language_build_id: (.languageBuildId // ""), timestamp: .languageTimestamp, build_id: (.languageBuildId // ""), release_run_id: .releaseRunId}' artifacts/npm/release-manifest.json)
+          payload=$(jq -c '{compiler_sha: .compilerSha, language_tools_sha: .languageToolsSha, compiler_version: .compilerVersion, language_tools_version: .snapshotVersion, compiler_timestamp: .compilerTimestamp, compiler_build_id: (.compilerBuildId // ""), language_timestamp: .languageTimestamp, language_build_id: (.languageBuildId // ""), release_run_id: .releaseRunId}' artifacts/npm/release-manifest.json)
+          jq -e 'length <= 10' <<<"$payload" >/dev/null
           jq -n --arg event "release-train-published" --argjson payload "$payload" '{event_type: $event, client_payload: $payload}' \
             | curl --fail-with-body --silent --show-error \
                 -X POST \
