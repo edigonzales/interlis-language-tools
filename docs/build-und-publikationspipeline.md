@@ -26,14 +26,20 @@ flowchart LR
 
 | Workflow                                                                                      | Trigger                                                | Verantwortung                                                                                     |
 | --------------------------------------------------------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
-| [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)                                     | Push auf `main` oder `codex/**`, Pull Request, manuell | Workspace, npm-Tarballs und universelle VSIX prüfen; installierbare Artefakte 14 Tage aufbewahren |
-| [`.github/workflows/publish-npm-snapshot.yml`](../.github/workflows/publish-npm-snapshot.yml) | Push auf `main`, `release-train-requested`, manuell    | Exakte Quellstände bauen, fünf Language-Pakete publizieren und Web IDE dispatchen                |
+| [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)                                     | Push auf `main` oder `codex/**` (ausser reine Markdown-Änderungen), Pull Request (ausser reine Markdown-Änderungen), manuell | Workspace, npm-Tarballs und universelle VSIX prüfen; installierbare Artefakte 14 Tage aufbewahren |
+| [`.github/workflows/publish-npm-snapshot.yml`](../.github/workflows/publish-npm-snapshot.yml) | Push auf `main` (ausser reine Markdown-Änderungen), `release-train-requested`, manuell    | Exakte Quellstände bauen, fünf Language-Pakete publizieren und Web IDE dispatchen                |
 | [`.github/workflows/release.yml`](../.github/workflows/release.yml)                           | nur manuell                                            | VSIX bauen und unabhängig zu VS Code Marketplace und Open VSX publizieren                         |
 
 CI, npm-Snapshots und Extension-Veröffentlichung sind getrennte Abläufe. Ein
 grüner CI-Artefakt wird nicht ungeprüft weitergereicht: Der Release-Train baut
 die ausgewählten Quellen selbst neu. Die Extension-Publikation ist ebenfalls
 kein Nebeneffekt eines npm-Snapshots.
+
+Alle push- und pull-request-basierten CI-Trigger ignorieren mit
+`paths-ignore: "**/*.md"` reine Markdown-Änderungen. Gemischte Commits mit
+Code- oder Konfigurationsänderungen starten weiterhin die vollständige Prüfung.
+Der koordinierte Release-Dispatch und manuelle Läufe bleiben unabhängig von
+diesem Filter.
 
 ## CI: Workspace und auslieferbare Artefakte
 

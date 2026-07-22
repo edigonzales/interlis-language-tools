@@ -3,6 +3,8 @@ name: Publish coordinated npm snapshot
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "**/*.md"
   repository_dispatch:
     types: [release-train-requested]
   workflow_dispatch:
