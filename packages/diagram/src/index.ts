@@ -31,6 +31,7 @@ export const defaultDiagramSettings: DiagramSettings = {
 
 export interface LayoutNode {
   readonly id: string;
+  readonly parentId: string | null;
   readonly x: number;
   readonly y: number;
   readonly width: number;
@@ -147,6 +148,46 @@ export async function layoutDiagram(
           (member) =>
             settings.attributeMode === "OWN_AND_INHERITED" || !member.inherited,
         );
+  const visibleEnumValues = (node: DiagramNode) =>
+    settings.showLocalEnumerationValues ? node.enumValues : [];
+  const isContainer = (node: DiagramNode) =>
+    node.kind === "model" || node.kind === "topic";
+  const byId = new Map(projection.nodes.map((node) => [node.id, node]));
+  const childrenByParent = new Map<string, DiagramNode[]>();
+  for (const node of projection.nodes) {
+    if (!byId.has(node.containerId)) continue;
+    const children = childrenByParent.get(node.containerId) ?? [];
+    children.push(node);
+    childrenByParent.set(node.containerId, children);
+  }
+  const nodeSize = (node: DiagramNode) => {
+    if (isContainer(node)) return { width: 280, height: 90 };
+    return {
+      width: 240,
+      height:
+        50 +
+        visibleMembers(node).length * 22 +
+        visibleEnumValues(node).length * 22,
+    };
+  };
+  const makeElkNode = (node: DiagramNode): ElkNode => {
+    const size = nodeSize(node);
+    const children = (childrenByParent.get(node.id) ?? []).map(makeElkNode);
+    return {
+      id: node.id,
+      width: size.width,
+      height: size.height,
+      ...(children.length > 0 ? { children } : {}),
+      ...(children.length > 0
+        ? {
+            layoutOptions: {
+              "elk.padding": "[top=40,left=20,bottom=20,right=20]",
+              "elk.nodeSize.constraints": "MINIMUM_SIZE",
+            },
+          }
+        : {}),
+    };
+  };
   const input: ElkNode = {
     id: "root",
     layoutOptions: {
@@ -155,12 +196,11 @@ export async function layoutDiagram(
       "elk.edgeRouting": settings.edgeRouting,
       "elk.spacing.nodeNode": "40",
       "elk.layered.spacing.nodeNodeBetweenLayers": "70",
+      "elk.hierarchyHandling": "INCLUDE_CHILDREN",
     },
-    children: projection.nodes.map((node) => ({
-      id: node.id,
-      width: 240,
-      height: 50 + visibleMembers(node).length * 22,
-    })),
+    children: projection.nodes
+      .filter((node) => !byId.has(node.containerId))
+      .map(makeElkNode),
     edges: projection.edges.map((edge) => ({
       id: edge.id,
       sources: [edge.sourceId],
@@ -168,23 +208,32 @@ export async function layoutDiagram(
     })),
   };
   const graph = await elk.layout(input);
-  const byId = new Map(projection.nodes.map((node) => [node.id, node]));
   const edgeById = new Map(projection.edges.map((edge) => [edge.id, edge]));
-  const nodes = (graph.children ?? []).flatMap((node) => {
-    const source = byId.get(node.id);
-    return source
-      ? [
-          {
-            id: node.id,
-            x: node.x ?? 0,
-            y: node.y ?? 0,
-            width: node.width ?? 240,
-            height: node.height ?? 50,
-            source,
-          },
-        ]
-      : [];
-  });
+  const nodes: LayoutNode[] = [];
+  const flatten = (
+    elkNodes: readonly ElkNode[],
+    parentId: string | null,
+    parentX: number,
+    parentY: number,
+  ): void => {
+    for (const node of elkNodes) {
+      const source = byId.get(node.id);
+      if (!source) continue;
+      const x = parentX + (node.x ?? 0);
+      const y = parentY + (node.y ?? 0);
+      nodes.push({
+        id: node.id,
+        parentId,
+        x,
+        y,
+        width: node.width ?? nodeSize(source).width,
+        height: node.height ?? nodeSize(source).height,
+        source,
+      });
+      flatten(node.children ?? [], node.id, x, y);
+    }
+  };
+  flatten(graph.children ?? [], null, 0, 0);
   const edges = (graph.edges ?? []).flatMap((edge) => {
     const source = edgeById.get(edge.id);
     if (!source) return [];
@@ -206,14 +255,27 @@ export async function layoutDiagram(
 }
 
 export function toSprottyModel(layout: LayoutDiagram): SModelRoot {
+  const childrenByParent = new Map<string | null, LayoutNode[]>();
+  for (const node of layout.nodes) {
+    const children = childrenByParent.get(node.parentId) ?? [];
+    children.push(node);
+    childrenByParent.set(node.parentId, children);
+  }
+  const nodeModel = (
+    node: LayoutNode,
+    parentX: number,
+    parentY: number,
+  ): SNode => ({
+    type: "node:interlis",
+    id: node.id,
+    position: { x: node.x - parentX, y: node.y - parentY },
+    size: { width: node.width, height: node.height },
+    children: (childrenByParent.get(node.id) ?? []).map((child) =>
+      nodeModel(child, node.x, node.y),
+    ),
+  });
   const children: SModelElement[] = [
-    ...layout.nodes.map((node): SNode => ({
-      type: "node:interlis",
-      id: node.id,
-      position: { x: node.x, y: node.y },
-      size: { width: node.width, height: node.height },
-      children: [],
-    })),
+    ...(childrenByParent.get(null) ?? []).map((node) => nodeModel(node, 0, 0)),
     ...layout.edges.map((edge): SEdge => ({
       type: "edge:interlis",
       id: edge.id,
@@ -254,19 +316,59 @@ export function renderSvg(
       return `<g id="${domId(edge.id)}" class="ili-edge" data-edge-id="${xml(edge.id)}"><polyline points="${points}" fill="none" stroke="#59636e" stroke-width="1.5" inkscape:connection-start="#${domId(edge.sourceId)}" inkscape:connection-end="#${domId(edge.targetId)}"/><text class="ili-edge-label">${xml(label)}</text></g>`;
     })
     .join("");
+  const childrenByParent = new Map<string | null, LayoutNode[]>();
+  for (const candidate of layout.nodes) {
+    const children = childrenByParent.get(candidate.parentId) ?? [];
+    children.push(candidate);
+    childrenByParent.set(candidate.parentId, children);
+  }
   const nodes = layout.nodes
+    .filter((node) => node.parentId === null)
     .map((node) => {
-      const members =
-        settings.attributeMode === "NONE"
-          ? []
-          : node.source.members.filter(
-              (member) =>
-                settings.attributeMode === "OWN_AND_INHERITED" ||
-                !member.inherited,
-            );
-      const opacity =
-        settings.deemphasizeAbstractTypes && node.source.abstract ? 0.62 : 1;
-      return `<g id="${domId(node.id)}" class="ili-node ili-${xml(node.source.kind.toLowerCase())}" data-symbol-id="${xml(node.id)}" data-source-uri="${xml(node.source.range?.uri ?? "")}" transform="translate(${node.x} ${node.y})" opacity="${opacity}"><rect width="${node.width}" height="${node.height}" rx="4" fill="#fff" stroke="#303942"/><text x="12" y="24" class="ili-title">${xml(node.source.label)}</text><g class="ili-members">${members.map((member, index) => `<text x="12" y="${50 + index * 22}" data-inherited="${String(member.inherited)}">${xml(member.name)} : ${xml(member.type)}</text>`).join("")}</g></g>`;
+      const renderNode = (
+        current: LayoutNode,
+        parentX: number,
+        parentY: number,
+      ): string => {
+        const members =
+          settings.attributeMode === "NONE"
+            ? []
+            : current.source.members.filter(
+                (member) =>
+                  settings.attributeMode === "OWN_AND_INHERITED" ||
+                  !member.inherited,
+              );
+        const enumValues = settings.showLocalEnumerationValues
+          ? current.source.enumValues
+          : [];
+        const opacity =
+          settings.deemphasizeAbstractTypes && current.source.abstract
+            ? 0.62
+            : 1;
+        const isContainer =
+          current.source.kind === "model" || current.source.kind === "topic";
+        const memberMarkup = members
+          .map(
+            (member, index) =>
+              `<text x="12" y="${50 + index * 22}" data-inherited="${String(member.inherited)}">${xml(member.name)} : ${xml(member.type)}</text>`,
+          )
+          .join("");
+        const enumMarkup = enumValues
+          .map(
+            (value, index) =>
+              `<text x="12" y="${50 + (members.length + index) * 22}" class="ili-enum-value">${xml(value)}</text>`,
+          )
+          .join("");
+        const childMarkup = (childrenByParent.get(current.id) ?? [])
+          .map((child) => renderNode(child, current.x, current.y))
+          .join("");
+        const localX = current.x - parentX;
+        const localY = current.y - parentY;
+        const fill = isContainer ? "#eef3f7" : "#fff";
+        const containerClass = isContainer ? " ili-container" : "";
+        return `<g id="${domId(current.id)}" class="ili-node${containerClass} ili-${xml(current.source.kind.toLowerCase())}" data-symbol-id="${xml(current.id)}" data-container-id="${xml(current.source.containerId)}" data-source-uri="${xml(current.source.range?.uri ?? "")}" transform="translate(${localX} ${localY})" opacity="${opacity}"><rect width="${current.width}" height="${current.height}" rx="4" fill="${fill}" stroke="#303942"/><text x="12" y="24" class="ili-title">${xml(current.source.label)}</text><g class="ili-members">${memberMarkup}${enumMarkup}</g>${childMarkup}</g>`;
+      };
+      return renderNode(node, 0, 0);
     })
     .join("");
   return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" viewBox="${viewBox}" width="100%" height="100%" role="img"><rect class="ili-background" x="0" y="0" width="100%" height="100%" fill="#fff"/>${edges}${nodes}</svg>`;

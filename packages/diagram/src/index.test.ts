@@ -9,6 +9,7 @@ import {
   restoreViewport,
   sourceLocationForNode,
 } from "./index.js";
+import type { SNode } from "sprotty-protocol";
 
 const uri = "memory:///Model.ili";
 const snapshot = (success = true): SemanticSnapshot => ({
@@ -40,6 +41,7 @@ const snapshot = (success = true): SemanticSnapshot => ({
           { name: "name", type: "TEXT", inherited: false },
           { name: "id", type: "OID", inherited: true },
         ],
+        enumValues: [],
       },
       {
         id: "Model.B",
@@ -49,6 +51,7 @@ const snapshot = (success = true): SemanticSnapshot => ({
         abstract: false,
         range: null,
         members: [],
+        enumValues: [],
       },
     ],
     edges: [
@@ -65,6 +68,64 @@ const snapshot = (success = true): SemanticSnapshot => ({
   documentation: { title: "Model", sections: [] },
   diagnostics: [],
   logs: [],
+});
+
+const nestedSnapshot = (): SemanticSnapshot => ({
+  ...snapshot(),
+  diagram: {
+    nodes: [
+      {
+        id: "model:Root",
+        containerId: "",
+        label: "Root",
+        kind: "model",
+        abstract: false,
+        range: null,
+        members: [],
+        enumValues: [],
+      },
+      {
+        id: "topic:Root.Data",
+        containerId: "model:Root",
+        label: "Data",
+        kind: "topic",
+        abstract: true,
+        range: null,
+        members: [],
+        enumValues: [],
+      },
+      {
+        id: "class:Root.Data.Item",
+        containerId: "topic:Root.Data",
+        label: "Item",
+        kind: "class",
+        abstract: true,
+        range: null,
+        members: [{ name: "name", type: "TEXT", inherited: false }],
+        enumValues: [],
+      },
+      {
+        id: "domain:Root.Colors",
+        containerId: "model:Root",
+        label: "Colors",
+        kind: "enumeration",
+        abstract: false,
+        range: null,
+        members: [],
+        enumValues: ["red", "blue"],
+      },
+    ],
+    edges: [
+      {
+        id: "item-colors",
+        sourceId: "class:Root.Data.Item",
+        targetId: "domain:Root.Colors",
+        kind: "association",
+        label: "uses",
+        cardinality: "1",
+      },
+    ],
+  },
 });
 
 describe("DiagramController", () => {
@@ -110,6 +171,40 @@ describe("Sprotty/ELK projection", () => {
         attributeMode: "NONE",
       }),
     ).not.toContain("name : TEXT");
+  });
+
+  it("keeps model/topic containment in the layout, Sprotty model and SVG", async () => {
+    const result = await layoutAndRenderDiagram(nestedSnapshot().diagram);
+    expect(result.layout.nodes).toHaveLength(4);
+    const topic = result.layout.nodes.find((node) => node.id === "topic:Root.Data");
+    const item = result.layout.nodes.find(
+      (node) => node.id === "class:Root.Data.Item",
+    );
+    expect(topic?.parentId).toBe("model:Root");
+    expect(item?.parentId).toBe("topic:Root.Data");
+    expect(item?.x).toBeGreaterThan(topic?.x ?? 0);
+    expect(item?.y).toBeGreaterThan(topic?.y ?? 0);
+
+    const model = (result.sprotty.children ?? []).find(
+      (child) => child.id === "model:Root",
+    ) as SNode;
+    expect((model.children ?? []).map((child) => child.id)).toEqual(
+      expect.arrayContaining(["topic:Root.Data", "domain:Root.Colors"]),
+    );
+    const topicModel = (model.children ?? []).find(
+      (child) => child.id === "topic:Root.Data",
+    ) as SNode;
+    expect((topicModel.children ?? []).map((child) => child.id)).toContain(
+      "class:Root.Data.Item",
+    );
+
+    const modelStart = result.svg.indexOf('id="ilic-model:Root"');
+    const topicStart = result.svg.indexOf('id="ilic-topic:Root.Data"');
+    expect(modelStart).toBeGreaterThanOrEqual(0);
+    expect(topicStart).toBeGreaterThan(modelStart);
+    expect(result.svg).toContain('class="ili-node ili-container ili-topic"');
+    expect(result.svg).toContain("red");
+    expect(result.svg).toContain('opacity="0.62"');
   });
 
   it("restores viewports relative to the nearest semantic node", async () => {
