@@ -45,14 +45,18 @@ Extension publication is deliberately separate from repeatable npm snapshots.
 ## Pipelines
 
 `ci.yml` always builds and tests the sources, seven npm tarballs and the
-universal VSIX. A successful compiler publication dispatches the coordinated
+universal VSIX. A successful main-branch CI completion starts the coordinated
+npm workflow only after CI has completed; the release workflow then repeats
+its gates from the exact CI `head_sha` and publishes only the five language
+packages. A successful compiler publication can also dispatch the coordinated
 workflow with an exact compiler SHA and already published compiler version.
-This repository repeats the gates but publishes only its five language
-packages. The VSIX publication remains a separate manual release workflow:
+The VSIX publication remains a separate manual release workflow:
 
-- `publish-npm-snapshot.yml` checks out exact compiler and language-tools SHAs,
-  verifies the two compiler packages and publishes the five language packages,
-  then sends the completed release to the Web IDE with `repository_dispatch`;
+- `publish-npm-snapshot.yml` starts after successful main CI, or through the
+  coordinated/manual recovery triggers. It checks out exact compiler and
+  language-tools SHAs, verifies the two compiler packages and publishes the
+  five language packages, then sends the completed release to the Web IDE with
+  `repository_dispatch`;
 - `release.yml` publishes the already verified VSIX to the VS Code Marketplace
   and Open VSX.
 
@@ -65,11 +69,13 @@ and will be restored after the targets are met consistently.
 
 The compiler repository dispatches only after its own npm publication succeeds.
 The payload contains the full compiler SHA and exact compiler snapshot version.
-A language-tools push or manual run resolves the current compiler `snapshot`
-tag only once, verifies both compiler packages, and then uses the resulting
-immutable version. The staged manifests pin that exact compiler version, and
-`release-manifest.json` records both source revisions, both independent
-timestamps/build IDs and all published versions.
+A successful main-branch CI completion starts the language-tools publish run
+with the exact `workflow_run.head_sha`; a coordinated dispatch or manual run
+uses its explicitly supplied or resolved Language-Tools SHA. Each path resolves
+the current compiler `snapshot` tag only once, verifies both compiler packages,
+and then uses the resulting immutable version. The staged manifests pin that
+exact compiler version, and `release-manifest.json` records both source
+revisions, both independent timestamps/build IDs and all published versions.
 
 Only the npm publish job receives:
 

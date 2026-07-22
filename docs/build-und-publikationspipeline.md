@@ -27,13 +27,20 @@ flowchart LR
 | Workflow                                                                                      | Trigger                                                | Verantwortung                                                                                     |
 | --------------------------------------------------------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
 | [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)                                     | Push auf `main` oder `codex/**` (ausser reine Markdown-Änderungen), Pull Request (ausser reine Markdown-Änderungen), manuell | Workspace, npm-Tarballs und universelle VSIX prüfen; installierbare Artefakte 14 Tage aufbewahren |
-| [`.github/workflows/publish-npm-snapshot.yml`](../.github/workflows/publish-npm-snapshot.yml) | Push auf `main` (ausser reine Markdown-Änderungen), `release-train-requested`, manuell    | Exakte Quellstände bauen, fünf Language-Pakete publizieren und Web IDE dispatchen                |
+| [`.github/workflows/publish-npm-snapshot.yml`](../.github/workflows/publish-npm-snapshot.yml) | erfolgreiche CI nach Push auf `main`, `release-train-requested`, manuell | Exakte Quellstände bauen, fünf Language-Pakete publizieren und Web IDE dispatchen                |
 | [`.github/workflows/release.yml`](../.github/workflows/release.yml)                           | nur manuell                                            | VSIX bauen und unabhängig zu VS Code Marketplace und Open VSX publizieren                         |
 
 CI, npm-Snapshots und Extension-Veröffentlichung sind getrennte Abläufe. Ein
 grüner CI-Artefakt wird nicht ungeprüft weitergereicht: Der Release-Train baut
 die ausgewählten Quellen selbst neu. Die Extension-Publikation ist ebenfalls
 kein Nebeneffekt eines npm-Snapshots.
+
+Ein Push auf `main` startet zuerst nur `CI`. Erst ein erfolgreich
+abgeschlossener `workflow_run` dieser CI startet die npm-Publikation. Der
+Publish-Workflow wiederholt seine release-identischen Gates bewusst aus dem
+exakten CI-`head_sha`; CI-Artefakte werden nicht als Publikationsquelle
+verwendet. Reine Markdown-Änderungen starten wegen `paths-ignore` weder CI noch
+den nachgelagerten Publish-Lauf.
 
 Alle push- und pull-request-basierten CI-Trigger ignorieren mit
 `paths-ignore: "**/*.md"` reine Markdown-Änderungen. Gemischte Commits mit
@@ -78,7 +85,7 @@ drei Wegen beginnen:
 
 | Ereignis                              | Compiler-Revision                                              | Language-Tools-Revision                                                    |
 | ------------------------------------- | -------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| Push auf `main`                       | `gitHead` der einmalig vom npm-`snapshot`-Tag aufgelösten Compiler-Version (sonst Compiler-`main`) | exakter Event-SHA des Pushs |
+| erfolgreicher `workflow_run` nach Push auf `main` | `gitHead` der einmalig vom npm-`snapshot`-Tag aufgelösten Compiler-Version (sonst Compiler-`main`) | exakter `github.event.workflow_run.head_sha` |
 | `repository_dispatch` aus `ilic-fork` | `client_payload.compiler_sha` und `client_payload.compiler_version` | aktueller Language-Tools-SHA, zu Beginn auf einen vollständigen Commit aufgelöst |
 | manueller Start                       | optionaler vollständiger `compiler_sha` und `compiler_version`, sonst Compiler-`main` und aktueller npm-Compiler-Snapshot | optionaler vollständiger `language_tools_sha`, sonst Language-Tools-`main` |
 
@@ -87,11 +94,12 @@ Outputs werden für alle folgenden Checkouts verwendet. Damit bleibt die
 Quellpaarung innerhalb eines Laufs stabil, auch wenn danach ein Branch
 weitergeschoben wird.
 
-Ein `main`-Push kann weiterhin einen Language-only-Snapshot erzeugen. Der
-koordinierte Compiler-Weg kommt ausschliesslich über den Dispatch aus dem
-erfolgreichen `ilic-fork`-Publish und enthält bereits die unveränderliche
-Compiler-Version. Der bewegliche npm-Tag wird nur bei Push/Manual zur einmaligen
-Auflösung verwendet; danach arbeitet der Lauf nur noch mit der exakten Version.
+Ein erfolgreicher Main-CI-Lauf kann weiterhin einen Language-only-Snapshot
+erzeugen. Der koordinierte Compiler-Weg kommt ausschliesslich über den Dispatch
+aus dem erfolgreichen `ilic-fork`-Publish und enthält bereits die
+unveränderliche Compiler-Version. Der bewegliche npm-Tag wird nur bei
+Workflow-Run/Manual zur einmaligen Auflösung verwendet; danach arbeitet der
+Lauf nur noch mit der exakten Version.
 
 ## Build- und Verifikationsphase des Release-Trains
 

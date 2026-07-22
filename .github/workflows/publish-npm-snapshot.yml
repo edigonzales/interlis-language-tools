@@ -1,10 +1,10 @@
 name: Publish coordinated npm snapshot
 
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
-    paths-ignore:
-      - "**/*.md"
   repository_dispatch:
     types: [release-train-requested]
   workflow_dispatch:
@@ -32,6 +32,13 @@ concurrency:
 jobs:
   resolve-refs:
     name: Resolve coordinated source revisions
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'repository_dispatch' ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
     outputs:
       compiler_sha: ${{ steps.resolve.outputs.compiler_sha }}
@@ -44,6 +51,7 @@ jobs:
           EVENT_COMPILER_SHA: ${{ github.event.client_payload.compiler_sha }}
           EVENT_COMPILER_VERSION: ${{ github.event.client_payload.compiler_version }}
           EVENT_LANGUAGE_TOOLS_SHA: ${{ github.event.client_payload.language_tools_sha }}
+          EVENT_WORKFLOW_RUN_SHA: ${{ github.event.workflow_run.head_sha }}
           INPUT_COMPILER_SHA: ${{ inputs.compiler_sha }}
           INPUT_COMPILER_VERSION: ${{ inputs.compiler_version }}
           INPUT_LANGUAGE_TOOLS_SHA: ${{ inputs.language_tools_sha }}
@@ -80,8 +88,8 @@ jobs:
             fi
           fi
           if [[ -z "$language_tools_sha" ]]; then
-            if [[ "${{ github.event_name }}" == "push" ]]; then
-              language_tools_sha="$GITHUB_SHA"
+            if [[ "$GITHUB_EVENT_NAME" == "workflow_run" ]]; then
+              language_tools_sha="$EVENT_WORKFLOW_RUN_SHA"
             else
               language_tools_sha=$(main_sha edigonzales/interlis-language-tools)
             fi
