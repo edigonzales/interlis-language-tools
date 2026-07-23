@@ -15,6 +15,7 @@ import {
   locationsForReferences,
   renameSymbol,
   symbolAt,
+  syntaxDocumentSymbols,
   templateForNewline,
 } from "./features.js";
 
@@ -456,6 +457,278 @@ describe("semantic feature helpers", () => {
       (symbol) => symbol.name === "Child",
     );
     expect(child?.children.map((symbol) => symbol.name)).toEqual(["Name"]);
+  });
+
+  it("keeps a useful live outline when an attribute type is temporarily missing", () => {
+    const text = [
+      "MODEL M =",
+      "  TOPIC T =",
+      "    CLASS Renamed =",
+      "      Name : ;",
+      "    END Renamed;",
+      "  END T;",
+      "END M.",
+    ].join("\n");
+    const token = (
+      kind: string,
+      value: string,
+      line: number,
+      character: number,
+    ) => ({
+      kind,
+      text: value,
+      channel: 0,
+      range: range(line, character, line, character + value.length),
+    });
+    const parsed: SyntaxSnapshot = {
+      ...syntax(),
+      success: false,
+      tokens: [
+        token("MODEL", "MODEL", 0, 0),
+        token("NAME", "M", 0, 6),
+        token("EQUAL", "=", 0, 8),
+        token("TOPIC", "TOPIC", 1, 2),
+        token("NAME", "T", 1, 8),
+        token("EQUAL", "=", 1, 10),
+        token("CLASS", "CLASS", 2, 4),
+        token("NAME", "Renamed", 2, 10),
+        token("EQUAL", "=", 2, 18),
+        token("NAME", "Name", 3, 6),
+        token("COLON", ":", 3, 11),
+        token("SEMI", ";", 3, 13),
+        token("END", "END", 4, 4),
+        token("NAME", "Renamed", 4, 8),
+        token("SEMI", ";", 4, 15),
+        token("END", "END", 5, 2),
+        token("NAME", "T", 5, 6),
+        token("SEMI", ";", 5, 7),
+        token("END", "END", 6, 0),
+        token("NAME", "M", 6, 4),
+        token("DOT", ".", 6, 5),
+      ],
+      nodes: [
+        { id: 1, parent: null, kind: "modelDef", range: range(0, 0, 6, 6) },
+      ],
+      diagnostics: [
+        {
+          severity: "error",
+          code: "syntax",
+          message: "missing type",
+          range: range(3, 13),
+          relatedInformation: [],
+          notes: [],
+          treatedAsError: true,
+        },
+      ],
+    };
+    const baseline = [
+      {
+        name: "M",
+        detail: "MODEL",
+        kind: "model",
+        range: {
+          start: { line: 0, character: 0 },
+          end: { line: 6, character: 6 },
+        },
+        selectionRange: {
+          start: { line: 0, character: 6 },
+          end: { line: 0, character: 6 },
+        },
+        children: [
+          {
+            name: "T",
+            detail: "TOPIC",
+            kind: "topic",
+            range: {
+              start: { line: 1, character: 2 },
+              end: { line: 5, character: 8 },
+            },
+            selectionRange: {
+              start: { line: 1, character: 8 },
+              end: { line: 1, character: 8 },
+            },
+            children: [
+              {
+                name: "Old",
+                detail: "CLASS",
+                kind: "class",
+                range: {
+                  start: { line: 2, character: 4 },
+                  end: { line: 4, character: 16 },
+                },
+                selectionRange: {
+                  start: { line: 2, character: 10 },
+                  end: { line: 2, character: 10 },
+                },
+                children: [
+                  {
+                    name: "OldAttribute",
+                    detail: "",
+                    kind: "attribute",
+                    range: {
+                      start: { line: 3, character: 6 },
+                      end: { line: 3, character: 20 },
+                    },
+                    selectionRange: {
+                      start: { line: 3, character: 6 },
+                      end: { line: 3, character: 6 },
+                    },
+                    children: [],
+                  },
+                  {
+                    name: "Inherited",
+                    detail: "",
+                    kind: "attribute",
+                    range: {
+                      start: { line: 3, character: 6 },
+                      end: { line: 3, character: 15 },
+                    },
+                    selectionRange: {
+                      start: { line: 3, character: 6 },
+                      end: { line: 3, character: 6 },
+                    },
+                    children: [],
+                    inherited: true,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ];
+
+    const outline = syntaxDocumentSymbols(parsed, text, baseline);
+    const liveClass = outline[0]?.children[0]?.children[0];
+    expect(liveClass?.name).toBe("Renamed");
+    expect(liveClass?.children.map((child) => child.name)).toEqual([
+      "Name",
+      "Inherited",
+    ]);
+    expect(liveClass?.range.end.line).toBeLessThanOrEqual(6);
+  });
+
+  it("removes validly deleted declarations but preserves inherited members", () => {
+    const parsed: SyntaxSnapshot = {
+      ...syntax(),
+      tokens: [
+        { kind: "MODEL", text: "MODEL", channel: 0, range: range(0, 0, 0, 5) },
+        { kind: "NAME", text: "M", channel: 0, range: range(0, 6, 0, 7) },
+        { kind: "EQUAL", text: "=", channel: 0, range: range(0, 8, 0, 9) },
+        { kind: "CLASS", text: "CLASS", channel: 0, range: range(1, 2, 1, 7) },
+        { kind: "NAME", text: "C", channel: 0, range: range(1, 8, 1, 9) },
+      ],
+      nodes: [
+        { id: 1, parent: null, kind: "modelDef", range: range(0, 0, 3, 6) },
+        { id: 2, parent: 1, kind: "classDef", range: range(1, 2, 2, 8) },
+      ],
+    };
+    const inherited = {
+      name: "Inherited",
+      detail: "",
+      kind: "attribute",
+      range: {
+        start: { line: 1, character: 2 },
+        end: { line: 1, character: 9 },
+      },
+      selectionRange: {
+        start: { line: 1, character: 2 },
+        end: { line: 1, character: 2 },
+      },
+      children: [],
+      inherited: true,
+    };
+    const baseline = [
+      {
+        name: "M",
+        detail: "MODEL",
+        kind: "model",
+        range: {
+          start: { line: 0, character: 0 },
+          end: { line: 3, character: 6 },
+        },
+        selectionRange: {
+          start: { line: 0, character: 6 },
+          end: { line: 0, character: 6 },
+        },
+        children: [
+          {
+            name: "C",
+            detail: "CLASS",
+            kind: "class",
+            range: {
+              start: { line: 1, character: 2 },
+              end: { line: 2, character: 8 },
+            },
+            selectionRange: {
+              start: { line: 1, character: 8 },
+              end: { line: 1, character: 8 },
+            },
+            children: [
+              { ...inherited, name: "Deleted", inherited: undefined },
+              inherited,
+            ],
+          },
+        ],
+      },
+    ];
+    const outline = syntaxDocumentSymbols(
+      parsed,
+      "MODEL M =\n  CLASS C =\n  END C;\nEND M.",
+      baseline,
+    );
+    expect(
+      outline[0]?.children[0]?.children.map((child) => child.name),
+    ).toEqual(["Inherited"]);
+  });
+
+  it("recognizes structures and association roles from parser nodes", () => {
+    const token = (
+      kind: string,
+      value: string,
+      line: number,
+      character: number,
+    ) => ({
+      kind,
+      text: value,
+      channel: 0,
+      range: range(line, character, line, character + value.length),
+    });
+    const parsed: SyntaxSnapshot = {
+      ...syntax(),
+      tokens: [
+        token("MODEL", "MODEL", 0, 0),
+        token("NAME", "M", 0, 6),
+        token("STRUCTURE", "STRUCTURE", 1, 2),
+        token("NAME", "S", 1, 12),
+        token("ASSOCIATION", "ASSOCIATION", 3, 2),
+        token("NAME", "Link", 3, 14),
+        token("NAME", "source", 4, 4),
+        token("ASSOCIATE", "--", 4, 11),
+      ],
+      nodes: [
+        { id: 1, parent: null, kind: "modelDef", range: range(0, 0, 6, 6) },
+        { id: 2, parent: 1, kind: "structureDef", range: range(1, 2, 2, 8) },
+        {
+          id: 3,
+          parent: 1,
+          kind: "associationDef",
+          range: range(3, 2, 5, 11),
+        },
+        { id: 4, parent: 3, kind: "roleDef", range: range(4, 4, 4, 15) },
+      ],
+    };
+    const result = syntaxDocumentSymbols(
+      parsed,
+      "MODEL M =\n  STRUCTURE S =\n  END S;\n  ASSOCIATION Link =\n    source -- S;\n  END Link;\nEND M.",
+    );
+    expect(result[0]?.children.map((symbol) => symbol.kind)).toEqual([
+      "structure",
+      "association",
+    ]);
+    expect(result[0]?.children[1]?.children).toEqual([
+      expect.objectContaining({ name: "source", kind: "role" }),
+    ]);
   });
 
   it("combines only diagnostics for the requested URI", () => {

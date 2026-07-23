@@ -1,8 +1,10 @@
 import {
+  createWorkerCompilerBackend,
   createWasmCompilerBackend,
   LanguageService,
 } from "@ilic/language-service";
 import type {
+  CompilerWorkerFactory,
   RepositorySchemaLanguage,
   ResolvedRepositoryModel,
 } from "@ilic/language-service";
@@ -76,9 +78,21 @@ async function materializeModel(
   };
 }
 
-export async function startNodeLanguageServer(): Promise<void> {
+export async function startNodeLanguageServer(
+  options: { readonly compilerWorkerFactory?: CompilerWorkerFactory } = {},
+): Promise<void> {
   const connection = createConnection(ProposedFeatures.all);
-  const service = new LanguageService(await createWasmCompilerBackend(), {
+  const localCompiler = await createWasmCompilerBackend();
+  const compiler = options.compilerWorkerFactory
+    ? createWorkerCompilerBackend(
+        localCompiler,
+        options.compilerWorkerFactory,
+        {
+          onWarning: (message) => connection.console.warn(message),
+        },
+      )
+    : localCompiler;
+  const service = new LanguageService(compiler, {
     onError: (error) =>
       connection.console.error(
         error instanceof Error ? error.message : String(error),

@@ -1,7 +1,9 @@
 import {
+  createWorkerCompilerBackend,
   createWasmCompilerBackend,
   LanguageService,
 } from "@ilic/language-service";
+import type { CompilerWorkerFactory } from "@ilic/language-service";
 import { BrowserCache } from "@ilic/tools/browser";
 import { RepositoryManager } from "@ilic/tools";
 import { generateDocx } from "@ilic/docx";
@@ -19,12 +21,23 @@ import {
 
 export async function startBrowserLanguageServer(
   scope: DedicatedWorkerGlobalScope,
+  options: { readonly compilerWorkerFactory?: CompilerWorkerFactory } = {},
 ): Promise<void> {
   const connection = createConnection(
     new BrowserMessageReader(scope),
     new BrowserMessageWriter(scope),
   );
-  const service = new LanguageService(await createWasmCompilerBackend(), {
+  const localCompiler = await createWasmCompilerBackend();
+  const compiler = options.compilerWorkerFactory
+    ? createWorkerCompilerBackend(
+        localCompiler,
+        options.compilerWorkerFactory,
+        {
+          onWarning: (message) => connection.console.warn(message),
+        },
+      )
+    : localCompiler;
+  const service = new LanguageService(compiler, {
     onError: (error) =>
       connection.console.error(
         error instanceof Error ? error.message : String(error),

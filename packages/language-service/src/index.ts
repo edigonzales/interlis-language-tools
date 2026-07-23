@@ -1,5 +1,15 @@
 export { AnalysisCache } from "./cache.js";
 export { createWasmCompilerBackend } from "./compiler.js";
+export {
+  createWorkerCompilerBackend,
+  runCompilerWorker,
+} from "./compiler-worker.js";
+export type {
+  CompilerWorkerFactory,
+  CompilerWorkerPort,
+  CompilerWorkerRequest,
+  CompilerWorkerResponse,
+} from "./compiler-worker.js";
 export type {
   ModelCatalogEntry,
   ModelRepository,

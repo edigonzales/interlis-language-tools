@@ -39,6 +39,8 @@ for (const file of [
   "extension/dist/extension-browser.js",
   "extension/dist/server-node.js",
   "extension/dist/server-browser.js",
+  "extension/dist/compiler-worker-node.js",
+  "extension/dist/compiler-worker-browser.js",
   "extension/dist/ilic.wasm",
   "extension/dist/terminateProcess.sh",
   "extension/images/ililogo.png",

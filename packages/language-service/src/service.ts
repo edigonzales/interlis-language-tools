@@ -13,6 +13,7 @@ import {
   locationsForReferences,
   renameSymbol,
   symbolAt,
+  syntaxDocumentSymbols,
   templateForNewline,
   toEditorRange,
 } from "./features.js";
@@ -53,11 +54,15 @@ interface EffectiveSource {
   readonly version: number;
 }
 
-interface SymbolWaiter {
-  readonly uri: string;
-  readonly documentVersion: number;
-  readonly resolve: (symbols: DocumentSymbol[]) => void;
-  dispose(): void;
+interface PendingCompilation {
+  readonly rootUri: string;
+  readonly trigger: CompilationTrigger;
+  readonly runId: number;
+  readonly compilationEpoch: number;
+  requestedDocumentVersion: number;
+  requestedSourceVersion: number | undefined;
+  readonly resolve: (event: CompilationEvent) => void;
+  readonly reject: (error: unknown) => void;
 }
 
 export class LanguageService {
@@ -95,8 +100,9 @@ export class LanguageService {
     VersionedResult<SemanticSnapshot>
   >();
   readonly #latestRequestedRunIdByRoot = new Map<string, number>();
-  readonly #symbolWaiters = new Set<SymbolWaiter>();
-  #compileQueue: Promise<void> = Promise.resolve();
+  readonly #stickyOutlines = new Map<string, DocumentSymbol[]>();
+  readonly #pendingCompilations: PendingCompilation[] = [];
+  #compileActive = false;
   #nextRunId = 0;
   #compilationEpoch = 0;
   #generation = 0;
@@ -170,7 +176,6 @@ export class LanguageService {
     this.#documents.delete(uri);
     this.#refreshEffectiveSource(uri);
     if (!this.#repositorySources.has(uri)) this.#readOnlyUris.delete(uri);
-    this.#resolveSupersededSymbolWaiters(uri);
   }
 
   replaceWorkspaceSources(sources: readonly WorkspaceSource[]): void {
@@ -261,16 +266,16 @@ export class LanguageService {
     return this.#documents.get(uri);
   }
   getSyntaxSnapshot(uri: string): VersionedResult<SyntaxSnapshot> | null {
-    const result = this.#syntax.get(uri) ?? null;
-    const document = this.#documents.get(uri);
     const effective = this.#effectiveSources.get(uri);
+    if (!effective) return null;
+    const result = this.#syntax.get(uri);
     if (
-      result?.freshness !== "fresh" ||
-      document?.dirty ||
-      (effective && result?.value?.documentVersion !== effective.version)
+      result?.freshness === "fresh" &&
+      result.value?.documentVersion === effective.version
     )
-      return null;
-    return result;
+      return result;
+    const parsed = this.#parseSource(uri);
+    return parsed.value ? parsed : null;
   }
 
   diagnostics(uri: string): Diagnostic[] {
@@ -405,50 +410,24 @@ export class LanguageService {
 
   symbols(uri: string): DocumentSymbol[] {
     const document = this.#documents.get(uri);
-    if (document) {
-      const exact = this.#symbolsForDocumentVersion(uri, document.version);
-      if (exact !== null) return exact;
+    const syntax = this.getSyntaxSnapshot(uri)?.value;
+    if (document && syntax) {
+      const baseline =
+        this.#stickyOutlines.get(uri) ?? this.#semanticOutline(uri);
+      const symbols = syntaxDocumentSymbols(syntax, document.text, baseline);
+      this.#stickyOutlines.set(uri, symbols);
+      return symbols;
     }
-    if (!this.#hasFreshSemanticFor(uri)) return [];
-    const semantic = this.#semanticForDocument(uri)?.value;
-    return semantic ? documentSymbols(semantic, uri) : [];
+    return this.#stickyOutlines.get(uri) ?? this.#semanticOutline(uri);
   }
 
-  async waitForDocumentSymbols(
+  waitForDocumentSymbols(
     uri: string,
-    documentVersion: number,
+    _documentVersion: number,
     signal?: AbortSignal,
   ): Promise<DocumentSymbol[]> {
-    const immediate = this.#symbolsForDocumentVersion(uri, documentVersion);
-    if (immediate) return immediate;
-    if (signal?.aborted) return [];
-
-    return new Promise<DocumentSymbol[]>((resolve) => {
-      let settled = false;
-      const finish = (symbols: DocumentSymbol[]) => {
-        if (settled) return;
-        settled = true;
-        waiter.dispose();
-        resolve(symbols);
-      };
-      const onAbort = () => finish([]);
-      const waiter: SymbolWaiter = {
-        uri,
-        documentVersion,
-        resolve: finish,
-        dispose: () => {
-          this.#symbolWaiters.delete(waiter);
-          signal?.removeEventListener("abort", onAbort);
-        },
-      };
-      this.#symbolWaiters.add(waiter);
-      signal?.addEventListener("abort", onAbort, { once: true });
-      const afterRegistration = this.#symbolsForDocumentVersion(
-        uri,
-        documentVersion,
-      );
-      if (afterRegistration) finish(afterRegistration);
-    });
+    if (signal?.aborted) return Promise.resolve([]);
+    return Promise.resolve(this.symbols(uri));
   }
 
   hover(uri: string, position: EditorPosition): HoverResult | null {
@@ -514,25 +493,137 @@ export class LanguageService {
     this.#assertActive();
     if (!rootUri) throw new Error("A root URI is required for compilation");
     const runId = ++this.#nextRunId;
-    this.#latestRequestedRunIdByRoot.set(rootUri, runId);
     const compilationEpoch = this.#compilationEpoch;
     const requestedDocumentVersion = this.#documents.get(rootUri)?.version ?? 0;
     const requestedSourceVersion = this.#effectiveSources.get(rootUri)?.version;
-    const operation = this.#compileQueue.then(() =>
-      this.#runCompilation(
+    this.#latestRequestedRunIdByRoot.set(rootUri, runId);
+    if (trigger !== "manual") {
+      for (
+        let index = this.#pendingCompilations.length - 1;
+        index >= 0;
+        index--
+      ) {
+        const pending = this.#pendingCompilations[index]!;
+        if (pending.rootUri !== rootUri || pending.trigger === "manual")
+          continue;
+        this.#pendingCompilations.splice(index, 1);
+        pending.resolve(this.#cancelledCompilation(pending));
+      }
+    }
+    const operation = new Promise<CompilationEvent>((resolve, reject) => {
+      this.#pendingCompilations.push({
         rootUri,
         trigger,
         runId,
         compilationEpoch,
         requestedDocumentVersion,
         requestedSourceVersion,
-      ),
-    );
-    this.#compileQueue = operation.then(
-      () => undefined,
-      () => undefined,
-    );
+        resolve,
+        reject,
+      });
+      this.#startCompileDrain();
+    });
     return operation;
+  }
+
+  #startCompileDrain(): void {
+    if (this.#compileActive) return;
+    this.#compileActive = true;
+    void this.#drainCompilations();
+  }
+
+  async #drainCompilations(): Promise<void> {
+    const priority: Readonly<Record<CompilationTrigger, number>> = {
+      manual: 0,
+      save: 1,
+      diagram: 2,
+      dependency: 3,
+      startup: 4,
+    };
+    try {
+      while (this.#pendingCompilations.length > 0) {
+        this.#pendingCompilations.sort(
+          (left, right) =>
+            priority[left.trigger] - priority[right.trigger] ||
+            left.runId - right.runId,
+        );
+        const pending = this.#pendingCompilations.shift()!;
+        if (pending.trigger === "manual") {
+          pending.requestedDocumentVersion =
+            this.#documents.get(pending.rootUri)?.version ?? 0;
+          pending.requestedSourceVersion = this.#effectiveSources.get(
+            pending.rootUri,
+          )?.version;
+        } else if (
+          this.#disposed ||
+          pending.compilationEpoch !== this.#compilationEpoch ||
+          this.#latestRequestedRunIdByRoot.get(pending.rootUri) !==
+            pending.runId ||
+          (this.#documents.get(pending.rootUri)?.version ?? 0) !==
+            pending.requestedDocumentVersion ||
+          this.#effectiveSources.get(pending.rootUri)?.version !==
+            pending.requestedSourceVersion
+        ) {
+          pending.resolve(this.#cancelledCompilation(pending));
+          continue;
+        }
+        try {
+          pending.resolve(
+            await this.#runCompilation(
+              pending.rootUri,
+              pending.trigger,
+              pending.runId,
+              pending.compilationEpoch,
+              pending.requestedDocumentVersion,
+              pending.requestedSourceVersion,
+            ),
+          );
+        } catch (error) {
+          pending.reject(error);
+        }
+      }
+    } finally {
+      this.#compileActive = false;
+      if (this.#pendingCompilations.length > 0) this.#startCompileDrain();
+    }
+  }
+
+  #cancelledCompilation(
+    pending: Pick<
+      PendingCompilation,
+      "runId" | "trigger" | "rootUri" | "requestedDocumentVersion"
+    >,
+  ): CompilationEvent {
+    const common = {
+      schemaVersion: 1 as const,
+      abiVersion: 1 as const,
+      compilerVersion: "unknown",
+    };
+    return {
+      runId: pending.runId,
+      timestamp: new Date().toISOString(),
+      trigger: pending.trigger,
+      rootUri: pending.rootUri,
+      documentVersion: pending.requestedDocumentVersion,
+      compilation: {
+        ...common,
+        kind: "compilation",
+        success: false,
+        cancelled: true,
+        errorCount: 0,
+        warningCount: 0,
+        missingModels: [],
+        models: [],
+        diagnostics: [],
+        logs: [],
+      },
+      semantic: {
+        value: null,
+        freshness: "cancelled",
+        generation: this.#generation,
+        documentVersions: this.#versions(),
+      },
+    };
   }
 
   getSemanticSnapshot(
@@ -593,25 +684,41 @@ export class LanguageService {
     requestedSourceVersion: number | undefined,
   ): Promise<CompilationEvent> {
     const generation = this.#generation;
+    const requestIsCurrent = (): boolean => {
+      const document = this.#documents.get(rootUri);
+      return (
+        !this.#disposed &&
+        this.#compilationEpoch === compilationEpoch &&
+        (trigger === "manual" ||
+          this.#latestRequestedRunIdByRoot.get(rootUri) === runId) &&
+        (!document || document.version === requestedDocumentVersion) &&
+        this.#effectiveSources.get(rootUri)?.version === requestedSourceVersion
+      );
+    };
+    await Promise.resolve();
+    if (!requestIsCurrent())
+      return this.#cancelledCompilation({
+        runId,
+        trigger,
+        rootUri,
+        requestedDocumentVersion,
+      });
     let analysis: CompilationAnalysisResult;
     try {
-      analysis = await Promise.resolve().then(() =>
-        this.compiler.compileAndAnalyze({ roots: [rootUri] }),
+      analysis = await this.compiler.compileAndAnalyze({ roots: [rootUri] });
+      analysis = await this.#resolveMissingModels(
+        analysis,
+        rootUri,
+        requestIsCurrent,
       );
-      analysis = await this.#resolveMissingModels(analysis, rootUri);
     } catch (error) {
       this.#onError?.(error);
       analysis = this.#failedAnalysis(rootUri, error);
     }
 
-    const current = this.#documents.get(rootUri);
     const fresh =
-      !this.#disposed &&
-      this.#compilationEpoch === compilationEpoch &&
-      this.#latestRequestedRunIdByRoot.get(rootUri) === runId &&
-      (!current || current.version === requestedDocumentVersion) &&
-      this.#effectiveSources.get(rootUri)?.version === requestedSourceVersion &&
-      this.#semanticValueIsCurrent(analysis.semantic);
+      requestIsCurrent() && this.#semanticValueIsCurrent(analysis.semantic);
+    const current = this.#documents.get(rootUri);
     for (const syntax of analysis.syntax) {
       const existing = this.#syntax.get(syntax.uri);
       if (fresh || existing?.freshness !== "fresh")
@@ -645,6 +752,11 @@ export class LanguageService {
       if (analysis.semantic.success && !analysis.semantic.cancelled) {
         this.#lastGoodSemanticByRoot.set(rootUri, semantic);
         this.#lastGoodSemantic = semantic;
+        for (const uri of Object.keys(analysis.semantic.documentVersions))
+          this.#stickyOutlines.set(
+            uri,
+            documentSymbols(analysis.semantic, uri),
+          );
       }
       if (!current?.dirty) {
         this.#lastSavedSemantic = semantic;
@@ -652,7 +764,6 @@ export class LanguageService {
       }
       this.#rebuildDependencies(analysis.semantic);
       this.#replaceDiagnostics(rootUri, analysis.compilation.diagnostics);
-      this.#resolveSymbolWaiters(rootUri, requestedDocumentVersion);
       for (const listener of this.#compilationListeners) listener(event);
       const affectedUris = Object.keys(analysis.semantic.documentVersions);
       if (!affectedUris.includes(rootUri)) affectedUris.unshift(rootUri);
@@ -665,6 +776,8 @@ export class LanguageService {
   async cancelAnalysis(): Promise<void> {
     this.#compilationEpoch++;
     this.#generation++;
+    for (const pending of this.#pendingCompilations.splice(0))
+      pending.resolve(this.#cancelledCompilation(pending));
     await this.compiler.restart?.();
     this.#lastSemantic = {
       value: null,
@@ -679,7 +792,8 @@ export class LanguageService {
     this.#disposed = true;
     this.#compilationEpoch++;
     this.#generation++;
-    for (const waiter of [...this.#symbolWaiters]) waiter.resolve([]);
+    for (const pending of this.#pendingCompilations.splice(0))
+      pending.resolve(this.#cancelledCompilation(pending));
     this.#analysisListeners.clear();
     this.#compilationListeners.clear();
     this.#readOnlyUris.clear();
@@ -699,7 +813,6 @@ export class LanguageService {
       throw new Error(`Document version must increase for ${uri}`);
     this.#documents.set(uri, { uri, text, version, dirty });
     this.#applyEffectiveSource(uri, text, version);
-    this.#resolveSupersededSymbolWaiters(uri);
     return {
       value: null,
       freshness: "stale",
@@ -769,11 +882,13 @@ export class LanguageService {
   async #resolveMissingModels(
     initial: CompilationAnalysisResult,
     rootUri: string,
+    shouldContinue: () => boolean = () => true,
   ): Promise<CompilationAnalysisResult> {
     let analysis = initial;
     const attempted = new Set<string>();
     const failures = new Map<string, string>();
     while (this.#modelRepository) {
+      if (!shouldContinue()) break;
       const requests = [
         ...new Set(
           analysis.compilation.missingModels.filter(
@@ -793,6 +908,7 @@ export class LanguageService {
       );
       let added = 0;
       for (const request of requests) {
+        if (!shouldContinue()) break;
         attempted.add(request.key);
         try {
           const resolved = await this.#modelRepository.resolveModels(
@@ -816,8 +932,10 @@ export class LanguageService {
         }
       }
       if (added === 0) break;
+      if (!shouldContinue()) break;
       await this.compiler.restart?.();
-      analysis = this.compiler.compileAndAnalyze({ roots: [rootUri] });
+      if (!shouldContinue()) break;
+      analysis = await this.compiler.compileAndAnalyze({ roots: [rootUri] });
     }
 
     const unresolved = [
@@ -1156,40 +1274,17 @@ export class LanguageService {
     );
   }
 
-  #symbolsForDocumentVersion(
-    uri: string,
-    documentVersion: number,
-  ): DocumentSymbol[] | null {
-    const document = this.#documents.get(uri);
-    if (!document || document.version !== documentVersion) return null;
-    const current = this.#semanticByRoot.get(uri);
-    if (
-      !current ||
-      current.freshness !== "fresh" ||
-      !this.#snapshotIsCurrent(current)
-    )
-      return null;
-    const selected = current.value?.success
-      ? current
-      : this.#lastGoodSemanticByRoot.get(uri);
-    return selected?.value ? documentSymbols(selected.value, uri) : [];
-  }
-
-  #resolveSymbolWaiters(rootUri: string, documentVersion: number): void {
-    for (const waiter of [...this.#symbolWaiters]) {
-      if (waiter.uri !== rootUri || waiter.documentVersion !== documentVersion)
-        continue;
-      waiter.resolve(
-        this.#symbolsForDocumentVersion(rootUri, documentVersion) ?? [],
-      );
-    }
-  }
-
-  #resolveSupersededSymbolWaiters(uri: string): void {
-    const version = this.#documents.get(uri)?.version;
-    for (const waiter of [...this.#symbolWaiters])
-      if (waiter.uri === uri && waiter.documentVersion !== version)
-        waiter.resolve([]);
+  #semanticOutline(uri: string): DocumentSymbol[] {
+    const candidates = [...this.#lastGoodSemanticByRoot.entries()]
+      .filter(
+        ([rootUri, snapshot]) =>
+          rootUri === uri ||
+          uri in snapshot.documentVersions ||
+          snapshot.value?.symbols.some((symbol) => symbol.range?.uri === uri),
+      )
+      .sort(([, left], [, right]) => right.generation - left.generation);
+    const semantic = candidates[0]?.[1].value;
+    return semantic ? documentSymbols(semantic, uri) : [];
   }
 
   #deduplicateEdits(edits: readonly TextEdit[]): TextEdit[] {

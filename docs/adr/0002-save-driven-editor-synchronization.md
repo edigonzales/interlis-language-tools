@@ -26,9 +26,15 @@ nicht verdrängen.
 
 ## Entscheidung
 
-Semantische Analyse bleibt save-driven. Öffnen und Tippen aktualisieren nur die
-effektive Quelle; sie starten keine Kompilation. Ein Save oder ein expliziter
-manueller Compile kompiliert genau eine Root-URI samt transitiven Abhängigkeiten.
+Semantische Analyse bleibt grundsätzlich save-driven. Öffnen und Tippen
+aktualisieren nur die effektive Quelle. Ein Save oder ein expliziter manueller
+Compile kompiliert genau eine Root-URI samt transitiven Abhängigkeiten.
+
+Eine eng begrenzte Ausnahme gilt beim ersten Öffnen eines Diagramms: Existiert
+für eine nichtleere, gespeicherte Root-URI noch kein semantischer Snapshot,
+fordert die Extension genau eine deduplizierte Kompilation mit dem Trigger
+`diagram` an. Bereits analysierte oder ungespeicherte Dokumente lösen dadurch
+keine zusätzliche Kompilation aus.
 
 Der Language Service verwaltet semantischen Zustand pro Root-URI:
 
@@ -80,26 +86,20 @@ und semantisch gültig und kann einen neuen OUTLINE-Snapshot erzeugen.
 
 ### OUTLINE
 
-Der LSP-Handler für `textDocument/documentSymbol` verwendet
-`waitForDocumentSymbols(uri, documentVersion, signal)`:
+Der LSP-Handler für `textDocument/documentSymbol` antwortet sofort aus der
+lebenden Outline des Language Service:
 
-1. Für einen frischen Snapshot der exakten Editorversion antwortet er sofort.
-2. Nach einer Textänderung bleibt die Anfrage bis zum Save oder manuellen
-   Compile dieser Version offen. VS Code behält währenddessen sein vorheriges
-   OUTLINE.
-3. Eine neuere Textversion, Request-Cancellation oder das Schliessen des
-   Dokuments entfernt den alten Waiter.
-4. Ein gültiger Compile liefert Namen und Ranges aus dem neuen Snapshot. Bei
-   einem ungültigen Compile bleibt die Projektion aus `lastGood` erhalten.
+1. Ein gültiger semantischer Snapshot aktualisiert die sticky Baseline pro URI.
+2. Nach einer Textänderung wird aus dem aktuellen Syntaxbaum eine neue Outline
+   erzeugt und mit der Baseline zusammengeführt.
+3. Eine temporär unvollständige oder fehlerhafte Deklaration leert die Outline
+   nicht; weiterhin gültige Namen und Bereiche bleiben sichtbar.
+4. Request-Cancellation liefert ebenfalls die aktuelle Projektion statt einer
+   leeren Liste.
 
-Die Reihenfolge
-
-```text
-didChange → documentSymbol → didSave → compilation → symbol response
-```
-
-ist damit ausdrücklich unterstützt. Sie ist der normale VS-Code-Ablauf und
-kein Sonderfall.
+Das Diagramm ist als optionaler Custom Text Editor derselben `.ili`-URI
+registriert. Beim Fokuswechsel zwischen Text und Diagramm bleibt deshalb der
+Dokumentkontext erhalten und VS Code behält die zugehörige Outline.
 
 ### Diagramm
 
@@ -110,6 +110,9 @@ Source-URIs.
 
 Bereits offene Diagramme reagieren wie folgt:
 
+- Fehlt beim ersten Diagrammzugriff ein gespeicherter Snapshot, wird eine
+  URI-basierte Single-Flight-Kompilation mit Trigger `diagram` abgewartet und
+  der Snapshot danach einmal erneut angefordert.
 - Ein frischer gültiger Snapshot des eigenen Roots wird automatisch neu
   angefordert, gelayoutet und dargestellt.
 - Enthält der letzte gültige Diagramm-Snapshot die gespeicherte URI als

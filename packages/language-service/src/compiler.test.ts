@@ -27,7 +27,7 @@ describe("createWasmCompilerBackend", () => {
         .symbols.some((symbol) => symbol.name === "Item"),
     ).toBe(true);
     expect(compiler.compile({ roots: [uri] }).success).toBe(true);
-    const combined = compiler.compileAndAnalyze({ roots: [uri] });
+    const combined = await compiler.compileAndAnalyze({ roots: [uri] });
     expect(combined.compilation.success).toBe(true);
     expect(combined.semantic.roots).toEqual([uri]);
     expect(combined.syntax.map((snapshot) => snapshot.uri)).toContain(uri);

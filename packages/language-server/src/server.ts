@@ -195,26 +195,9 @@ export function bindLanguageServer(
     );
     return result ? toWorkspaceEdit(result) : null;
   });
-  connection.onDocumentSymbol(async (params, token) => {
-    const uri = params.textDocument.uri;
-    const document = service.getDocument(uri);
-    if (!document) return service.symbols(uri).map(toDocumentSymbol);
-    const controller = new AbortController();
-    const cancellation = token?.onCancellationRequested(() =>
-      controller.abort(),
-    );
-    try {
-      return (
-        await service.waitForDocumentSymbols(
-          uri,
-          document.version,
-          controller.signal,
-        )
-      ).map(toDocumentSymbol);
-    } finally {
-      cancellation?.dispose();
-    }
-  });
+  connection.onDocumentSymbol((params) =>
+    service.symbols(params.textDocument.uri).map(toDocumentSymbol),
+  );
   connection.onHover((params) => {
     const result = service.hover(params.textDocument.uri, params.position);
     return result

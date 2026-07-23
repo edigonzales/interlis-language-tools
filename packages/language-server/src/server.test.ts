@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import type { CompilationEvent, LanguageService } from "@ilic/language-service";
+import type {
+  CompilationEvent,
+  DocumentSymbol,
+  LanguageService,
+} from "@ilic/language-service";
 import type {
   Connection,
   InitializeParams,
@@ -70,6 +74,7 @@ function contractHarness() {
     getRepositoryDocument: vi.fn(),
     compileDocument: vi.fn(() => Promise.resolve({ compilation: {} })),
     getSavedSemanticSnapshot: vi.fn(() => null),
+    symbols: vi.fn((): DocumentSymbol[] => []),
     waitForDocumentSymbols: vi.fn(
       (uri: string, version: number, signal?: AbortSignal) => {
         void uri;
@@ -91,7 +96,7 @@ function contractHarness() {
     references: vi.fn(() => []),
     prepareRename: vi.fn(() => null),
     rename: spies.rename,
-    symbols: vi.fn(() => []),
+    symbols: spies.symbols,
     hover: vi.fn(() => null),
     formatting: vi.fn(() => []),
     onTypeEdit: vi.fn(() => null),
@@ -336,84 +341,82 @@ describe("language server repository contract", () => {
       trigger: "startup",
     });
     expect(harness.spies.compileDocument).toHaveBeenCalledWith(uri, "startup");
-  });
 
-  it("waits for the saved document version before answering document symbols", async () => {
-    const harness = contractHarness();
-    bindLanguageServer(harness.connection, harness.service);
-    const uri = "file:///Root.ili";
-    harness.spies.getDocument.mockReturnValue({ version: 2 });
-    let release!: () => void;
-    harness.spies.waitForDocumentSymbols.mockImplementation(
-      () =>
-        new Promise<[]>((resolve) => {
-          release = () => resolve([]);
-        }),
-    );
-
-    const request = harness.handler<
-      (
-        params: { textDocument: { uri: string } },
-        token?: {
-          onCancellationRequested(listener: () => void): { dispose(): void };
-        },
-      ) => Promise<unknown>
-    >("onDocumentSymbol")({ textDocument: { uri } });
-    let settled = false;
-    void request.then(() => {
-      settled = true;
-    });
-    await Promise.resolve();
-    expect(settled).toBe(false);
-    expect(harness.spies.waitForDocumentSymbols).toHaveBeenCalledWith(
+    await harness.handler<
+      (params: { uri: string; trigger: "diagram" }) => Promise<unknown>
+    >(`onRequest:${InterlisProtocol.compile}`)({
       uri,
-      2,
-      expect.any(AbortSignal),
-    );
-
-    harness.handler<(params: unknown) => void>("onDidSaveTextDocument")({
-      textDocument: { uri },
+      trigger: "diagram",
     });
-    release();
-    await expect(request).resolves.toEqual([]);
-    expect(harness.spies.compileDocument).toHaveBeenCalledWith(uri, "save");
+    expect(harness.spies.compileDocument).toHaveBeenCalledWith(uri, "diagram");
   });
 
-  it("cancels a waiting document-symbol request", async () => {
+  it("answers document symbols immediately from the live outline", () => {
     const harness = contractHarness();
     bindLanguageServer(harness.connection, harness.service);
     const uri = "file:///Root.ili";
     harness.spies.getDocument.mockReturnValue({ version: 2 });
-    let observedSignal: AbortSignal | undefined;
-    harness.spies.waitForDocumentSymbols.mockImplementation(
-      (_uri, _version, signal) =>
-        new Promise<[]>((resolve) => {
-          observedSignal = signal;
-          signal?.addEventListener("abort", () => resolve([]), { once: true });
-        }),
-    );
-    let cancel!: () => void;
-    const request = harness.handler<
+    const symbols = [
+      {
+        name: "Root",
+        detail: "MODEL",
+        kind: "model",
+        range: {
+          start: { line: 0, character: 0 },
+          end: { line: 3, character: 9 },
+        },
+        selectionRange: {
+          start: { line: 0, character: 6 },
+          end: { line: 0, character: 6 },
+        },
+        children: [],
+      },
+    ];
+    harness.spies.symbols.mockReturnValue(symbols);
+
+    const result = harness.handler<
+      (params: { textDocument: { uri: string } }) => unknown
+    >("onDocumentSymbol")({ textDocument: { uri } });
+
+    expect(result).toEqual([
+      expect.objectContaining({ name: "Root", detail: "MODEL" }),
+    ]);
+    expect(harness.spies.symbols).toHaveBeenCalledWith(uri);
+    expect(harness.spies.waitForDocumentSymbols).not.toHaveBeenCalled();
+    expect(harness.spies.compileDocument).not.toHaveBeenCalled();
+  });
+
+  it("does not clear the live outline when a request token is cancelled", () => {
+    const harness = contractHarness();
+    bindLanguageServer(harness.connection, harness.service);
+    const uri = "file:///Root.ili";
+    harness.spies.symbols.mockReturnValue([
+      {
+        name: "Root",
+        detail: "MODEL",
+        kind: "model",
+        range: {
+          start: { line: 0, character: 0 },
+          end: { line: 0, character: 10 },
+        },
+        selectionRange: {
+          start: { line: 0, character: 6 },
+          end: { line: 0, character: 6 },
+        },
+        children: [],
+      },
+    ]);
+    const result = harness.handler<
       (
         params: { textDocument: { uri: string } },
-        token: {
-          onCancellationRequested(listener: () => void): { dispose(): void };
-        },
-      ) => Promise<unknown>
+        token: { readonly isCancellationRequested: boolean },
+      ) => unknown
     >("onDocumentSymbol")(
       { textDocument: { uri } },
-      {
-        onCancellationRequested(listener) {
-          cancel = listener;
-          return { dispose: vi.fn() };
-        },
-      },
+      { isCancellationRequested: true },
     );
 
-    cancel();
-
-    await expect(request).resolves.toEqual([]);
-    expect(observedSignal?.aborted).toBe(true);
+    expect(result).toEqual([expect.objectContaining({ name: "Root" })]);
   });
 
   it("publishes semantic dependency results without replacing compiler output", () => {

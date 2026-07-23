@@ -41,6 +41,7 @@ export interface DocumentSymbol {
   readonly range: EditorRange;
   readonly selectionRange: EditorRange;
   readonly children: readonly DocumentSymbol[];
+  readonly inherited?: boolean;
 }
 export interface RenameResult {
   readonly changes: Readonly<Record<string, readonly TextEdit[]>>;
@@ -364,6 +365,7 @@ export function documentSymbols(
       ]),
       selectionRange,
       children,
+      ...(inherited ? { inherited: true } : {}),
     };
   };
 
@@ -394,6 +396,402 @@ export function documentSymbols(
   }
 
   return build("");
+}
+
+const syntaxDeclarationKinds = new Set([
+  "modelDef",
+  "topicDef",
+  "classDef",
+  "structureDef",
+  "associationDef",
+  "viewDef",
+  "graphicDef",
+  "domainDef",
+  "unitDef",
+  "functionDef",
+  "attributeDef",
+  "roleDef",
+  "constraintDef",
+]);
+
+const blockTokenKinds: Readonly<Record<string, string>> = {
+  MODEL: "model",
+  TOPIC: "topic",
+  CLASS: "class",
+  STRUCTURE: "structure",
+  ASSOCIATION: "association",
+  VIEW: "view",
+  GRAPHIC: "graphic",
+};
+
+const tokenDeclarationKinds: Readonly<Record<string, string>> = {
+  ILIDOMAIN: "domain",
+  UNIT: "unit",
+  FUNCTION: "function",
+};
+
+function syntaxTokensInRange(
+  syntax: SyntaxSnapshot,
+  range: SourceRange,
+): SyntaxSnapshot["tokens"] {
+  return syntax.tokens.filter(
+    (token) =>
+      token.channel === 0 &&
+      token.range.start.byteOffset >= range.start.byteOffset &&
+      token.range.end.byteOffset <= range.end.byteOffset,
+  );
+}
+
+function declarationFromSyntaxNode(
+  syntax: SyntaxSnapshot,
+  node: SyntaxSnapshot["nodes"][number],
+): Omit<DocumentSymbol, "children"> | null {
+  if (!syntaxDeclarationKinds.has(node.kind)) return null;
+  const tokens = syntaxTokensInRange(syntax, node.range);
+  const keyword = tokens.find((token) => token.kind in blockTokenKinds);
+  let kind =
+    node.kind === "classDef" && keyword
+      ? blockTokenKinds[keyword.kind]
+      : node.kind.replace(/Def$/, "").toLowerCase();
+  if (!kind) return null;
+  if (node.kind === "constraintDef") kind = "constraint";
+  const declarationToken =
+    keyword ??
+    tokens.find((token) => token.kind in tokenDeclarationKinds) ??
+    tokens[0];
+  let name: (typeof tokens)[number] | undefined;
+  if (
+    kind === "attribute" ||
+    kind === "role" ||
+    kind === "domain" ||
+    kind === "unit"
+  )
+    name = tokens.find((token) => token.kind === "NAME");
+  else if (kind === "constraint") {
+    const marker = tokens.findIndex((token) => token.kind === "CONSTRAINT");
+    const candidate = marker >= 0 ? tokens[marker + 1] : undefined;
+    name =
+      candidate?.kind === "NAME" && tokens[marker + 2]?.kind === "COLON"
+        ? candidate
+        : undefined;
+  } else {
+    const index = declarationToken ? tokens.indexOf(declarationToken) : -1;
+    name = tokens.slice(index + 1).find((token) => token.kind === "NAME");
+  }
+  const range = toEditorRange(node.range);
+  const selection = name ? toEditorRange(name.range) : cursorRange(range);
+  return {
+    name: name?.text ?? (kind === "constraint" ? "constraint" : kind),
+    detail: outlineDetail(kind),
+    kind,
+    range,
+    selectionRange: cursorRange(selection),
+  };
+}
+
+function parserDocumentSymbols(syntax: SyntaxSnapshot): DocumentSymbol[] {
+  interface Entry {
+    readonly node: SyntaxSnapshot["nodes"][number];
+    readonly symbol: Omit<DocumentSymbol, "children">;
+    readonly children: Entry[];
+  }
+  const nodeById = new Map(syntax.nodes.map((node) => [node.id, node]));
+  const entries = new Map<number, Entry>();
+  for (const node of syntax.nodes) {
+    const symbol = declarationFromSyntaxNode(syntax, node);
+    if (symbol) entries.set(node.id, { node, symbol, children: [] });
+  }
+  const roots: Entry[] = [];
+  for (const entry of entries.values()) {
+    let parent = entry.node.parent;
+    while (parent !== null && !entries.has(parent))
+      parent = nodeById.get(parent)?.parent ?? null;
+    const owner = parent === null ? undefined : entries.get(parent);
+    if (owner) owner.children.push(entry);
+    else roots.push(entry);
+  }
+  const build = (entry: Entry): DocumentSymbol => {
+    let constraint = 0;
+    const children = entry.children
+      .sort(
+        (left, right) =>
+          left.node.range.start.byteOffset - right.node.range.start.byteOffset,
+      )
+      .map((child) => {
+        const result = build(child);
+        if (result.kind !== "constraint" || result.name !== "constraint")
+          return result;
+        return { ...result, name: `constraint${++constraint}` };
+      });
+    return { ...entry.symbol, children };
+  };
+  return roots
+    .sort(
+      (left, right) =>
+        left.node.range.start.byteOffset - right.node.range.start.byteOffset,
+    )
+    .map(build);
+}
+
+function tokenDocumentSymbols(syntax: SyntaxSnapshot): DocumentSymbol[] {
+  interface Entry {
+    name: string;
+    readonly kind: string;
+    readonly detail: string;
+    range: EditorRange;
+    readonly selectionRange: EditorRange;
+    readonly children: Entry[];
+  }
+  const tokens = syntax.tokens.filter((token) => token.channel === 0);
+  const roots: Entry[] = [];
+  const stack: Entry[] = [];
+  const append = (entry: Entry): void => {
+    const parent = stack.at(-1);
+    (parent?.children ?? roots).push(entry);
+  };
+  const statementEnd = (start: number): number => {
+    const index = tokens
+      .slice(start)
+      .findIndex((token) => token.kind === "SEMI");
+    return index < 0 ? Math.max(start, tokens.length - 1) : start + index;
+  };
+  const makeEntry = (
+    kind: string,
+    nameToken: (typeof tokens)[number],
+    start: number,
+    end = start,
+  ): Entry => ({
+    name: nameToken.text,
+    kind,
+    detail: outlineDetail(kind),
+    range: {
+      start: toEditorRange(tokens[start]!.range).start,
+      end: toEditorRange(tokens[end]!.range).end,
+    },
+    selectionRange: cursorRange(toEditorRange(nameToken.range)),
+    children: [],
+  });
+  let parenthesisDepth = 0;
+  let section: "domain" | "unit" | null = null;
+  const constraintCounts = new Map<Entry, number>();
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index]!;
+    if (token.kind === "LPAREN") parenthesisDepth++;
+    if (token.kind === "RPAREN")
+      parenthesisDepth = Math.max(0, parenthesisDepth - 1);
+    if (token.kind in blockTokenKinds) {
+      section = null;
+      const name = tokens
+        .slice(index + 1)
+        .find((candidate) => candidate.kind === "NAME");
+      if (!name) continue;
+      const entry = makeEntry(blockTokenKinds[token.kind]!, name, index);
+      append(entry);
+      stack.push(entry);
+      continue;
+    }
+    if (token.kind === "END") {
+      section = null;
+      const name = tokens[index + 1];
+      const punctuation = tokens[index + 2];
+      const end =
+        punctuation &&
+        (punctuation.kind === "SEMI" || punctuation.kind === "DOT")
+          ? index + 2
+          : name
+            ? index + 1
+            : index;
+      const matching = [...stack]
+        .map((entry) => entry.name)
+        .lastIndexOf(name?.text ?? "");
+      if (matching >= 0) {
+        const entry = stack[matching]!;
+        entry.range = {
+          ...entry.range,
+          end: toEditorRange(tokens[end]!.range).end,
+        };
+        stack.splice(matching);
+      }
+      continue;
+    }
+    if (token.kind === "ILIDOMAIN" || token.kind === "UNIT") {
+      section = token.kind === "ILIDOMAIN" ? "domain" : "unit";
+      const name = tokens[index + 1];
+      if (name?.kind !== "NAME") continue;
+      const end = statementEnd(index);
+      append(makeEntry(section, name, index, end));
+      index = end;
+      continue;
+    }
+    if (
+      section &&
+      token.kind === "NAME" &&
+      ["EQUAL", "EXTENDS", "SEMI"].includes(tokens[index + 1]?.kind ?? "")
+    ) {
+      const end = statementEnd(index);
+      append(makeEntry(section, token, index, end));
+      index = end;
+      continue;
+    }
+    if (token.kind === "FUNCTION") {
+      section = null;
+      const name = tokens[index + 1];
+      if (name?.kind !== "NAME") continue;
+      const end = statementEnd(index);
+      append(makeEntry("function", name, index, end));
+      index = end;
+      continue;
+    }
+    if (token.kind === "CONSTRAINT") {
+      section = null;
+      const owner = stack.at(-1);
+      if (!owner) continue;
+      const candidate = tokens[index + 1];
+      const named =
+        candidate?.kind === "NAME" && tokens[index + 2]?.kind === "COLON";
+      const end = statementEnd(index);
+      const count = (constraintCounts.get(owner) ?? 0) + 1;
+      constraintCounts.set(owner, count);
+      const entry = makeEntry(
+        "constraint",
+        named ? candidate : token,
+        index,
+        end,
+      );
+      entry.name = named ? candidate.text : `constraint${count}`;
+      append(entry);
+      index = end;
+      continue;
+    }
+    const owner = stack.at(-1);
+    if (
+      owner?.kind === "association" &&
+      token.kind === "NAME" &&
+      tokens[index + 1]?.kind === "ASSOCIATE"
+    ) {
+      const end = statementEnd(index);
+      append(makeEntry("role", token, index, end));
+      index = end;
+      continue;
+    }
+    if (
+      owner &&
+      ["class", "structure", "association", "view"].includes(owner.kind) &&
+      parenthesisDepth === 0 &&
+      token.kind === "NAME" &&
+      tokens[index + 1]?.kind === "COLON"
+    ) {
+      const end = statementEnd(index);
+      append(makeEntry("attribute", token, index, end));
+      index = end;
+    }
+  }
+  const build = (entry: Entry): DocumentSymbol => {
+    const children = entry.children.map(build);
+    return {
+      ...entry,
+      range: enclosingRange(
+        entry.range,
+        children.map((child) => child.range),
+      ),
+      children,
+    };
+  };
+  return roots.map(build);
+}
+
+function clampDocumentSymbol(
+  symbol: DocumentSymbol,
+  text: string,
+): DocumentSymbol {
+  const lines = text.split("\n");
+  const clampPosition = (position: EditorPosition): EditorPosition => {
+    const line = Math.max(0, Math.min(position.line, lines.length - 1));
+    return {
+      line,
+      character: Math.max(
+        0,
+        Math.min(position.character, lines[line]?.length ?? 0),
+      ),
+    };
+  };
+  const start = clampPosition(symbol.range.start);
+  const end = clampPosition(symbol.range.end);
+  const selection = clampPosition(symbol.selectionRange.start);
+  const children = symbol.children.map((child) =>
+    clampDocumentSymbol(child, text),
+  );
+  const clampedRange =
+    comparePositions(start, end) <= 0 ? { start, end } : { start, end: start };
+  return {
+    ...symbol,
+    range: enclosingRange(
+      clampedRange,
+      children.map((child) => child.range),
+    ),
+    selectionRange: { start: selection, end: selection },
+    children,
+  };
+}
+
+function mergeSymbolLists(
+  current: readonly DocumentSymbol[],
+  baseline: readonly DocumentSymbol[],
+  preserveUnmatched: boolean,
+): DocumentSymbol[] {
+  const unused = new Set(baseline.map((_, index) => index));
+  const result = current.map((symbol) => {
+    const matchingName = baseline.findIndex(
+      (candidate, candidateIndex) =>
+        unused.has(candidateIndex) &&
+        candidate.kind === symbol.kind &&
+        candidate.name === symbol.name,
+    );
+    const matchingPosition = baseline.findIndex(
+      (candidate, candidateIndex) =>
+        unused.has(candidateIndex) && candidate.kind === symbol.kind,
+    );
+    const match = matchingName >= 0 ? matchingName : matchingPosition;
+    if (match < 0) return symbol;
+    unused.delete(match);
+    const previous = baseline[match]!;
+    return {
+      ...symbol,
+      children: mergeSymbolLists(
+        symbol.children,
+        previous.children,
+        preserveUnmatched,
+      ),
+    };
+  });
+  for (const index of unused) {
+    const symbol = baseline[index]!;
+    if (preserveUnmatched || symbol.inherited) result.push(symbol);
+  }
+  return result;
+}
+
+export function syntaxDocumentSymbols(
+  syntax: SyntaxSnapshot,
+  text: string,
+  baseline: readonly DocumentSymbol[] = [],
+): DocumentSymbol[] {
+  if (
+    syntax.success &&
+    syntax.nodes.length === 0 &&
+    syntax.tokens.length === 0 &&
+    baseline.length > 0
+  )
+    return baseline.map((symbol) => clampDocumentSymbol(symbol, text));
+  const parser = parserDocumentSymbols(syntax);
+  const tokens = tokenDocumentSymbols(syntax);
+  const current =
+    syntax.success && parser.length > 0
+      ? parser
+      : mergeSymbolLists(tokens, parser, false);
+  return mergeSymbolLists(current, baseline, !syntax.success).map((symbol) =>
+    clampDocumentSymbol(symbol, text),
+  );
 }
 
 export function templateForNewline(

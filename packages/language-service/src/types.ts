@@ -29,7 +29,9 @@ export interface CompilerBackend {
   removeSource(uri: string): boolean;
   parse(uri: string): SyntaxSnapshot;
   analyze(request: CompilationRequest): SemanticSnapshot;
-  compileAndAnalyze(request: CompilationRequest): CompilationAnalysisResult;
+  compileAndAnalyze(
+    request: CompilationRequest,
+  ): CompilationAnalysisResult | Promise<CompilationAnalysisResult>;
   compile(request: CompilationRequest): CompilationResult;
   format(
     uri: string,
@@ -44,7 +46,8 @@ export interface AnalysisEvent {
   readonly affectedUris: readonly string[];
 }
 
-export type CompilationTrigger = "save" | "manual" | "startup" | "dependency";
+export type CompilationTrigger =
+  "save" | "manual" | "startup" | "dependency" | "diagram";
 
 export interface CompilationOutputEvent {
   readonly runId: number;

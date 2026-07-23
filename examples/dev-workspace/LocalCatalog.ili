@@ -6,15 +6,16 @@ MODEL LocalCatalog (en) AT "https://example.invalid/dev" VERSION "1" =
     myEnum = (a, b);
 
 
-  TOPIC foo =
+  TOPIC foo2 =
 
     CLASS bar =
 
       asdf : TEXT;
-      aaa : 0..-9;
+      aaa : 0..3;
+      bbb: TEXT;
     END bar;
 
-  END foo;
+  END foo2;
 
 
 END LocalCatalog.

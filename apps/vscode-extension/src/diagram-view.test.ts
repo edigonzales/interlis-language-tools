@@ -12,6 +12,19 @@ interface ChangedDocumentEvent {
 const activeEditorListeners: Array<(editor: unknown) => void> = [];
 const documentChangeListeners: Array<(event: ChangedDocumentEvent) => void> =
   [];
+const configurationChangeListeners: Array<
+  (event: { affectsConfiguration(section: string): boolean }) => void
+> = [];
+let customEditorProvider:
+  | {
+      resolveCustomTextEditor(
+        document: unknown,
+        panel: unknown,
+        token: { isCancellationRequested: boolean },
+      ): Promise<void>;
+    }
+  | undefined;
+const customEditorPanels = new Map<string, unknown>();
 const vscodeMock = {
   window: {
     activeTextEditor: undefined as { document: unknown } | undefined,
@@ -23,20 +36,61 @@ const vscodeMock = {
       },
     ),
     createWebviewPanel: vi.fn(),
+    registerCustomEditorProvider: vi.fn(
+      (_viewType: string, provider: typeof customEditorProvider) => {
+        customEditorProvider = provider;
+        return { dispose: vi.fn() };
+      },
+    ),
     showInformationMessage: vi.fn(),
+    showSaveDialog: vi.fn(),
   },
   workspace: {
     getConfiguration: vi.fn(() => ({ get: configurationGet })),
     openTextDocument: vi.fn(),
+    fs: { writeFile: vi.fn() },
     onDidChangeTextDocument: vi.fn(
       (listener: (event: ChangedDocumentEvent) => void) => {
         documentChangeListeners.push(listener);
         return { dispose: vi.fn() };
       },
     ),
+    onDidChangeConfiguration: vi.fn(
+      (
+        listener: (event: {
+          affectsConfiguration(section: string): boolean;
+        }) => void,
+      ) => {
+        configurationChangeListeners.push(listener);
+        return { dispose: vi.fn() };
+      },
+    ),
   },
   commands: {
     registerCommand: vi.fn(() => ({ dispose: vi.fn() })),
+    executeCommand: vi.fn(
+      async (command: string, uri?: FakeDocument["uri"], viewType?: string) => {
+        if (
+          command !== "vscode.openWith" ||
+          viewType !== "interlisLanguageTools.diagramEditor" ||
+          !uri ||
+          !customEditorProvider
+        )
+          return undefined;
+        const key = uri.toString();
+        if (customEditorPanels.has(key)) return undefined;
+        const source = vscodeMock.window.visibleTextEditors.find(
+          (editor) => (editor.document as FakeDocument).uri.toString() === key,
+        )?.document;
+        if (!source) return undefined;
+        const panel = vscodeMock.window.createWebviewPanel() as unknown;
+        customEditorPanels.set(key, panel);
+        await customEditorProvider.resolveCustomTextEditor(source, panel, {
+          isCancellationRequested: false,
+        });
+        return undefined;
+      },
+    ),
   },
   ViewColumn: { Beside: 2 },
 };
@@ -56,6 +110,10 @@ const doMock = (
 
 const restoreViewportMock = vi.fn();
 const captureViewportMock = vi.fn();
+const renderSvgMock = vi.fn(() => '<svg id="exported"></svg>');
+const layoutAndRenderMock = vi.fn(() =>
+  Promise.resolve({ layout: {}, svg: '<svg id="diagram"></svg>' }),
+);
 
 class FakeDiagramController {
   state: {
@@ -99,26 +157,25 @@ doMock(
     DiagramController: FakeDiagramController,
     captureViewport: captureViewportMock,
     defaultDiagramSettings: {
-      edgeRouting: "POLYLINE",
+      nodePlacement: "BRANDES_KOEPF",
+      edgeRouting: "ORTHOGONAL",
+      edgeCrossingStyle: "GAPS",
       attributeMode: "OWN",
       deemphasizeAbstractTypes: true,
       showAssociationNames: true,
       showRoleCardinalities: true,
       showLocalEnumerationValues: true,
     },
-    layoutAndRenderDiagram: vi.fn(() =>
-      Promise.resolve({ layout: {}, svg: '<svg id="diagram"></svg>' }),
-    ),
+    layoutAndRenderDiagram: layoutAndRenderMock,
+    renderSvg: renderSvgMock,
     restoreViewport: restoreViewportMock,
     sourceLocationForNode: vi.fn(),
   }),
   { virtual: true },
 );
 
-const {
-  openDiagramOnStartup,
-  registerDiagramWorkflows,
-} = await import("./diagram-view.js");
+const { openDiagramOnStartup, registerDiagramWorkflows } =
+  await import("./diagram-view.js");
 
 type StartupDocument = NonNullable<Parameters<typeof openDiagramOnStartup>[1]>;
 type DiagramUri = StartupDocument["uri"];
@@ -127,13 +184,33 @@ type LanguageClient = Parameters<typeof registerDiagramWorkflows>[1];
 
 interface FakeDocument {
   readonly languageId: string;
-  readonly uri: { readonly path: string; toString(): string };
+  readonly isDirty: boolean;
+  readonly uri: {
+    readonly path: string;
+    toString(): string;
+    with(change: { path: string }): FakeDocument["uri"];
+  };
   getText(): string;
 }
 
-const document = (uri: string, languageId = "interlis"): FakeDocument => ({
+const document = (
+  uri: string,
+  languageId = "interlis",
+  isDirty = false,
+): FakeDocument => ({
   languageId,
-  uri: { path: uri, toString: () => uri },
+  isDirty,
+  uri: {
+    path: uri,
+    toString: () => uri,
+    with(change) {
+      return {
+        ...this,
+        path: change.path,
+        toString: () => change.path,
+      };
+    },
+  },
   getText: () => "MODEL Example; END Example.",
 });
 
@@ -154,9 +231,18 @@ describe("VS Code startup diagram", () => {
     );
     activeEditorListeners.length = 0;
     documentChangeListeners.length = 0;
+    configurationChangeListeners.length = 0;
+    customEditorProvider = undefined;
+    customEditorPanels.clear();
     captureViewportMock.mockReset();
     restoreViewportMock.mockReset();
+    renderSvgMock.mockClear();
+    layoutAndRenderMock.mockClear();
+    vscodeMock.window.showSaveDialog.mockReset();
+    vscodeMock.workspace.fs.writeFile.mockReset();
     vscodeMock.window.createWebviewPanel.mockReset();
+    vscodeMock.window.registerCustomEditorProvider.mockClear();
+    vscodeMock.commands.executeCommand.mockClear();
     setActiveDocument(undefined);
   });
 
@@ -312,18 +398,179 @@ describe("VS Code startup diagram", () => {
     await workflows.open(asDiagramUri(active.uri));
 
     expect(vscodeMock.window.createWebviewPanel).toHaveBeenCalledOnce();
-    expect(panel.reveal).toHaveBeenCalledWith(2, true);
+    expect(vscodeMock.commands.executeCommand).toHaveBeenCalledTimes(2);
+    expect(vscodeMock.commands.executeCommand).toHaveBeenLastCalledWith(
+      "vscode.openWith",
+      active.uri,
+      "interlisLanguageTools.diagramEditor",
+      expect.objectContaining({
+        viewColumn: 2,
+        preserveFocus: true,
+        preview: false,
+      }),
+    );
+  });
+
+  it("compiles a missing saved diagram snapshot once and retries it", async () => {
+    const uri = "file:///Lazy.ili";
+    const active = document(uri);
+    setActiveDocument(active);
+    let receiveMessage:
+      ((message: { type?: string; value?: unknown }) => void) | undefined;
+    const panel = {
+      active: true,
+      webview: {
+        html: "",
+        onDidReceiveMessage: vi.fn(
+          (handler: (message: { type?: string; value?: unknown }) => void) => {
+            receiveMessage = handler;
+            return { dispose: vi.fn() };
+          },
+        ),
+      },
+      onDidDispose: vi.fn(),
+      reveal: vi.fn(),
+    };
+    vscodeMock.window.createWebviewPanel.mockReturnValue(panel);
+    let compiled = false;
+    let finishCompile!: () => void;
+    const compile = new Promise<void>((resolve) => {
+      finishCompile = () => {
+        compiled = true;
+        resolve();
+      };
+    });
+    const sendRequest = vi.fn((method: string) => {
+      if (method === "interlis/compile")
+        return compile.then(() => ({ success: true }));
+      return Promise.resolve(
+        compiled
+          ? {
+              freshness: "fresh",
+              generation: 1,
+              snapshot: {
+                success: true,
+                documentVersions: { [uri]: 1 },
+                diagram: { nodes: [], edges: [] },
+              },
+            }
+          : null,
+      );
+    });
+    const client = {
+      sendRequest,
+      onNotification: vi.fn(() => ({ dispose: vi.fn() })),
+    } as unknown as LanguageClient;
+    const workflows = registerDiagramWorkflows(
+      { subscriptions: [] } as unknown as ExtensionContext,
+      client,
+    );
+
+    const opening = workflows.open(asDiagramUri(active.uri));
+    await vi.waitFor(() =>
+      expect(sendRequest).toHaveBeenCalledWith("interlis/compile", {
+        uri,
+        trigger: "diagram",
+      }),
+    );
+    receiveMessage?.({ type: "refresh" });
+    await Promise.resolve();
+    expect(
+      sendRequest.mock.calls.filter(
+        ([method]) => method === "interlis/compile",
+      ),
+    ).toHaveLength(1);
+
+    finishCompile();
+    await opening;
+    await vi.waitFor(() => expect(panel.webview.html).toContain("diagram"));
+    expect(
+      sendRequest.mock.calls.filter(
+        ([method]) => method === "interlis/diagramSnapshot",
+      ).length,
+    ).toBeGreaterThanOrEqual(2);
+  });
+
+  it("does not compile a dirty document without a saved snapshot", async () => {
+    const active = document("file:///Dirty.ili", "interlis", true);
+    setActiveDocument(active);
+    const panel = {
+      active: true,
+      webview: {
+        html: "",
+        onDidReceiveMessage: vi.fn(() => ({ dispose: vi.fn() })),
+      },
+      onDidDispose: vi.fn(),
+      reveal: vi.fn(),
+    };
+    vscodeMock.window.createWebviewPanel.mockReturnValue(panel);
+    const sendRequest = vi.fn(() => Promise.resolve(null));
+    const workflows = registerDiagramWorkflows(
+      { subscriptions: [] } as unknown as ExtensionContext,
+      {
+        sendRequest,
+        onNotification: vi.fn(() => ({ dispose: vi.fn() })),
+      } as unknown as LanguageClient,
+    );
+
+    await workflows.open(asDiagramUri(active.uri));
+
+    expect(sendRequest).toHaveBeenCalledTimes(1);
+    expect(panel.webview.html).toContain(
+      "Save the INTERLIS file to create its diagram.",
+    );
+  });
+
+  it("relayouts open diagrams when diagram settings change", async () => {
+    const active = document("file:///Settings.ili");
+    setActiveDocument(active);
+    const panel = {
+      active: true,
+      webview: {
+        html: "",
+        onDidReceiveMessage: vi.fn(() => ({ dispose: vi.fn() })),
+      },
+      onDidDispose: vi.fn(),
+      reveal: vi.fn(),
+    };
+    vscodeMock.window.createWebviewPanel.mockReturnValue(panel);
+    const sendRequest = vi.fn(() =>
+      Promise.resolve({
+        freshness: "fresh",
+        generation: 1,
+        snapshot: {
+          success: true,
+          documentVersions: { "file:///Settings.ili": 1 },
+          diagram: { nodes: [], edges: [] },
+        },
+      }),
+    );
+    const workflows = registerDiagramWorkflows(
+      { subscriptions: [] } as unknown as ExtensionContext,
+      {
+        sendRequest,
+        onNotification: vi.fn(() => ({ dispose: vi.fn() })),
+      } as unknown as LanguageClient,
+    );
+    await workflows.open(asDiagramUri(active.uri));
+
+    configurationChangeListeners.at(-1)?.({
+      affectsConfiguration: (section) =>
+        section === "interlisLanguageTools.diagram",
+    });
+
+    await vi.waitFor(() =>
+      expect(layoutAndRenderMock).toHaveBeenCalledTimes(2),
+    );
+    expect(sendRequest).toHaveBeenCalledTimes(1);
   });
 
   it("restores the saved zoom and position when the diagram is refreshed", async () => {
     const active = document("file:///Zoom.ili");
     setActiveDocument(active);
     let receiveMessage:
-      | ((message: { type?: string; value?: unknown }) => void)
-      | undefined;
-    let semanticChanged:
-      | ((params: unknown) => void)
-      | undefined;
+      ((message: { type?: string; value?: unknown }) => void) | undefined;
+    let semanticChanged: ((params: unknown) => void) | undefined;
     const panel = {
       active: true,
       webview: {
@@ -404,6 +651,80 @@ describe("VS Code startup diagram", () => {
       expect(panel.webview.html).toContain("initialScrollY=20");
       expect(panel.webview.html).toContain("Math.max(MIN_ZOOM,2)");
     });
+  });
+
+  it("exports the complete diagram and the current visible viewport as SVG", async () => {
+    const active = document("file:///Export.ili");
+    setActiveDocument(active);
+    let receiveMessage:
+      ((message: { type?: string; value?: unknown }) => void) | undefined;
+    const panel = {
+      active: true,
+      webview: {
+        html: "",
+        onDidReceiveMessage: vi.fn(
+          (handler: (message: { type?: string; value?: unknown }) => void) => {
+            receiveMessage = handler;
+            return { dispose: vi.fn() };
+          },
+        ),
+      },
+      onDidDispose: vi.fn(),
+      reveal: vi.fn(),
+    };
+    vscodeMock.window.createWebviewPanel.mockReturnValue(panel);
+    const target = { toString: () => "file:///export.svg" };
+    vscodeMock.window.showSaveDialog.mockResolvedValue(target);
+    const client = {
+      onNotification: vi.fn(() => ({ dispose: vi.fn() })),
+      sendRequest: vi.fn(() =>
+        Promise.resolve({
+          freshness: "fresh",
+          generation: 1,
+          snapshot: {
+            success: true,
+            documentVersions: { "file:///Export.ili": 1 },
+            diagram: { nodes: [], edges: [] },
+          },
+        }),
+      ),
+    } as unknown as LanguageClient;
+    const workflows = registerDiagramWorkflows(
+      { subscriptions: [] } as unknown as ExtensionContext,
+      client,
+    );
+    await workflows.open(asDiagramUri(active.uri));
+
+    receiveMessage?.({ type: "exportFull" });
+    await vi.waitFor(() =>
+      expect(vscodeMock.workspace.fs.writeFile).toHaveBeenCalledTimes(1),
+    );
+    expect(renderSvgMock).toHaveBeenLastCalledWith(
+      {},
+      expect.any(Object),
+      undefined,
+    );
+
+    const viewport = {
+      zoom: 2,
+      scrollX: 10,
+      scrollY: 20,
+      width: 800,
+      height: 600,
+    };
+    receiveMessage?.({ type: "exportVisible", value: viewport });
+    await vi.waitFor(() =>
+      expect(vscodeMock.workspace.fs.writeFile).toHaveBeenCalledTimes(2),
+    );
+    expect(renderSvgMock).toHaveBeenLastCalledWith(
+      {},
+      expect.any(Object),
+      viewport,
+    );
+    expect(panel.webview.html).toContain("export-visible");
+    expect(panel.webview.html).toContain(
+      "Math.min((viewport.clientWidth-padding)/baseWidth",
+    );
   });
 
   it("refreshes an open diagram after a fresh semantic notification", async () => {
@@ -586,7 +907,13 @@ describe("VS Code startup diagram", () => {
     expect(panel.webview.html).toContain('id="diagram"');
     expect(rendered).toContain("MIN_ZOOM=0.25");
     expect(rendered).toContain("event.button!==1");
-    expect(rendered).toContain("scrollX:viewport.scrollLeft/zoom");
+    expect(rendered).toContain(
+      "scrollX:(viewport.scrollLeft-diagramOffsetX)/zoom",
+    );
+    expect(rendered).toContain("diagram.style.left=diagramOffsetX+'px'");
+    expect(rendered).toContain(
+      "viewport.scrollLeft=0;viewport.scrollTop=0;sendViewport()",
+    );
     expect(rendered).toContain("event.preventDefault()");
     expect(rendered).not.toBe("");
   });

@@ -124,15 +124,23 @@ const flattenSymbols = (
 
 describe("VS Code extension bundles", () => {
   it("provides CommonJS globals only to the Node bundles", async () => {
-    const [extensionNode, serverNode, extensionBrowser, serverBrowser] =
-      await Promise.all([
-        readBundle("extension-node.js"),
-        readBundle("server-node.js"),
-        readBundle("extension-browser.js"),
-        readBundle("server-browser.js"),
-      ]);
+    const [
+      extensionNode,
+      serverNode,
+      compilerWorkerNode,
+      extensionBrowser,
+      serverBrowser,
+      compilerWorkerBrowser,
+    ] = await Promise.all([
+      readBundle("extension-node.js"),
+      readBundle("server-node.js"),
+      readBundle("compiler-worker-node.js"),
+      readBundle("extension-browser.js"),
+      readBundle("server-browser.js"),
+      readBundle("compiler-worker-browser.js"),
+    ]);
 
-    for (const bundle of [extensionNode, serverNode]) {
+    for (const bundle of [extensionNode, serverNode, compilerWorkerNode]) {
       expect(bundle).toContain(
         'import { createRequire as __ilicCreateRequire } from "node:module";',
       );
@@ -145,10 +153,18 @@ describe("VS Code extension bundles", () => {
       expect(bundle).toContain("const __dirname = __ilicDirname(__filename);");
     }
 
-    for (const bundle of [extensionBrowser, serverBrowser]) {
+    for (const bundle of [
+      extensionBrowser,
+      serverBrowser,
+      compilerWorkerBrowser,
+    ]) {
       expect(bundle).not.toContain("__ilicCreateRequire");
       expect(bundle).not.toContain('"child_process"');
     }
+    expect(serverNode).toContain("compiler-worker-node.js");
+    expect(serverBrowser).toContain("compiler-worker-browser.js");
+    expect(compilerWorkerNode).toContain("compileAndAnalyze");
+    expect(compilerWorkerBrowser).toContain("compileAndAnalyze");
   });
 
   it("packages the executable language-client termination helper", async () => {
@@ -317,6 +333,76 @@ describe("VS Code extension bundles", () => {
       ).toBe(true);
       for (const symbol of renamedSymbols ?? [])
         expectValidSymbolRanges(symbol);
+
+      const incompleteText = renamedText.replace(/asdf\s*:\s*TEXT/u, "asdf :");
+      child.stdin.write(
+        lspMessage({
+          jsonrpc: "2.0",
+          method: "textDocument/didChange",
+          params: {
+            textDocument: { uri, version: 3 },
+            contentChanges: [{ text: incompleteText }],
+          },
+        }),
+      );
+      child.stdin.write(
+        lspMessage({
+          jsonrpc: "2.0",
+          method: "textDocument/didSave",
+          params: { textDocument: { uri } },
+        }),
+      );
+      child.stdin.write(
+        lspMessage({
+          jsonrpc: "2.0",
+          id: 6,
+          method: "interlis/compile",
+          params: { uri },
+        }),
+      );
+      expect((await waitForResponse(6)).error).toBeUndefined();
+      child.stdin.write(
+        lspMessage({
+          jsonrpc: "2.0",
+          id: 7,
+          method: "textDocument/documentSymbol",
+          params: { textDocument: { uri } },
+        }),
+      );
+      const incompleteSymbols = (await waitForResponse(7)).result as
+        LspDocumentSymbol[] | undefined;
+      const incompleteNames = flattenSymbols(incompleteSymbols ?? []).map(
+        (symbol) => symbol.name,
+      );
+      expect(incompleteNames).toContain("RenamedTopic");
+      expect(incompleteNames).toContain("bar");
+      expect(incompleteNames).toContain("asdf");
+
+      child.stdin.write(
+        lspMessage({
+          jsonrpc: "2.0",
+          method: "textDocument/didChange",
+          params: {
+            textDocument: { uri, version: 4 },
+            contentChanges: [{ text: renamedText }],
+          },
+        }),
+      );
+      child.stdin.write(
+        lspMessage({
+          jsonrpc: "2.0",
+          id: 8,
+          method: "textDocument/documentSymbol",
+          params: { textDocument: { uri } },
+        }),
+      );
+      const restoredSymbols = (await waitForResponse(8)).result as
+        LspDocumentSymbol[] | undefined;
+      expect(
+        flattenSymbols(restoredSymbols ?? []).some(
+          (symbol) => symbol.name === "asdf",
+        ),
+      ).toBe(true);
       expect(stderr).not.toContain("WebAssembly.LinkError");
       expect(stderr).not.toContain("failed to asynchronously prepare wasm");
       expect(stderr).not.toContain("Dynamic require");

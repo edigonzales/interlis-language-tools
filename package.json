@@ -18,6 +18,7 @@
     "check": "pnpm build && pnpm lint && pnpm typecheck && pnpm test && pnpm test:snapshot",
     "test:snapshot": "node --test test/npm/*.test.mjs",
     "test:repository-network": "node scripts/smoke-browser-repositories.mjs",
+    "benchmark:wasm": "node scripts/benchmark-wasm.mjs",
     "snapshot:prepare": "node scripts/prepare-npm-snapshot.mjs",
     "pack:verify": "pnpm build:packages && node scripts/verify-packages.mjs",
     "package:vsix": "pnpm build && node scripts/package-vsix.mjs",

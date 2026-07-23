@@ -66,6 +66,11 @@ await Promise.all([
     outfile: resolve(dist, "server-node.js"),
   }),
   build({
+    ...node,
+    entryPoints: [resolve(extension, "src/compiler-worker-node.ts")],
+    outfile: resolve(dist, "compiler-worker-node.js"),
+  }),
+  build({
     ...shared,
     entryPoints: [resolve(extension, "src/extension-browser.ts")],
     outfile: resolve(dist, "extension-browser.js"),
@@ -75,6 +80,12 @@ await Promise.all([
     ...shared,
     entryPoints: [resolve(extension, "src/server-browser.ts")],
     outfile: resolve(dist, "server-browser.js"),
+    platform: "browser",
+  }),
+  build({
+    ...shared,
+    entryPoints: [resolve(extension, "src/compiler-worker-browser.ts")],
+    outfile: resolve(dist, "compiler-worker-browser.js"),
     platform: "browser",
   }),
 ]);
