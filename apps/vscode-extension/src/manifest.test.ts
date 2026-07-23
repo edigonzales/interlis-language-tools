@@ -37,6 +37,9 @@ describe("VS Code extension manifest", () => {
       "editor.formatOnType": true,
       "editor.fontLigatures": true,
     });
+    expect(manifest.contributes.configurationDefaults["[Log]"]).toMatchObject({
+      "editor.wordWrap": "off",
+    });
     expect(
       manifest.contributes.configuration.properties[
         "interlisLanguageTools.autoShowOutputOnStart"

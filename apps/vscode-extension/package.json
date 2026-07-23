@@ -144,6 +144,9 @@
       "[interlis]": {
         "editor.formatOnType": true,
         "editor.fontLigatures": true
+      },
+      "[Log]": {
+        "editor.wordWrap": "off"
       }
     },
     "configuration": {
