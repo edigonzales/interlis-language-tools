@@ -29,6 +29,7 @@ export {
   OutputBuffer,
   fetchTemplate,
   formatCompilationOutput,
+  formatCompilationOutputForDisplay,
   isBlankInterlisDocument,
   resolveTemplateUrl,
   snippetKeyAction,

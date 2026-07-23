@@ -10,11 +10,18 @@ import type {
 } from "./index.js";
 import {
   formatCompilationOutput,
+  formatCompilationOutputForDisplay,
   LanguageService,
   MemoryWorkspaceFileSystem,
 } from "./index.js";
 
 const rootUri = "memory:///Root.ili";
+
+function localTimestamp(timestamp: string): string {
+  const date = new Date(timestamp);
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
 
 function diagnostic(
   code: string,
@@ -743,6 +750,56 @@ describe("formatCompilationOutput", () => {
     });
     expect(output).toBe(`${compilation.transcript.join("\n")}\n`);
     expect(output).toContain("ilic completed with no errors, 1 warning.");
+  });
+
+  it("appends the local event timestamp for user-facing output", () => {
+    const timestamp = "2026-07-20T12:00:00.000Z";
+    const compilation = analysis([rootUri], {
+      diagnostics: [diagnostic("warning-code", null, "warning")],
+    }).compilation;
+    compilation.transcript = [
+      "inf: ilic 0.9.9",
+      "inf:",
+      "wrn:    warning-code message",
+      "inf:",
+      "inf: ilic completed with no errors, 1 warning.",
+    ];
+    expect(
+      formatCompilationOutputForDisplay({
+        runId: 8,
+        timestamp,
+        trigger: "manual",
+        rootUri,
+        documentVersion: 5,
+        compilation,
+      }),
+    ).toBe(
+      [
+        "inf: ilic 0.9.9",
+        "inf:",
+        "wrn:    warning-code message",
+        "inf:",
+        `inf: ilic completed with no errors, 1 warning. ${localTimestamp(timestamp)}`,
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("leaves user-facing output unchanged for an invalid event timestamp", () => {
+    const compilation = analysis([rootUri]).compilation;
+    compilation.transcript = [
+      "inf: ilic completed with no errors, no warnings.",
+    ];
+    expect(
+      formatCompilationOutputForDisplay({
+        runId: 9,
+        timestamp: "invalid-timestamp",
+        trigger: "manual",
+        rootUri,
+        documentVersion: 6,
+        compilation,
+      }),
+    ).toBe("inf: ilic completed with no errors, no warnings.\n");
   });
 });
 

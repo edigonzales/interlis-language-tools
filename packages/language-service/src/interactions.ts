@@ -271,6 +271,31 @@ function completionTranscriptLine(result: CompilationResult): string {
   return `inf: ilic completed with ${errors}, ${warnings}.`;
 }
 
+const COMPLETION_LINE_PREFIX = "inf: ilic completed with ";
+
+function padTimestampPart(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
+function formatLocalTimestamp(timestamp: string): string | undefined {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return undefined;
+  return `${date.getFullYear()}-${padTimestampPart(date.getMonth() + 1)}-${padTimestampPart(date.getDate())} ${padTimestampPart(date.getHours())}:${padTimestampPart(date.getMinutes())}:${padTimestampPart(date.getSeconds())}`;
+}
+
+function appendCompletionTimestamp(content: string, timestamp: string): string {
+  const formattedTimestamp = formatLocalTimestamp(timestamp);
+  if (!formattedTimestamp) return content;
+
+  const hasTrailingNewline = content.endsWith("\n");
+  const body = hasTrailingNewline ? content.slice(0, -1) : content;
+  const lines = body.split("\n");
+  const lastLine = lines.at(-1);
+  if (!lastLine?.startsWith(COMPLETION_LINE_PREFIX)) return content;
+  lines[lines.length - 1] = `${lastLine} ${formattedTimestamp}`;
+  return `${lines.join("\n")}${hasTrailingNewline ? "\n" : ""}`;
+}
+
 /** Returns the compiler-owned CLI transcript from the authoritative result. */
 export function formatCompilationOutput(event: CompilationOutputEvent): string {
   const result = event.compilation;
@@ -279,7 +304,7 @@ export function formatCompilationOutput(event: CompilationOutputEvent): string {
       ? [...result.transcript]
       : [`inf: ilic ${result.compilerVersion}`, "inf:"];
   let completionIndex = lines.findIndex((line) =>
-    line.startsWith("inf: ilic completed with "),
+    line.startsWith(COMPLETION_LINE_PREFIX),
   );
   if (completionIndex < 0) {
     if (result.diagnostics.length > 0)
@@ -300,4 +325,14 @@ export function formatCompilationOutput(event: CompilationOutputEvent): string {
     lines[completionIndex] = completionTranscriptLine(result);
   }
   return `${lines.join("\n")}\n`;
+}
+
+/** Returns the compiler transcript formatted for user-facing output panels. */
+export function formatCompilationOutputForDisplay(
+  event: CompilationOutputEvent,
+): string {
+  return appendCompletionTimestamp(
+    formatCompilationOutput(event),
+    event.timestamp,
+  );
 }
