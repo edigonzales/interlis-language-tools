@@ -27,6 +27,7 @@ import type { LanguageClientFacade } from "./common.js";
 interface ViewState {
   readonly source: vscode.Uri;
   readonly document: vscode.TextDocument;
+  readonly customDocument: vscode.CustomDocument;
   readonly panel: vscode.WebviewPanel;
   readonly controller: DiagramController;
   snapshot: DiagramSnapshotResult | null;
@@ -45,6 +46,8 @@ export interface DiagramWorkflows {
 export type StartupDocument = Pick<vscode.TextDocument, "languageId" | "uri">;
 
 export const DIAGRAM_EDITOR_VIEW_TYPE = "interlisLanguageTools.diagramEditor";
+
+type DiagramCustomDocument = vscode.CustomDocument;
 
 function settings(): DiagramSettings {
   const configuration = vscode.workspace.getConfiguration(
@@ -305,7 +308,6 @@ export function registerDiagramWorkflows(
   options: { readonly startupReady?: Promise<void> } = {},
 ): DiagramWorkflows {
   const startupReady = options.startupReady ?? Promise.resolve();
-  const views = new Map<string, ViewState>();
   const dependencyCompilations = new Set<string>();
   const initialCompilations = new Map<string, Promise<void>>();
 
@@ -353,9 +355,9 @@ export function registerDiagramWorkflows(
   ): void => {
     const rootUri = state.source.toString();
     const key = `${rootUri}\n${event.rootUri}\n${event.generation}`;
+    markStale(state, "Updating diagram after a dependency changed…");
     if (dependencyCompilations.has(key)) return;
     dependencyCompilations.add(key);
-    markStale(state, "Updating diagram after a dependency changed…");
     const request = state.refreshRequest;
     void client
       .sendRequest<CompilationResult>(InterlisProtocol.compile, {
@@ -387,7 +389,9 @@ export function registerDiagramWorkflows(
       return;
     }
     const key = uri.toString();
-    const existing = views.get(key);
+    const existing = [...views.values()].find(
+      (state) => state.source.toString() === key && !state.disposed,
+    );
     await vscode.commands.executeCommand(
       "vscode.openWith",
       uri,
@@ -401,38 +405,97 @@ export function registerDiagramWorkflows(
     if (existing && !existing.disposed) await refreshState(existing);
   };
 
-  const provider: vscode.CustomTextEditorProvider = {
-    async resolveCustomTextEditor(document, panel, token): Promise<void> {
+  const customDocuments = new Map<string, DiagramCustomDocument>();
+  const views = new Map<vscode.WebviewPanel, ViewState>();
+
+  const disposeView = (state: ViewState): void => {
+    state.disposed = true;
+    state.refreshRequest++;
+    if (views.get(state.panel) === state) views.delete(state.panel);
+  };
+
+  const provider: vscode.CustomEditorProvider<DiagramCustomDocument> = {
+    onDidChangeCustomDocument: (() => ({
+      dispose: () => undefined,
+    })) as vscode.Event<vscode.CustomDocumentEditEvent<DiagramCustomDocument>>,
+
+    openCustomDocument(uri): DiagramCustomDocument {
+      const key = uri.toString();
+      const existing = customDocuments.get(key);
+      if (existing) return existing;
+      const document: DiagramCustomDocument = {
+        uri,
+        dispose: () => {
+          if (customDocuments.get(key) !== document) return;
+          customDocuments.delete(key);
+          for (const state of [...views.values()])
+            if (state.source.toString() === key) disposeView(state);
+        },
+      };
+      customDocuments.set(key, document);
+      return document;
+    },
+
+    saveCustomDocument(): Thenable<void> {
+      return Promise.resolve();
+    },
+
+    async saveCustomDocumentAs(document, destination): Promise<void> {
+      await vscode.workspace.fs.copy(document.uri, destination, {
+        overwrite: true,
+      });
+    },
+
+    revertCustomDocument(): Thenable<void> {
+      return Promise.resolve();
+    },
+
+    backupCustomDocument(
+      document,
+      context: vscode.CustomDocumentBackupContext,
+    ): Thenable<vscode.CustomDocumentBackup> {
+      return Promise.resolve({
+        id: context.destination.toString(),
+        delete: () => undefined,
+      });
+    },
+
+    async resolveCustomEditor(document, panel, token): Promise<void> {
       if (token.isCancellationRequested) return;
-      const key = document.uri.toString();
-      const replaced = views.get(key);
-      if (replaced && replaced.panel !== panel) {
-        replaced.disposed = true;
-        replaced.refreshRequest++;
-      }
+      const sourceDocument = await vscode.workspace.openTextDocument(
+        document.uri,
+      );
+      const previous = views.get(panel);
+      if (previous) disposeView(previous);
       panel.title = `INTERLIS Diagram: ${
         document.uri.path.split("/").at(-1) ?? "model"
       }`;
       panel.webview.options = { enableScripts: true };
       const state: ViewState = {
         source: document.uri,
-        document,
+        document: sourceDocument,
+        customDocument: document,
         panel,
-        controller: replaced?.controller ?? new DiagramController(),
-        snapshot: replaced?.snapshot ?? null,
-        layout: replaced?.layout ?? null,
-        viewport: replaced?.viewport ?? null,
-        visibleViewport: replaced?.visibleViewport ?? null,
-        svg: replaced?.svg ?? "",
+        controller: new DiagramController(),
+        snapshot: null,
+        layout: null,
+        viewport: null,
+        visibleViewport: null,
+        svg: "",
         refreshRequest: 0,
         disposed: false,
       };
-      views.set(key, state);
-      panel.onDidDispose(
-        () => {
-          state.disposed = true;
-          state.refreshRequest++;
-          if (views.get(key) === state) views.delete(key);
+      views.set(panel, state);
+      panel.onDidDispose(() => disposeView(state), null, context.subscriptions);
+      panel.onDidChangeViewState?.(
+        (event) => {
+          if (
+            !event.webviewPanel.visible ||
+            state.disposed ||
+            (state.layout && state.controller.state.status === "ready")
+          )
+            return;
+          void refreshState(state);
         },
         null,
         context.subscriptions,
@@ -464,7 +527,7 @@ export function registerDiagramWorkflows(
       DIAGRAM_EDITOR_VIEW_TYPE,
       provider,
       {
-        supportsMultipleEditorsPerDocument: false,
+        supportsMultipleEditorsPerDocument: true,
         webviewOptions: { retainContextWhenHidden: true },
       },
     ),
@@ -508,7 +571,11 @@ export function registerDiagramWorkflows(
         });
     }),
     vscode.workspace.onDidChangeTextDocument((event) => {
-      if (event.document.languageId !== "interlis") return;
+      if (
+        event.document.languageId !== "interlis" ||
+        event.contentChanges.length === 0
+      )
+        return;
       const uri = event.document.uri.toString();
       for (const state of views.values())
         if (dependsOn(state, uri))

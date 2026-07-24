@@ -67,6 +67,27 @@ Its persistent context cannot currently exercise CacheStorage offline
 navigation, so that single path is covered by Chromium/Firefox while the other
 WebKit workflows remain active.
 
+## VS Code Desktop: Diagramm in einem neuen Fenster
+
+Für die Cross-Window-Synchronisation ist zusätzlich eine manuelle Abnahme in
+VS Code Desktop erforderlich. Der Diagramm-Editor ist ein read-only
+`CustomEditorProvider`; die `.ili`-Quelle bleibt im normalen Texteditor und
+wird in jedem Extension Host separat durch den LanguageClient synchronisiert.
+
+1. Eine `.ili`-Datei öffnen und das Diagramm daneben anzeigen.
+2. Den Diagramm-Editor mit **Move into New Window** in ein neues VS-Code-
+   Fenster verschieben.
+3. Die Quelle im ursprünglichen Fenster ändern und speichern. Prüfen, dass das
+   Diagramm im neuen Fenster zuerst als stale markiert und nach erfolgreicher
+   Synchronisation frisch aktualisiert wird.
+4. Einen ungültigen Save ausführen und anschliessend den Quelltext reparieren
+   und erneut speichern. Das letzte gültige SVG muss während des Fehlers
+   erhalten bleiben und danach wieder aktualisiert werden.
+5. Eine importierte Abhängigkeit ändern und speichern. Prüfen, dass das offene
+   Diagramm die Abhängigkeit neu kompiliert und anschliessend aktualisiert.
+6. Im neuen Fenster Knotennavigation, **Refresh / Auto-layout**, Zoom/Pan und
+   SVG-Export prüfen.
+
 ## Required release evidence
 
 - all local gates above pass;

@@ -8,6 +8,7 @@ interface ChangedDocumentEvent {
     readonly languageId: string;
     readonly uri: { toString(): string };
   };
+  readonly contentChanges: readonly unknown[];
 }
 const activeEditorListeners: Array<(editor: unknown) => void> = [];
 const documentChangeListeners: Array<(event: ChangedDocumentEvent) => void> =
@@ -15,15 +16,29 @@ const documentChangeListeners: Array<(event: ChangedDocumentEvent) => void> =
 const configurationChangeListeners: Array<
   (event: { affectsConfiguration(section: string): boolean }) => void
 > = [];
-let customEditorProvider:
-  | {
-      resolveCustomTextEditor(
-        document: unknown,
-        panel: unknown,
-        token: { isCancellationRequested: boolean },
-      ): Promise<void>;
-    }
-  | undefined;
+interface CustomEditorProviderMock {
+  openCustomDocument(uri: unknown, context?: unknown, token?: unknown): unknown;
+  saveCustomDocument(document: unknown, token?: unknown): Promise<void>;
+  saveCustomDocumentAs(
+    document: unknown,
+    destination: unknown,
+    token?: unknown,
+  ): Promise<void>;
+  revertCustomDocument(document: unknown, token?: unknown): Promise<void>;
+  backupCustomDocument(
+    document: unknown,
+    context: { destination: { toString(): string } },
+    token?: unknown,
+  ): Promise<{ id: string; delete(): void }>;
+  resolveCustomEditor(
+    document: unknown,
+    panel: unknown,
+    token: { isCancellationRequested: boolean },
+  ): Promise<void>;
+}
+let customEditorProvider: CustomEditorProviderMock | undefined;
+const customEditorProviders: CustomEditorProviderMock[] = [];
+const customEditorRegistrationOptions: unknown[] = [];
 const customEditorPanels = new Map<string, unknown>();
 const vscodeMock = {
   window: {
@@ -37,8 +52,14 @@ const vscodeMock = {
     ),
     createWebviewPanel: vi.fn(),
     registerCustomEditorProvider: vi.fn(
-      (_viewType: string, provider: typeof customEditorProvider) => {
+      (
+        _viewType: string,
+        provider: CustomEditorProviderMock,
+        options: unknown,
+      ) => {
         customEditorProvider = provider;
+        customEditorProviders.push(provider);
+        customEditorRegistrationOptions.push(options);
         return { dispose: vi.fn() };
       },
     ),
@@ -47,8 +68,15 @@ const vscodeMock = {
   },
   workspace: {
     getConfiguration: vi.fn(() => ({ get: configurationGet })),
-    openTextDocument: vi.fn(),
-    fs: { writeFile: vi.fn() },
+    openTextDocument: vi.fn((uri: FakeDocument["uri"]) =>
+      Promise.resolve(
+        vscodeMock.window.visibleTextEditors.find(
+          (editor) =>
+            (editor.document as FakeDocument).uri.toString() === uri.toString(),
+        )?.document ?? document(uri.toString()),
+      ),
+    ),
+    fs: { writeFile: vi.fn(), copy: vi.fn() },
     onDidChangeTextDocument: vi.fn(
       (listener: (event: ChangedDocumentEvent) => void) => {
         documentChangeListeners.push(listener);
@@ -85,7 +113,12 @@ const vscodeMock = {
         if (!source) return undefined;
         const panel = vscodeMock.window.createWebviewPanel() as unknown;
         customEditorPanels.set(key, panel);
-        await customEditorProvider.resolveCustomTextEditor(source, panel, {
+        const customDocument = customEditorProvider.openCustomDocument(
+          uri,
+          { backupId: undefined, untitledDocumentData: undefined },
+          { isCancellationRequested: false },
+        );
+        await customEditorProvider.resolveCustomEditor(customDocument, panel, {
           isCancellationRequested: false,
         });
         return undefined;
@@ -146,7 +179,7 @@ class FakeDiagramController {
     this.state = {
       status: "ready",
       snapshot,
-      message: "",
+      message: "Diagram is up to date.",
     };
     return this.state;
   }
@@ -231,6 +264,38 @@ const asStartupDocument = (value: FakeDocument): StartupDocument =>
   value as unknown as StartupDocument;
 const asDiagramUri = (value: FakeDocument["uri"]): DiagramUri =>
   value as unknown as DiagramUri;
+const customOpenContext = {
+  backupId: undefined,
+  untitledDocumentData: undefined,
+};
+const cancellationToken = { isCancellationRequested: false };
+const testPanel = (): {
+  active: boolean;
+  webview: {
+    html: string;
+    onDidReceiveMessage: ReturnType<typeof vi.fn>;
+  };
+  onDidDispose: ReturnType<typeof vi.fn>;
+  onDidChangeViewState: ReturnType<typeof vi.fn>;
+} => ({
+  active: true,
+  webview: {
+    html: "",
+    onDidReceiveMessage: vi.fn(() => ({ dispose: vi.fn() })),
+  },
+  onDidDispose: vi.fn(),
+  onDidChangeViewState: vi.fn(),
+});
+
+const snapshotResult = (uri: string, generation = 1) => ({
+  freshness: "fresh" as const,
+  generation,
+  snapshot: {
+    success: true as const,
+    documentVersions: { [uri]: generation },
+    diagram: { nodes: [], edges: [] },
+  },
+});
 
 describe("VS Code startup diagram", () => {
   beforeEach(() => {
@@ -241,6 +306,8 @@ describe("VS Code startup diagram", () => {
     documentChangeListeners.length = 0;
     configurationChangeListeners.length = 0;
     customEditorProvider = undefined;
+    customEditorProviders.length = 0;
+    customEditorRegistrationOptions.length = 0;
     customEditorPanels.clear();
     captureViewportMock.mockReset();
     restoreViewportMock.mockReset();
@@ -248,10 +315,425 @@ describe("VS Code startup diagram", () => {
     layoutAndRenderMock.mockClear();
     vscodeMock.window.showSaveDialog.mockReset();
     vscodeMock.workspace.fs.writeFile.mockReset();
+    vscodeMock.workspace.fs.copy.mockReset();
     vscodeMock.window.createWebviewPanel.mockReset();
     vscodeMock.window.registerCustomEditorProvider.mockClear();
     vscodeMock.commands.executeCommand.mockClear();
     setActiveDocument(undefined);
+  });
+
+  it("implements the read-only CustomDocument lifecycle", async () => {
+    const source = document("file:///Lifecycle.ili");
+    setActiveDocument(source);
+    const client = {
+      onNotification: vi.fn(() => ({ dispose: vi.fn() })),
+      sendRequest: vi.fn(() =>
+        Promise.resolve(snapshotResult(source.uri.toString())),
+      ),
+    } as unknown as LanguageClient;
+
+    registerDiagramWorkflows(
+      { subscriptions: [] } as unknown as ExtensionContext,
+      client,
+    );
+
+    const provider = customEditorProviders.at(-1);
+    expect(provider).toBeDefined();
+    expect(customEditorRegistrationOptions.at(-1)).toMatchObject({
+      supportsMultipleEditorsPerDocument: true,
+    });
+
+    const customDocument = provider?.openCustomDocument(
+      source.uri,
+      customOpenContext,
+      cancellationToken,
+    ) as { uri: FakeDocument["uri"]; dispose(): void };
+    expect(
+      provider?.openCustomDocument(
+        source.uri,
+        customOpenContext,
+        cancellationToken,
+      ),
+    ).toBe(customDocument);
+
+    const destination = { toString: () => "file:///Lifecycle-copy.ili" };
+    await provider?.saveCustomDocument(customDocument, cancellationToken);
+    await provider?.revertCustomDocument(customDocument, cancellationToken);
+    await provider?.saveCustomDocumentAs(
+      customDocument,
+      destination,
+      cancellationToken,
+    );
+    const backup = await provider?.backupCustomDocument(customDocument, {
+      destination,
+    });
+
+    expect(vscodeMock.workspace.fs.copy).toHaveBeenCalledWith(
+      source.uri,
+      destination,
+      { overwrite: true },
+    );
+    expect(backup?.id).toBe("file:///Lifecycle-copy.ili");
+    expect(() => backup?.delete()).not.toThrow();
+
+    const panel = testPanel();
+    await provider?.resolveCustomEditor(
+      customDocument,
+      panel,
+      cancellationToken,
+    );
+    expect(panel.webview.html).toContain('id="diagram"');
+
+    customDocument.dispose();
+    expect(
+      provider?.openCustomDocument(
+        source.uri,
+        customOpenContext,
+        cancellationToken,
+      ),
+    ).not.toBe(customDocument);
+  });
+
+  it("rehydrates two independent window workflows and updates both on saves", async () => {
+    const source = document("file:///CrossWindow.ili");
+    const uri = source.uri.toString();
+    setActiveDocument(source);
+
+    const workflow = () => {
+      const notifications = new Map<string, (params: unknown) => void>();
+      let generation = 1;
+      const sendRequest = vi.fn((method: string) =>
+        Promise.resolve(
+          method === "interlis/diagramSnapshot"
+            ? snapshotResult(uri, generation)
+            : { success: true },
+        ),
+      );
+      const client = {
+        sendRequest,
+        onNotification: vi.fn(
+          (method: string, handler: (params: unknown) => void) => {
+            notifications.set(method, handler);
+            return { dispose: vi.fn() };
+          },
+        ),
+      } as unknown as LanguageClient;
+      registerDiagramWorkflows(
+        { subscriptions: [] } as unknown as ExtensionContext,
+        client,
+      );
+      return {
+        client,
+        notifications,
+        sendRequest,
+        setGeneration(value: number): void {
+          generation = value;
+        },
+      };
+    };
+
+    const first = workflow();
+    const providerA = customEditorProviders.at(-1);
+    const documentA = providerA?.openCustomDocument(
+      source.uri,
+      customOpenContext,
+      cancellationToken,
+    );
+    const panelA = testPanel();
+    await providerA?.resolveCustomEditor(documentA, panelA, cancellationToken);
+
+    const second = workflow();
+    const providerB = customEditorProviders.at(-1);
+    const documentB = providerB?.openCustomDocument(
+      source.uri,
+      customOpenContext,
+      cancellationToken,
+    );
+    const panelB = testPanel();
+    await providerB?.resolveCustomEditor(documentB, panelB, cancellationToken);
+
+    expect(documentB).not.toBe(documentA);
+    expect(first.sendRequest).toHaveBeenCalledWith("interlis/diagramSnapshot", {
+      uri,
+    });
+    expect(second.sendRequest).toHaveBeenCalledWith(
+      "interlis/diagramSnapshot",
+      { uri },
+    );
+    expect(panelA.webview.html).toContain('id="diagram"');
+    expect(panelB.webview.html).toContain('id="diagram"');
+    expect(panelA.onDidChangeViewState).toHaveBeenCalledOnce();
+    expect(panelB.onDidChangeViewState).toHaveBeenCalledOnce();
+
+    const saved = {
+      runId: 2,
+      trigger: "save",
+      rootUri: uri,
+      documentVersion: 2,
+      generation: 2,
+      success: true,
+      freshness: "fresh",
+      sourceUris: [uri],
+    };
+    first.setGeneration(2);
+    second.setGeneration(2);
+    first.notifications.get("interlis/semanticSnapshotChanged")?.(saved);
+    second.notifications.get("interlis/semanticSnapshotChanged")?.(saved);
+    await vi.waitFor(() => {
+      expect(first.sendRequest).toHaveBeenCalledTimes(2);
+      expect(second.sendRequest).toHaveBeenCalledTimes(2);
+    });
+
+    const invalid = { ...saved, runId: 3, generation: 3, success: false };
+    first.notifications.get("interlis/semanticSnapshotChanged")?.(invalid);
+    second.notifications.get("interlis/semanticSnapshotChanged")?.(invalid);
+    expect(panelA.webview.html).toContain('id="diagram"');
+    expect(panelB.webview.html).toContain('id="diagram"');
+    expect(panelA.webview.html).toContain("current model contains errors");
+    expect(panelB.webview.html).toContain("current model contains errors");
+  });
+
+  it("updates all same-URI panels while preserving each panel viewport", async () => {
+    const source = document("file:///MultiplePanels.ili");
+    const uri = source.uri.toString();
+    setActiveDocument(source);
+    const notifications = new Map<string, (params: unknown) => void>();
+    let generation = 1;
+    const sendRequest = vi.fn((method: string) =>
+      Promise.resolve(
+        method === "interlis/diagramSnapshot"
+          ? snapshotResult(uri, generation)
+          : { success: true },
+      ),
+    );
+    const client = {
+      sendRequest,
+      onNotification: vi.fn(
+        (method: string, handler: (params: unknown) => void) => {
+          notifications.set(method, handler);
+          return { dispose: vi.fn() };
+        },
+      ),
+    } as unknown as LanguageClient;
+    const providerContext = {
+      subscriptions: [],
+    } as unknown as ExtensionContext;
+    registerDiagramWorkflows(providerContext, client);
+    const provider = customEditorProviders.at(-1);
+    const customDocument = provider?.openCustomDocument(
+      source.uri,
+      customOpenContext,
+      cancellationToken,
+    );
+    const panelA = testPanel();
+    const panelB = testPanel();
+    await provider?.resolveCustomEditor(
+      customDocument,
+      panelA,
+      cancellationToken,
+    );
+    await provider?.resolveCustomEditor(
+      customDocument,
+      panelB,
+      cancellationToken,
+    );
+
+    captureViewportMock
+      .mockReturnValueOnce({
+        anchorId: "panel-a",
+        zoom: 1.5,
+        offsetX: 10,
+        offsetY: 20,
+      })
+      .mockReturnValueOnce({
+        anchorId: "panel-b",
+        zoom: 2,
+        offsetX: 30,
+        offsetY: 40,
+      });
+    restoreViewportMock.mockImplementation(
+      (
+        _layout: unknown,
+        saved: { zoom: number; offsetX: number; offsetY: number },
+        size: { width: number; height: number },
+      ) => ({
+        zoom: saved.zoom,
+        scrollX: saved.offsetX,
+        scrollY: saved.offsetY,
+        width: size.width,
+        height: size.height,
+      }),
+    );
+    const viewportA = {
+      zoom: 1.5,
+      scrollX: 10,
+      scrollY: 20,
+      width: 800,
+      height: 600,
+    };
+    const viewportB = {
+      zoom: 2,
+      scrollX: 30,
+      scrollY: 40,
+      width: 900,
+      height: 700,
+    };
+    const receiveA = panelA.webview.onDidReceiveMessage.mock
+      .calls[0]?.[0] as (message: { type?: string; value?: unknown }) => void;
+    const receiveB = panelB.webview.onDidReceiveMessage.mock
+      .calls[0]?.[0] as (message: { type?: string; value?: unknown }) => void;
+    receiveA({ type: "viewport", value: viewportA });
+    receiveB({ type: "viewport", value: viewportB });
+
+    expect(captureViewportMock).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      viewportA,
+    );
+    expect(captureViewportMock).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      viewportB,
+    );
+
+    generation = 2;
+    notifications.get("interlis/semanticSnapshotChanged")?.({
+      runId: 2,
+      trigger: "save",
+      rootUri: uri,
+      documentVersion: 2,
+      generation,
+      success: true,
+      freshness: "fresh",
+      sourceUris: [uri],
+    });
+    await vi.waitFor(() => expect(sendRequest).toHaveBeenCalledTimes(4));
+
+    expect(panelA.webview.html).toContain('id="diagram"');
+    expect(panelB.webview.html).toContain('id="diagram"');
+    expect(panelA.webview.html).toContain("initialScrollX=10");
+    expect(panelB.webview.html).toContain("initialScrollX=30");
+    expect(restoreViewportMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ anchorId: "panel-a" }),
+      expect.anything(),
+    );
+    expect(restoreViewportMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ anchorId: "panel-b" }),
+      expect.anything(),
+    );
+    expect(panelA.onDidChangeViewState).toHaveBeenCalledOnce();
+    expect(panelB.onDidChangeViewState).toHaveBeenCalledOnce();
+  });
+
+  it("ignores metadata-only document changes while isolating real edits", async () => {
+    const first = document("file:///First.ili");
+    const second = document("file:///Second.ili");
+    vscodeMock.window.activeTextEditor = { document: first };
+    vscodeMock.window.visibleTextEditors = [
+      { document: first },
+      { document: second },
+    ];
+    const panelA = testPanel();
+    const panelB = testPanel();
+    vscodeMock.window.createWebviewPanel
+      .mockReturnValueOnce(panelA)
+      .mockReturnValueOnce(panelB);
+    const sendRequest = vi.fn((_method: string, params: { uri: string }) =>
+      Promise.resolve(snapshotResult(params.uri)),
+    );
+    const workflows = registerDiagramWorkflows(
+      { subscriptions: [] } as unknown as ExtensionContext,
+      {
+        sendRequest,
+        onNotification: vi.fn(() => ({ dispose: vi.fn() })),
+      } as unknown as LanguageClient,
+    );
+
+    await workflows.open(asDiagramUri(first.uri));
+    await workflows.open(asDiagramUri(second.uri));
+    expect(panelA.webview.html).toContain("Diagram is up to date.");
+    expect(panelB.webview.html).toContain("Diagram is up to date.");
+
+    activeEditorListeners.at(-1)?.(undefined);
+    activeEditorListeners.at(-1)?.({ document: first });
+    await vi.waitFor(() => expect(sendRequest).toHaveBeenCalledTimes(3));
+    documentChangeListeners.at(-1)?.({
+      document: first,
+      contentChanges: [],
+    });
+
+    expect(panelA.webview.html).toContain("Diagram is up to date.");
+    expect(panelB.webview.html).toContain("Diagram is up to date.");
+
+    documentChangeListeners.at(-1)?.({
+      document: first,
+      contentChanges: [{ text: "MODEL FirstChanged; END FirstChanged." }],
+    });
+
+    expect(panelA.webview.html).toContain(
+      "Showing the last valid diagram; save to update it.",
+    );
+    expect(panelB.webview.html).toContain("Diagram is up to date.");
+  });
+
+  it("does not let a disposed window request overwrite a rehydrated panel", async () => {
+    const source = document("file:///Moved.ili");
+    const uri = source.uri.toString();
+    setActiveDocument(source);
+    let releaseFirst!: (value: unknown) => void;
+    const pendingFirst = new Promise((resolve) => {
+      releaseFirst = resolve;
+    });
+    const sendRequestA = vi.fn(() => pendingFirst);
+    const clientA = {
+      sendRequest: sendRequestA,
+      onNotification: vi.fn(() => ({ dispose: vi.fn() })),
+    } as unknown as LanguageClient;
+    registerDiagramWorkflows(
+      { subscriptions: [] } as unknown as ExtensionContext,
+      clientA,
+    );
+    const providerA = customEditorProviders.at(-1);
+    const documentA = providerA?.openCustomDocument(
+      source.uri,
+      customOpenContext,
+      cancellationToken,
+    );
+    const panelA = testPanel();
+    const resolvingA = providerA?.resolveCustomEditor(
+      documentA,
+      panelA,
+      cancellationToken,
+    );
+    await vi.waitFor(() => expect(sendRequestA).toHaveBeenCalledOnce());
+
+    const clientB = {
+      sendRequest: vi.fn(() => Promise.resolve(snapshotResult(uri, 2))),
+      onNotification: vi.fn(() => ({ dispose: vi.fn() })),
+    } as unknown as LanguageClient;
+    registerDiagramWorkflows(
+      { subscriptions: [] } as unknown as ExtensionContext,
+      clientB,
+    );
+    const providerB = customEditorProviders.at(-1);
+    const documentB = providerB?.openCustomDocument(
+      source.uri,
+      customOpenContext,
+      cancellationToken,
+    );
+    const panelB = testPanel();
+    await providerB?.resolveCustomEditor(documentB, panelB, cancellationToken);
+    expect(panelB.webview.html).toContain('id="diagram"');
+
+    const disposeA = panelA.onDidDispose.mock.calls[0]?.[0] as () => void;
+    disposeA();
+    releaseFirst(snapshotResult(uri, 1));
+    await resolvingA;
+
+    expect(panelB.webview.html).toContain('id="diagram"');
+    expect(panelB.webview.html).not.toContain("No semantic snapshot");
   });
 
   it("opens the captured active INTERLIS document after startup is ready", async () => {

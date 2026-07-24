@@ -97,9 +97,15 @@ lebenden Outline des Language Service:
 4. Request-Cancellation liefert ebenfalls die aktuelle Projektion statt einer
    leeren Liste.
 
-Das Diagramm ist als optionaler Custom Text Editor derselben `.ili`-URI
-registriert. Beim Fokuswechsel zwischen Text und Diagramm bleibt deshalb der
-Dokumentkontext erhalten und VS Code behält die zugehörige Outline.
+Das Diagramm ist als optionaler `CustomEditorProvider` mit eigenem
+`CustomDocument` für dieselbe `.ili`-URI registriert. Das Custom Document
+enthält nur URI und Lifecycle; die Quelle bleibt ein normales
+`vscode.TextDocument` und wird vom LanguageClient synchronisiert. Beim
+Fokuswechsel zwischen Text und Diagramm bleibt deshalb der Dokumentkontext
+erhalten und VS Code behält die zugehörige Outline. Pro Extension Host werden
+Custom Document und Diagramm-Panels aus der URI und dem aktuellen
+`TextDocument` rehydriert; ein anderer VS-Code-Host darf keinen Zustand des
+ursprünglichen Fensters voraussetzen.
 
 ### Diagramm
 
@@ -146,7 +152,11 @@ werden keine Panels als Nebeneffekt eines Saves geöffnet; der manuelle Befehl
 
 Unit- und Vertragstests decken Root-Isolation, Versionsvektoren,
 Watcher-Echos, Cancellation, ungültige Saves, abhängige Diagramme,
-Deduplizierung sowie überholte Requests ab. Ein Bundle-Integrationstest führt
-mit dem realen WASM-Compiler einen Rename durch, wendet beide INTERLIS-
-Namensstellen an und prüft anschliessend einen Document-Symbol-Request in der
-oben beschriebenen VS-Code-Reihenfolge.
+Deduplizierung sowie überholte Requests ab. Die Diagrammtests decken
+zusätzlich den `CustomDocument`-Lifecycle, unabhängige Fenster-Workflows,
+mehrere Panels pro URI, eigene Viewports und die Rehydrierung nach einem
+abgebrochenen alten Refresh ab. Die Desktop-Abnahme für „Move into New
+Window“ ist in [`docs/testing.md`](../testing.md) beschrieben. Ein
+Bundle-Integrationstest führt mit dem realen WASM-Compiler einen Rename durch,
+wendet beide INTERLIS-Namensstellen an und prüft anschliessend einen
+Document-Symbol-Request in der oben beschriebenen VS-Code-Reihenfolge.
