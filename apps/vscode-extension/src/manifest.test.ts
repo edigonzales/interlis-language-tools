@@ -45,5 +45,10 @@ describe("VS Code extension manifest", () => {
         "interlisLanguageTools.autoShowOutputOnStart"
       ],
     ).toBeDefined();
+    expect(
+      manifest.contributes.configuration.properties[
+        "interlisLanguageTools.diagram.rendering.target"
+      ],
+    ).toMatchObject({ default: "STANDARD" });
   });
 });

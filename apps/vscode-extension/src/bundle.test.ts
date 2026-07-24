@@ -1,9 +1,16 @@
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { readFile, stat } from "node:fs/promises";
-import { resolve } from "node:path";
+import { createRequire } from "node:module";
+import { dirname, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 
 const dist = resolve(import.meta.dirname, "../dist");
+const diagramRequire = createRequire(
+  resolve(import.meta.dirname, "../../../packages/diagram/package.json"),
+);
+const libavoidNodeModule = diagramRequire.resolve("libavoid-js");
+const libavoidBrowserModule = resolve(dirname(libavoidNodeModule), "index.js");
 
 const readBundle = (name: string): Promise<string> =>
   readFile(resolve(dist, name), "utf8");
@@ -171,6 +178,44 @@ describe("VS Code extension bundles", () => {
     const helper = await stat(resolve(dist, "terminateProcess.sh"));
     expect(helper.isFile()).toBe(true);
     expect(helper.mode & 0o111).not.toBe(0);
+  });
+
+  it("packages the Inkscape-compatible router WASM and license", async () => {
+    const [wasm, license, extensionNode, extensionBrowser] = await Promise.all([
+      stat(resolve(dist, "libavoid.wasm")),
+      stat(resolve(dist, "libavoid-LICENSE.txt")),
+      readBundle("extension-node.js"),
+      readBundle("extension-browser.js"),
+    ]);
+    expect(wasm.size).toBeGreaterThan(400_000);
+    expect(license.size).toBeGreaterThan(20_000);
+    expect(extensionNode).toContain('locateFile("libavoid.wasm"');
+    expect(extensionBrowser).toContain('locateFile("libavoid.wasm"');
+  });
+
+  it("loads the packaged libavoid WASM through Node and browser runtimes", () => {
+    const wasm = resolve(dist, "libavoid.wasm");
+    const smoke = `
+      const { AvoidLib } = await import(${JSON.stringify(pathToFileURL(libavoidNodeModule).href)});
+      await AvoidLib.load(${JSON.stringify(wasm)});
+      const Avoid = AvoidLib.getInstance();
+      const router = new Avoid.Router(3);
+      router.delete();
+    `;
+    execFileSync(process.execPath, ["--input-type=module", "-e", smoke]);
+
+    const browserSmoke = `
+      import { readFileSync } from "node:fs";
+      globalThis.window = globalThis;
+      globalThis.location = { href: "http://localhost/" };
+      const { AvoidLib } = await import(${JSON.stringify(pathToFileURL(libavoidBrowserModule).href)});
+      const binary = readFileSync(${JSON.stringify(wasm)});
+      await AvoidLib.load("data:application/wasm;base64," + binary.toString("base64"));
+      const Avoid = AvoidLib.getInstance();
+      const router = new Avoid.Router(3);
+      router.delete();
+    `;
+    execFileSync(process.execPath, ["--input-type=module", "-e", browserSmoke]);
   });
 
   it("keeps real WASM document symbols synchronized across rename and save", async () => {

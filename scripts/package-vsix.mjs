@@ -42,6 +42,8 @@ for (const file of [
   "extension/dist/compiler-worker-node.js",
   "extension/dist/compiler-worker-browser.js",
   "extension/dist/ilic.wasm",
+  "extension/dist/libavoid.wasm",
+  "extension/dist/libavoid-LICENSE.txt",
   "extension/dist/terminateProcess.sh",
   "extension/images/ililogo.png",
 ])

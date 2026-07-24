@@ -214,6 +214,19 @@
           "default": "ORTHOGONAL",
           "markdownDescription": "ELK routing style used for UML connections."
         },
+        "interlisLanguageTools.diagram.rendering.target": {
+          "type": "string",
+          "enum": [
+            "STANDARD",
+            "INKSCAPE"
+          ],
+          "enumDescriptions": [
+            "Render the original ELK geometry and export a static SVG.",
+            "Route orthogonal and polyline connections with libavoid and export live Inkscape connectors. SPLINES remain static."
+          ],
+          "default": "STANDARD",
+          "markdownDescription": "Rendering target used by the VS Code preview and SVG export."
+        },
         "interlisLanguageTools.diagram.rendering.edgeCrossings": {
           "type": "string",
           "enum": [

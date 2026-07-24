@@ -110,9 +110,16 @@ const doMock = (
 
 const restoreViewportMock = vi.fn();
 const captureViewportMock = vi.fn();
-const renderSvgMock = vi.fn(() => '<svg id="exported"></svg>');
-const layoutAndRenderMock = vi.fn(() =>
-  Promise.resolve({ layout: {}, svg: '<svg id="diagram"></svg>' }),
+const renderSvgViewportMock = vi.fn(() => '<svg id="visible"></svg>');
+const layoutAndRenderMock = vi.fn(
+  (_projection?: unknown, _settings?: unknown) => {
+    void _projection;
+    void _settings;
+    return Promise.resolve({
+      layout: {},
+      svg: '<svg id="diagram"></svg>',
+    });
+  },
 );
 
 class FakeDiagramController {
@@ -159,6 +166,7 @@ doMock(
     defaultDiagramSettings: {
       nodePlacement: "BRANDES_KOEPF",
       edgeRouting: "ORTHOGONAL",
+      renderingTarget: "STANDARD",
       edgeCrossingStyle: "GAPS",
       attributeMode: "OWN",
       deemphasizeAbstractTypes: true,
@@ -167,7 +175,7 @@ doMock(
       showLocalEnumerationValues: true,
     },
     layoutAndRenderDiagram: layoutAndRenderMock,
-    renderSvg: renderSvgMock,
+    renderSvgViewport: renderSvgViewportMock,
     restoreViewport: restoreViewportMock,
     sourceLocationForNode: vi.fn(),
   }),
@@ -236,7 +244,7 @@ describe("VS Code startup diagram", () => {
     customEditorPanels.clear();
     captureViewportMock.mockReset();
     restoreViewportMock.mockReset();
-    renderSvgMock.mockClear();
+    renderSvgViewportMock.mockClear();
     layoutAndRenderMock.mockClear();
     vscodeMock.window.showSaveDialog.mockReset();
     vscodeMock.workspace.fs.writeFile.mockReset();
@@ -554,6 +562,9 @@ describe("VS Code startup diagram", () => {
     );
     await workflows.open(asDiagramUri(active.uri));
 
+    configurationGet.mockImplementation((key: string, defaultValue: unknown) =>
+      key === "diagram.rendering.target" ? "INKSCAPE" : defaultValue,
+    );
     configurationChangeListeners.at(-1)?.({
       affectsConfiguration: (section) =>
         section === "interlisLanguageTools.diagram",
@@ -563,6 +574,9 @@ describe("VS Code startup diagram", () => {
       expect(layoutAndRenderMock).toHaveBeenCalledTimes(2),
     );
     expect(sendRequest).toHaveBeenCalledTimes(1);
+    expect(layoutAndRenderMock.mock.calls.at(-1)?.[1]).toMatchObject({
+      renderingTarget: "INKSCAPE",
+    });
   });
 
   it("restores the saved zoom and position when the diagram is refreshed", async () => {
@@ -699,11 +713,12 @@ describe("VS Code startup diagram", () => {
     await vi.waitFor(() =>
       expect(vscodeMock.workspace.fs.writeFile).toHaveBeenCalledTimes(1),
     );
-    expect(renderSvgMock).toHaveBeenLastCalledWith(
-      {},
-      expect.any(Object),
-      undefined,
-    );
+    expect(renderSvgViewportMock).not.toHaveBeenCalled();
+    expect(
+      new TextDecoder().decode(
+        vscodeMock.workspace.fs.writeFile.mock.calls[0]?.[1] as Uint8Array,
+      ),
+    ).toBe('<svg id="diagram"></svg>');
 
     const viewport = {
       zoom: 2,
@@ -716,11 +731,15 @@ describe("VS Code startup diagram", () => {
     await vi.waitFor(() =>
       expect(vscodeMock.workspace.fs.writeFile).toHaveBeenCalledTimes(2),
     );
-    expect(renderSvgMock).toHaveBeenLastCalledWith(
-      {},
-      expect.any(Object),
+    expect(renderSvgViewportMock).toHaveBeenLastCalledWith(
+      '<svg id="diagram"></svg>',
       viewport,
     );
+    expect(
+      new TextDecoder().decode(
+        vscodeMock.workspace.fs.writeFile.mock.calls[1]?.[1] as Uint8Array,
+      ),
+    ).toBe('<svg id="visible"></svg>');
     expect(panel.webview.html).toContain("export-visible");
     expect(panel.webview.html).toContain(
       "Math.min((viewport.clientWidth-padding)/baseWidth",

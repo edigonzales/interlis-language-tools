@@ -40,6 +40,7 @@
   "dependencies": {
     "@ilic/language-service": "workspace:*",
     "elkjs": "^0.11.0",
+    "libavoid-js": "0.5.0-beta.5",
     "sprotty": "^1.4.0",
     "sprotty-protocol": "^1.4.0"
   },

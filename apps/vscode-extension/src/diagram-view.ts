@@ -4,7 +4,7 @@ import {
   captureViewport,
   defaultDiagramSettings,
   layoutAndRenderDiagram,
-  renderSvg,
+  renderSvgViewport,
   restoreViewport,
   sourceLocationForNode,
 } from "@ilic/diagram";
@@ -59,6 +59,10 @@ function settings(): DiagramSettings {
     edgeRouting: configuration.get<DiagramSettings["edgeRouting"]>(
       "diagram.layout.edgeRouting",
       "ORTHOGONAL",
+    ),
+    renderingTarget: configuration.get<DiagramSettings["renderingTarget"]>(
+      "diagram.rendering.target",
+      "STANDARD",
     ),
     edgeCrossingStyle: configuration.get<DiagramSettings["edgeCrossingStyle"]>(
       "diagram.rendering.edgeCrossings",
@@ -284,7 +288,8 @@ async function exportDiagram(
     saveLabel: "Export INTERLIS diagram",
   });
   if (!target) return;
-  const content = renderSvg(state.layout, settings(), viewport ?? undefined);
+  const content =
+    visible && viewport ? renderSvgViewport(state.svg, viewport) : state.svg;
   await vscode.workspace.fs.writeFile(
     target,
     new TextEncoder().encode(content),

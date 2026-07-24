@@ -76,6 +76,9 @@ importers:
       elkjs:
         specifier: ^0.11.0
         version: 0.11.1
+      libavoid-js:
+        specifier: 0.5.0-beta.5
+        version: 0.5.0-beta.5
       sprotty:
         specifier: ^1.4.0
         version: 1.4.0(reflect-metadata@0.2.2)
@@ -1775,6 +1778,9 @@ packages:
   levn@0.4.1:
     resolution: {integrity: sha512-+bT2uH4E5LGE7h/n3evcS/sQlJXCpIp6ym8OWJ5eV6+67Dsql/LaaT7qJBAt2rzfoa/5QBGBhxDix1dMt2kQKQ==}
     engines: {node: '>= 0.8.0'}
+
+  libavoid-js@0.5.0-beta.5:
+    resolution: {integrity: sha512-jHkn6A10815TgFhZ1paUD/NDnQkg4C66qJc2Juj1NpmO/+QXnJ4UjIdKQarkXLmI/QgXhEO3RWDxMi3i+uHPwA==}
 
   lie@3.3.0:
     resolution: {integrity: sha512-UaiMJzeWRlEujzAuw5LokY1L5ecNQYZKfmyZ9L7wDHb/p5etKaxXhohBcrw0EYby+G/NA52vRSN4N39dxHAIwQ==}
@@ -4527,6 +4533,8 @@ snapshots:
     dependencies:
       prelude-ls: 1.2.1
       type-check: 0.4.0
+
+  libavoid-js@0.5.0-beta.5: {}
 
   lie@3.3.0:
     dependencies:

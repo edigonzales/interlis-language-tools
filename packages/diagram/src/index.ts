@@ -7,8 +7,10 @@ import type {
   SourceRange,
 } from "@ilic/language-service";
 import type { SEdge, SModelElement, SModelRoot, SNode } from "sprotty-protocol";
+import { routeWithLibavoid } from "./libavoid-router.js";
 
 export type EdgeRouting = "ORTHOGONAL" | "POLYLINE" | "SPLINES";
+export type RenderingTarget = "STANDARD" | "INKSCAPE";
 export type NodePlacement =
   | "SIMPLE"
   | "INTERACTIVE"
@@ -21,6 +23,7 @@ export type AttributeMode = "OWN" | "NONE" | "OWN_AND_INHERITED";
 export interface DiagramSettings {
   readonly nodePlacement: NodePlacement;
   readonly edgeRouting: EdgeRouting;
+  readonly renderingTarget: RenderingTarget;
   readonly edgeCrossingStyle: EdgeCrossingStyle;
   readonly attributeMode: AttributeMode;
   readonly deemphasizeAbstractTypes: boolean;
@@ -32,6 +35,7 @@ export interface DiagramSettings {
 export const defaultDiagramSettings: DiagramSettings = {
   nodePlacement: "BRANDES_KOEPF",
   edgeRouting: "ORTHOGONAL",
+  renderingTarget: "STANDARD",
   edgeCrossingStyle: "GAPS",
   attributeMode: "OWN",
   deemphasizeAbstractTypes: true,
@@ -57,6 +61,8 @@ export interface LayoutEdge {
   readonly points: readonly { x: number; y: number }[];
   readonly sections: readonly LayoutEdgeSection[];
   readonly labels: readonly LayoutLabel[];
+  readonly routing: EdgeRouting;
+  readonly routeKind: "STATIC" | "INKSCAPE_POLYLINE" | "INKSCAPE_ORTHOGONAL";
   readonly source: DiagramEdge;
 }
 
@@ -82,6 +88,7 @@ export interface LayoutLabel {
 export interface LayoutDiagram {
   readonly width: number;
   readonly height: number;
+  readonly renderingTarget: RenderingTarget;
   readonly nodes: readonly LayoutNode[];
   readonly edges: readonly LayoutEdge[];
 }
@@ -392,6 +399,8 @@ export async function layoutDiagram(
         points,
         sections,
         labels,
+        routing: settings.edgeRouting,
+        routeKind: "STATIC",
         source,
       });
     }
@@ -447,12 +456,17 @@ export async function layoutDiagram(
         }
       : edge;
   });
-  return {
+  const layout: LayoutDiagram = {
     width: Math.max(1, graph.width ?? 0),
     height: Math.max(1, graph.height ?? 0),
+    renderingTarget: settings.renderingTarget,
     nodes,
     edges: completedEdges,
   };
+  return settings.renderingTarget === "INKSCAPE" &&
+    settings.edgeRouting !== "SPLINES"
+    ? routeLayoutWithLibavoid(layout, settings)
+    : layout;
 }
 
 export function toSprottyModel(layout: LayoutDiagram): SModelRoot {
@@ -669,6 +683,144 @@ const pointOnPolyline = (
   return { x: point.x, y: point.y, nx: 0, ny: -1 };
 };
 
+const labelsOnRoute = (
+  edge: LayoutEdge,
+  settings: DiagramSettings,
+): readonly LayoutLabel[] =>
+  visibleEdgeLabelSpecs(edge.source, settings).map((spec) => {
+    const fraction =
+      spec.kind === "association"
+        ? 0.5
+        : spec.kind === "sourceCardinality"
+          ? 0.12
+          : 0.88;
+    const point = pointOnPolyline(edge.points, fraction);
+    const offset = spec.kind === "association" ? 10 : 12;
+    const size = edgeLabelSize(spec.text);
+    return {
+      id: spec.id,
+      kind: spec.kind,
+      text: spec.text,
+      x: point.x + point.nx * offset - size.width / 2,
+      y: point.y + point.ny * offset - size.height / 2,
+      width: size.width,
+      height: size.height,
+    };
+  });
+
+const translateLayout = (
+  layout: LayoutDiagram,
+  offsetX: number,
+  offsetY: number,
+  width: number,
+  height: number,
+): LayoutDiagram => ({
+  ...layout,
+  width,
+  height,
+  nodes: layout.nodes.map((node) => ({
+    ...node,
+    x: node.x + offsetX,
+    y: node.y + offsetY,
+  })),
+  edges: layout.edges.map((edge) => ({
+    ...edge,
+    points: edge.points.map((point) => ({
+      x: point.x + offsetX,
+      y: point.y + offsetY,
+    })),
+    sections: edge.sections.map((section) => ({
+      startPoint: {
+        x: section.startPoint.x + offsetX,
+        y: section.startPoint.y + offsetY,
+      },
+      bendPoints: section.bendPoints.map((point) => ({
+        x: point.x + offsetX,
+        y: point.y + offsetY,
+      })),
+      endPoint: {
+        x: section.endPoint.x + offsetX,
+        y: section.endPoint.y + offsetY,
+      },
+    })),
+    labels: edge.labels.map((label) => ({
+      ...label,
+      x: label.x + offsetX,
+      y: label.y + offsetY,
+    })),
+  })),
+});
+
+const fitLayoutBounds = (layout: LayoutDiagram): LayoutDiagram => {
+  const xBounds = [
+    ...layout.nodes.flatMap((node) => [node.x, node.x + node.width]),
+    ...layout.edges.flatMap((edge) => edge.points.map((point) => point.x)),
+    ...layout.edges.flatMap((edge) =>
+      edge.labels.flatMap((label) => [label.x, label.x + label.width]),
+    ),
+  ];
+  const yBounds = [
+    ...layout.nodes.flatMap((node) => [node.y, node.y + node.height]),
+    ...layout.edges.flatMap((edge) => edge.points.map((point) => point.y)),
+    ...layout.edges.flatMap((edge) =>
+      edge.labels.flatMap((label) => [label.y, label.y + label.height]),
+    ),
+  ];
+  const minimumX = Math.min(0, ...xBounds);
+  const minimumY = Math.min(0, ...yBounds);
+  const maximumX = Math.max(layout.width, ...xBounds);
+  const maximumY = Math.max(layout.height, ...yBounds);
+  const offsetX = minimumX < 0 ? 10 - minimumX : 0;
+  const offsetY = minimumY < 0 ? 10 - minimumY : 0;
+  const width = Math.max(1, maximumX + offsetX + 10);
+  const height = Math.max(1, maximumY + offsetY + 10);
+  return translateLayout(layout, offsetX, offsetY, width, height);
+};
+
+const routeLayoutWithLibavoid = async (
+  layout: LayoutDiagram,
+  settings: DiagramSettings,
+): Promise<LayoutDiagram> => {
+  if (settings.edgeRouting === "SPLINES") return layout;
+  const routes = await routeWithLibavoid(
+    layout.nodes.map((node) => ({
+      ...node,
+      obstacle: !isContainerNode(node.source),
+    })),
+    layout.edges.map((edge) => ({
+      id: edge.id,
+      sourceId: edge.sourceId,
+      targetId: edge.targetId,
+    })),
+    settings.edgeRouting,
+  );
+  const edges = layout.edges.map((edge): LayoutEdge => {
+    const points = routes.get(edge.id);
+    if (!points)
+      throw new Error(
+        `The Inkscape-compatible router did not return edge ${edge.id}.`,
+      );
+    const routed: LayoutEdge = {
+      ...edge,
+      points,
+      sections: [
+        {
+          startPoint: points[0]!,
+          bendPoints: points.slice(1, -1),
+          endPoint: points.at(-1)!,
+        },
+      ],
+      labels: [],
+      routeKind:
+        settings.edgeRouting === "ORTHOGONAL"
+          ? "INKSCAPE_ORTHOGONAL"
+          : "INKSCAPE_POLYLINE",
+    };
+    return { ...routed, labels: labelsOnRoute(routed, settings) };
+  });
+  return fitLayoutBounds({ ...layout, edges });
+};
+
 const effectiveSections = (edge: LayoutEdge): readonly LayoutEdgeSection[] => {
   if (edge.sections.length > 0) return edge.sections;
   if (edge.points.length < 2) return [];
@@ -718,8 +870,8 @@ const splineSectionData = (section: LayoutEdgeSection): string => {
   return result;
 };
 
-const edgePathData = (edge: LayoutEdge, routing: EdgeRouting): string =>
-  routing === "SPLINES"
+const edgePathData = (edge: LayoutEdge): string =>
+  edge.routing === "SPLINES"
     ? effectiveSections(edge).map(splineSectionData).join(" ")
     : straightPathData(edge);
 
@@ -787,23 +939,22 @@ const edgeGaps = (
   layout: LayoutDiagram,
   settings: DiagramSettings,
 ): ReadonlyMap<string, readonly { x: number; y: number }[]> => {
-  if (
-    settings.edgeCrossingStyle !== "GAPS" ||
-    settings.edgeRouting === "SPLINES"
-  )
-    return new Map();
+  if (settings.edgeCrossingStyle !== "GAPS") return new Map();
+  const straightEdges = layout.edges.filter(
+    (edge) => edge.routing !== "SPLINES",
+  );
   const segmentsByEdge = new Map(
-    layout.edges.map((edge) => [edge.id, straightSegments(edge)]),
+    straightEdges.map((edge) => [edge.id, straightSegments(edge)]),
   );
   const gaps = new Map<string, { x: number; y: number }[]>();
-  for (let firstIndex = 0; firstIndex < layout.edges.length; firstIndex++) {
-    const firstEdge = layout.edges[firstIndex]!;
+  for (let firstIndex = 0; firstIndex < straightEdges.length; firstIndex++) {
+    const firstEdge = straightEdges[firstIndex]!;
     for (
       let secondIndex = firstIndex + 1;
-      secondIndex < layout.edges.length;
+      secondIndex < straightEdges.length;
       secondIndex++
     ) {
-      const secondEdge = layout.edges[secondIndex]!;
+      const secondEdge = straightEdges[secondIndex]!;
       for (const first of segmentsByEdge.get(firstEdge.id) ?? [])
         for (const second of segmentsByEdge.get(secondEdge.id) ?? []) {
           const intersection = properIntersection(first, second);
@@ -843,24 +994,9 @@ const resolvedEdgeLabels = (
   visibleEdgeLabelSpecs(edge.source, settings).map((spec) => {
     const positioned = edge.labels.find((label) => label.kind === spec.kind);
     if (positioned) return positioned;
-    const fraction =
-      spec.kind === "association"
-        ? 0.5
-        : spec.kind === "sourceCardinality"
-          ? 0.12
-          : 0.88;
-    const point = pointOnPolyline(edge.points, fraction);
-    const offset = spec.kind === "association" ? 10 : 12;
-    const size = edgeLabelSize(spec.text);
-    return {
-      id: spec.id,
-      kind: spec.kind,
-      text: spec.text,
-      x: point.x + point.nx * offset - size.width / 2,
-      y: point.y + point.ny * offset - size.height / 2,
-      width: size.width,
-      height: size.height,
-    };
+    return labelsOnRoute(edge, settings).find(
+      (label) => label.kind === spec.kind,
+    )!;
   });
 
 export function renderSvg(
@@ -886,8 +1022,15 @@ export function renderSvg(
         ? ` mask="url(#${edgeMaskDomId(edge.id)})"`
         : "";
       const connectorType =
-        settings.edgeRouting === "ORTHOGONAL" ? "orthogonal" : "polyline";
-      return `<g id="${edgeDomId(edge.id)}" class="ili-edge ili-edge-${xml(edge.source.kind.toLowerCase())}" data-edge-id="${xml(edge.id)}"><path id="${edgePathDomId(edge.id)}" d="${edgePathData(edge, settings.edgeRouting)}" fill="none" stroke="${inheritance ? "#6b58c9" : "#2c7f6d"}" stroke-width="1.6"${inheritance ? ' marker-end="url(#ilic-inheritance-arrow)"' : ""}${mask} data-edge-id="${xml(edge.id)}" data-source="${xml(edge.sourceId)}" data-target="${xml(edge.targetId)}" inkscape:connector-type="${connectorType}" inkscape:connector-curvature="0" inkscape:connection-start="#${nodeShapeDomId(edge.sourceId)}" inkscape:connection-end="#${nodeShapeDomId(edge.targetId)}"/></g>`;
+        edge.routeKind === "INKSCAPE_ORTHOGONAL"
+          ? "orthogonal"
+          : edge.routeKind === "INKSCAPE_POLYLINE"
+            ? "polyline"
+            : null;
+      const connectorMetadata = connectorType
+        ? ` inkscape:connector-type="${connectorType}" inkscape:connection-start="#${nodeShapeDomId(edge.sourceId)}" inkscape:connection-end="#${nodeShapeDomId(edge.targetId)}"`
+        : "";
+      return `<g id="${edgeDomId(edge.id)}" class="ili-edge ili-edge-${xml(edge.source.kind.toLowerCase())}" data-edge-id="${xml(edge.id)}"><path id="${edgePathDomId(edge.id)}" d="${edgePathData(edge)}" fill="none" stroke="${inheritance ? "#6b58c9" : "#2c7f6d"}" stroke-width="1.6"${inheritance ? ' marker-end="url(#ilic-inheritance-arrow)"' : ""}${mask} data-edge-id="${xml(edge.id)}" data-source="${xml(edge.sourceId)}" data-target="${xml(edge.targetId)}"${connectorMetadata}/></g>`;
     })
     .join("");
   const containers = layout.nodes
@@ -902,7 +1045,7 @@ export function renderSvg(
             `<text x="12" y="${44 + index * 18}" class="ili-stereotype">&lt;&lt;${xml(value)}&gt;&gt;</text>`,
         )
         .join("");
-      return `<g id="${nodeDomId(node.id)}" class="ili-node ili-container ili-${xml(node.source.kind.toLowerCase())}" data-symbol-id="${xml(node.id)}" transform="translate(${node.x} ${node.y})"><rect id="${nodeShapeDomId(node.id)}" width="${node.width}" height="${node.height}" rx="4" fill="${modelScope ? "#f7f9fc" : "#eef3f7"}" stroke="#526274"${modelScope ? ' stroke-dasharray="7 5"' : ""} inkscape:connector-avoid="true"/><text x="12" y="24" class="ili-title">${xml(node.source.label)}</text>${stereotypes}</g>`;
+      return `<g id="${nodeDomId(node.id)}" class="ili-node ili-container ili-${xml(node.source.kind.toLowerCase())}" data-symbol-id="${xml(node.id)}" transform="translate(${node.x} ${node.y})"><rect id="${nodeShapeDomId(node.id)}" width="${node.width}" height="${node.height}" rx="4" fill="${modelScope ? "#f7f9fc" : "#eef3f7"}" stroke="#526274"${modelScope ? ' stroke-dasharray="7 5"' : ""}/><text x="12" y="24" class="ili-title">${xml(node.source.label)}</text>${stereotypes}</g>`;
     })
     .join("");
   const nodes = layout.nodes
@@ -919,7 +1062,11 @@ export function renderSvg(
             `<text x="${line.continuation ? 20 : 12}" y="${line.y}" class="ili-${line.kind}"${line.inherited === undefined ? "" : ` data-inherited="${String(line.inherited)}"`}>${xml(line.text)}</text>`,
         )
         .join("");
-      return `<g id="${nodeDomId(node.id)}" class="ili-node ili-${xml(node.source.kind.toLowerCase())}${muted ? " ili-muted-abstract" : ""}" data-symbol-id="${xml(node.id)}" data-container-id="${xml(node.source.containerId)}" data-source-uri="${xml(node.source.range?.uri ?? "")}" transform="translate(${node.x} ${node.y})"><rect id="${nodeShapeDomId(node.id)}" width="${node.width}" height="${node.height}" rx="4" fill="${muted ? "#f3f3f3" : "#fff"}" stroke="${muted ? "#d6d6d6" : "#596b80"}" inkscape:connector-avoid="true"/><text x="12" y="24" class="ili-title">${xml(node.source.label)}</text><g class="ili-members">${lineMarkup}</g></g>`;
+      const connectorAvoid =
+        layout.renderingTarget === "INKSCAPE"
+          ? ' inkscape:connector-avoid="true"'
+          : "";
+      return `<g id="${nodeDomId(node.id)}" class="ili-node ili-${xml(node.source.kind.toLowerCase())}${muted ? " ili-muted-abstract" : ""}" data-symbol-id="${xml(node.id)}" data-container-id="${xml(node.source.containerId)}" data-source-uri="${xml(node.source.range?.uri ?? "")}" transform="translate(${node.x} ${node.y})"><rect id="${nodeShapeDomId(node.id)}" width="${node.width}" height="${node.height}" rx="4" fill="${muted ? "#f3f3f3" : "#fff"}" stroke="${muted ? "#d6d6d6" : "#596b80"}"${connectorAvoid}/><text x="12" y="24" class="ili-title">${xml(node.source.label)}</text><g class="ili-members">${lineMarkup}</g></g>`;
     })
     .join("");
   const edgeLabels = layout.edges
@@ -936,7 +1083,34 @@ export function renderSvg(
     .join("");
   const width = viewport ? viewport.width : Math.max(1, layout.width);
   const height = viewport ? viewport.height : Math.max(1, layout.height);
-  return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" viewBox="${viewBox}" width="${width}" height="${height}" role="img"><defs><marker id="ilic-inheritance-arrow" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="12" markerHeight="12" orient="auto"><path d="M 1 1 L 11 6 L 1 11 Z" fill="#fff" stroke="#6b58c9" stroke-width="1.2"/></marker>${gapMasks}<style>.ili-title,.ili-stereotype{font:600 13px sans-serif}.ili-title{fill:#182234}.ili-stereotype{fill:#3c5b89}.ili-member,.ili-enumeration,.ili-operation{font:12px sans-serif;fill:#2a3a50}.ili-edge-label,.ili-edge-cardinality{font:600 11px sans-serif;fill:#33465f}.ili-muted-abstract text{fill:#a6a6a6}</style></defs><rect class="ili-background" x="${viewport?.scrollX ?? 0}" y="${viewport?.scrollY ?? 0}" width="${viewport ? viewport.width / viewport.zoom : Math.max(1, layout.width)}" height="${viewport ? viewport.height / viewport.zoom : Math.max(1, layout.height)}" fill="#fff"/>${containers}${edgePaths}${nodes}${edgeLabels}</svg>`;
+  const inkscapeNamespace =
+    layout.renderingTarget === "INKSCAPE"
+      ? ' xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"'
+      : "";
+  return `<svg xmlns="http://www.w3.org/2000/svg"${inkscapeNamespace} viewBox="${viewBox}" width="${width}" height="${height}" role="img"><defs><marker id="ilic-inheritance-arrow" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="12" markerHeight="12" orient="auto"><path d="M 1 1 L 11 6 L 1 11 Z" fill="#fff" stroke="#6b58c9" stroke-width="1.2"/></marker>${gapMasks}<style>.ili-title,.ili-stereotype{font:600 13px sans-serif}.ili-title{fill:#182234}.ili-stereotype{fill:#3c5b89}.ili-member,.ili-enumeration,.ili-operation{font:12px sans-serif;fill:#2a3a50}.ili-edge-label,.ili-edge-cardinality{font:600 11px sans-serif;fill:#33465f}.ili-muted-abstract text{fill:#a6a6a6}</style></defs><rect class="ili-background" x="${viewport?.scrollX ?? 0}" y="${viewport?.scrollY ?? 0}" width="${viewport ? viewport.width / viewport.zoom : Math.max(1, layout.width)}" height="${viewport ? viewport.height / viewport.zoom : Math.max(1, layout.height)}" fill="#fff"/>${containers}${edgePaths}${nodes}${edgeLabels}</svg>`;
+}
+
+const svgAttribute = (tag: string, name: string, value: string): string => {
+  const pattern = new RegExp(`\\s${name}="[^"]*"`, "u");
+  return pattern.test(tag)
+    ? tag.replace(pattern, ` ${name}="${value}"`)
+    : tag.replace(/>$/u, ` ${name}="${value}">`);
+};
+
+export function renderSvgViewport(svg: string, viewport: Viewport): string {
+  const root = /^<svg\b[^>]*>/u.exec(svg)?.[0];
+  if (!root) throw new Error("The rendered diagram is not an SVG document.");
+  let adjusted = svgAttribute(
+    root,
+    "viewBox",
+    `${viewport.scrollX} ${viewport.scrollY} ${viewport.width / viewport.zoom} ${viewport.height / viewport.zoom}`,
+  );
+  adjusted = svgAttribute(adjusted, "width", String(viewport.width));
+  adjusted = svgAttribute(adjusted, "height", String(viewport.height));
+  const background = `<rect class="ili-background" x="${viewport.scrollX}" y="${viewport.scrollY}" width="${viewport.width / viewport.zoom}" height="${viewport.height / viewport.zoom}" fill="#fff"/>`;
+  return svg
+    .replace(root, adjusted)
+    .replace(/<rect class="ili-background"[^>]*\/>/u, background);
 }
 
 export async function layoutAndRenderDiagram(

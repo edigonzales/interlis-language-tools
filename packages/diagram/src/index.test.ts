@@ -1,16 +1,96 @@
 import { describe, expect, it } from "vitest";
 import type { SemanticSnapshot } from "@ilic/language-service";
+import { execFileSync } from "node:child_process";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   DiagramController,
   captureViewport,
   defaultDiagramSettings,
   layoutAndRenderDiagram,
   renderSvg,
+  renderSvgViewport,
   restoreViewport,
   sourceLocationForNode,
 } from "./index.js";
 import type { LayoutDiagram, NodePlacement } from "./index.js";
 import type { SNode } from "sprotty-protocol";
+
+const inkscapeBinary = [
+  process.env["INKSCAPE_BINARY"],
+  "/Applications/Inkscape.app/Contents/MacOS/inkscape",
+  "/usr/bin/inkscape",
+].find((candidate): candidate is string => {
+  if (!candidate || !existsSync(candidate)) return false;
+  try {
+    return /^Inkscape 1\.4\.4\b/u.test(
+      execFileSync(candidate, ["--version"], { encoding: "utf8" }),
+    );
+  } catch {
+    return false;
+  }
+});
+
+const straightPathPoints = (
+  svg: string,
+): readonly { readonly x: number; readonly y: number }[] => {
+  const path = [...svg.matchAll(/<path\b[^>]*>/gu)]
+    .map((match) => match[0])
+    .find((tag) => /\bid="ilic-edge-path-/u.test(tag));
+  const data = /\bd="([^"]+)"/u.exec(path ?? "")?.[1];
+  if (!data) throw new Error("The connector path is missing.");
+  const tokens =
+    data.match(/[MLHVZmlhvz]|-?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?/giu) ?? [];
+  const points: { x: number; y: number }[] = [];
+  let command = "";
+  let x = 0;
+  let y = 0;
+  let index = 0;
+  while (index < tokens.length) {
+    const token = tokens[index]!;
+    if (/^[a-z]$/iu.test(token)) {
+      command = token;
+      index++;
+      continue;
+    }
+    if (command.toLowerCase() === "h") {
+      const value = Number(token);
+      x = command === "h" ? x + value : value;
+      index++;
+    } else if (command.toLowerCase() === "v") {
+      const value = Number(token);
+      y = command === "v" ? y + value : value;
+      index++;
+    } else {
+      const next = tokens[index + 1];
+      if (next === undefined) throw new Error(`Incomplete SVG path: ${data}`);
+      const nextX = Number(token);
+      const nextY = Number(next);
+      if (command === command.toLowerCase()) {
+        x += nextX;
+        y += nextY;
+      } else {
+        x = nextX;
+        y = nextY;
+      }
+      index += 2;
+      if (command === "m") command = "l";
+      if (command === "M") command = "L";
+    }
+    points.push({
+      x: Math.round(x * 1_000) / 1_000,
+      y: Math.round(y * 1_000) / 1_000,
+    });
+  }
+  return points;
+};
 
 const uri = "memory:///Model.ili";
 const snapshot = (success = true): SemanticSnapshot => ({
@@ -155,7 +235,7 @@ describe("Sprotty/ELK projection", () => {
     expect(result.layout.nodes).toHaveLength(2);
     expect(result.sprotty.children).toHaveLength(3);
     expect(result.svg).toContain('fill="#fff"');
-    expect(result.svg).toContain("inkscape:connection-start");
+    expect(result.svg).not.toContain("inkscape:connection-start");
     expect(result.svg).toContain('class="ili-members"');
     expect(result.svg).toContain("A &amp; &lt;Building>");
     expect(result.svg).not.toContain(">id : OID<");
@@ -408,15 +488,91 @@ describe("Sprotty/ELK projection", () => {
       });
       expect(result.svg).toContain('<path id="ilic-edge-path-');
       expect(result.svg).not.toContain("<polyline");
-      expect(result.svg).toContain(
-        `inkscape:connector-type="${
-          edgeRouting === "ORTHOGONAL" ? "orthogonal" : "polyline"
-        }"`,
-      );
+      expect(result.svg).not.toContain("inkscape:connector-type");
       if (edgeRouting === "SPLINES")
         expect(result.svg).toMatch(/d="M [^"]+ C [^"]+"/);
     }
   });
+
+  it("previews Inkscape-compatible straight routes and keeps splines static", async () => {
+    for (const edgeRouting of ["ORTHOGONAL", "POLYLINE"] as const) {
+      const result = await layoutAndRenderDiagram(snapshot().diagram, {
+        ...defaultDiagramSettings,
+        renderingTarget: "INKSCAPE",
+        edgeRouting,
+      });
+      expect(result.layout.renderingTarget).toBe("INKSCAPE");
+      expect(result.layout.edges[0]?.routeKind).toBe(
+        edgeRouting === "ORTHOGONAL"
+          ? "INKSCAPE_ORTHOGONAL"
+          : "INKSCAPE_POLYLINE",
+      );
+      expect(result.svg).toContain(
+        `inkscape:connector-type="${edgeRouting.toLowerCase()}"`,
+      );
+      expect(result.svg).toContain("inkscape:connection-start");
+      expect(result.svg).not.toContain("inkscape:connector-curvature");
+      expect(result.svg).toContain('inkscape:connector-avoid="true"');
+    }
+
+    const splines = await layoutAndRenderDiagram(snapshot().diagram, {
+      ...defaultDiagramSettings,
+      renderingTarget: "INKSCAPE",
+      edgeRouting: "SPLINES",
+    });
+    expect(splines.layout.edges[0]?.routeKind).toBe("STATIC");
+    expect(splines.svg).toMatch(/d="M [^"]+ C [^"]+"/);
+    expect(splines.svg).not.toContain("inkscape:connector-type");
+    expect(splines.svg).not.toContain("inkscape:connection-start");
+  });
+
+  it("does not register nested containers as Inkscape obstacles", async () => {
+    const result = await layoutAndRenderDiagram(nestedSnapshot().diagram, {
+      ...defaultDiagramSettings,
+      renderingTarget: "INKSCAPE",
+      edgeRouting: "ORTHOGONAL",
+    });
+    const container =
+      /<g[^>]+class="ili-node ili-container[^"]*"[^>]*>.*?<\/g>/u.exec(
+        result.svg,
+      )?.[0];
+    expect(container).toBeDefined();
+    expect(container).not.toContain("inkscape:connector-avoid");
+    expect(result.svg).toContain('inkscape:connector-avoid="true"');
+    expect(
+      result.layout.edges[0]?.labels.every(
+        (label) => Number.isFinite(label.x) && Number.isFinite(label.y),
+      ),
+    ).toBe(true);
+  });
+
+  (inkscapeBinary ? it : it.skip)(
+    "keeps the routed geometry when Inkscape 1.4.4 opens the live connector",
+    async () => {
+      const result = await layoutAndRenderDiagram(snapshot().diagram, {
+        ...defaultDiagramSettings,
+        renderingTarget: "INKSCAPE",
+        edgeRouting: "ORTHOGONAL",
+        edgeCrossingStyle: "PLAIN",
+      });
+      const directory = mkdtempSync(join(tmpdir(), "ilic-inkscape-"));
+      const input = join(directory, "diagram.svg");
+      const output = join(directory, "diagram.plain.svg");
+      try {
+        writeFileSync(input, result.svg);
+        execFileSync(inkscapeBinary!, [
+          input,
+          "--export-plain-svg",
+          `--export-filename=${output}`,
+        ]);
+        expect(straightPathPoints(readFileSync(output, "utf8"))).toEqual(
+          straightPathPoints(result.svg),
+        );
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("adds deterministic gaps only to crossing straight segments", () => {
     const nodeSource = snapshot().diagram.nodes[0]!;
@@ -434,11 +590,14 @@ describe("Sprotty/ELK projection", () => {
       points: [startPoint, endPoint],
       sections: [{ startPoint, bendPoints: [], endPoint }],
       labels: [],
+      routing: "ORTHOGONAL" as const,
+      routeKind: "STATIC" as const,
       source: { ...association, id, sourceId, targetId },
     });
     const layout: LayoutDiagram = {
       width: 120,
       height: 120,
+      renderingTarget: "STANDARD",
       nodes: ["left", "right", "top", "bottom"].map((id, index) => ({
         id,
         parentId: null,
@@ -465,8 +624,8 @@ describe("Sprotty/ELK projection", () => {
     expect(gapped.match(/<mask id=/g)).toHaveLength(1);
     expect(gapped.match(/<path id="ilic-edge-path-/g)).toHaveLength(2);
     expect(gapped).toContain('data-source="top" data-target="bottom"');
-    expect(gapped).toContain('inkscape:connector-avoid="true"');
-    expect(gapped).toContain('inkscape:connection-start="#ilic-shape-');
+    expect(gapped).not.toContain('inkscape:connector-avoid="true"');
+    expect(gapped).not.toContain('inkscape:connection-start="#ilic-shape-');
 
     const plain = renderSvg(layout, {
       ...defaultDiagramSettings,
@@ -474,11 +633,30 @@ describe("Sprotty/ELK projection", () => {
     });
     expect(plain).not.toContain("<mask id=");
 
-    const splines = renderSvg(layout, {
-      ...defaultDiagramSettings,
-      edgeRouting: "SPLINES",
+    const splines = renderSvg({
+      ...layout,
+      edges: layout.edges.map((edge) => ({
+        ...edge,
+        routing: "SPLINES",
+      })),
     });
     expect(splines).not.toContain("<mask id=");
+  });
+
+  it("crops the cached SVG without changing its diagram geometry", async () => {
+    const result = await layoutAndRenderDiagram(snapshot().diagram);
+    const visible = renderSvgViewport(result.svg, {
+      zoom: 2,
+      scrollX: 10,
+      scrollY: 20,
+      width: 800,
+      height: 600,
+    });
+    expect(visible).toContain('viewBox="10 20 400 300"');
+    expect(visible).toContain('width="800" height="600"');
+    const path = /<path id="ilic-edge-path-[^>]+>/u.exec(result.svg)?.[0];
+    expect(path).toBeDefined();
+    expect(visible).toContain(path!);
   });
 
   it("restores viewports relative to the nearest semantic node", async () => {
@@ -498,7 +676,13 @@ describe("Sprotty/ELK projection", () => {
     });
     expect(restored.zoom).toBe(2);
     expect(restored.width).toBe(1000);
-    const empty = { width: 0, height: 0, nodes: [], edges: [] };
+    const empty: LayoutDiagram = {
+      width: 0,
+      height: 0,
+      renderingTarget: "STANDARD",
+      nodes: [],
+      edges: [],
+    };
     expect(captureViewport(empty, viewport).anchorId).toBeNull();
     expect(
       restoreViewport(

@@ -9,6 +9,7 @@ const allowed = new Set([
   "(EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0)",
   "(MIT AND Zlib)",
   "(MIT OR GPL-3.0-or-later)",
+  "LGPL-2.1-or-later",
 ]);
 const result = spawnSync("pnpm", ["licenses", "list", "--prod", "--json"], {
   encoding: "utf8",

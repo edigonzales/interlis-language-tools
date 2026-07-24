@@ -1,5 +1,6 @@
 import { access, chmod, copyFile, mkdir, rm } from "node:fs/promises";
-import { resolve } from "node:path";
+import { createRequire } from "node:module";
+import { dirname, resolve } from "node:path";
 import { build } from "esbuild";
 
 const root = resolve(import.meta.dirname, "..");
@@ -9,8 +10,26 @@ const compiler = resolve(root, "../ilic-fork/packages/compiler-wasm");
 const compilerEntry = resolve(compiler, "index.js");
 const compilerModule = resolve(compiler, "ilic.mjs");
 const compilerWasm = resolve(compiler, "ilic.wasm");
+const diagramRequire = createRequire(
+  resolve(root, "packages/diagram/package.json"),
+);
+const libavoidWasm = resolve(
+  dirname(diagramRequire.resolve("libavoid-js")),
+  "libavoid.wasm",
+);
+const libavoidLicense = resolve(
+  dirname(diagramRequire.resolve("libavoid-js")),
+  "..",
+  "LICENSE",
+);
 
-for (const artifact of [compilerEntry, compilerModule, compilerWasm]) {
+for (const artifact of [
+  compilerEntry,
+  compilerModule,
+  compilerWasm,
+  libavoidWasm,
+  libavoidLicense,
+]) {
   try {
     await access(artifact);
   } catch (error) {
@@ -98,6 +117,8 @@ const bundledTerminateProcess = resolve(dist, "terminateProcess.sh");
 
 await Promise.all([
   copyFile(compilerWasm, resolve(dist, "ilic.wasm")),
+  copyFile(libavoidWasm, resolve(dist, "libavoid.wasm")),
+  copyFile(libavoidLicense, resolve(dist, "libavoid-LICENSE.txt")),
   copyFile(terminateProcess, bundledTerminateProcess),
 ]);
 await chmod(bundledTerminateProcess, 0o755);

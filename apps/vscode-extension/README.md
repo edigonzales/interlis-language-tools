@@ -15,7 +15,9 @@ Web and compatible Theia products.
 - synchronized `elkjs` live UML diagram that refreshes open views of the saved
   root and transitively affected roots after a valid save, while preserving
   the last-good SVG and anchored viewport for stale or invalid models; includes
-  source navigation, layout settings and semantic SVG export;
+  source navigation, layout settings and semantic SVG export. The optional
+  `diagram.rendering.target=INKSCAPE` mode previews libavoid-routed orthogonal
+  and polyline connectors before exporting them; Bézier splines remain static;
 - DOCX documentation export;
 - support for saved files, untitled buffers and browser-backed virtual files.
 - repository-aware `IMPORTS` completion and transitive model resolution;
