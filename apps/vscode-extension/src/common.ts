@@ -63,6 +63,32 @@ export function documentSelector(): Array<{
   );
 }
 
+export interface DocxExportProposal {
+  readonly fileBased: boolean;
+  readonly title: string;
+  readonly defaultPath: string;
+}
+
+export function docxExportProposal(
+  uri: Pick<vscode.Uri, "scheme" | "path">,
+): DocxExportProposal {
+  const fileBased = uri.scheme === "file";
+  const filename = fileBased
+    ? (uri.path.split("/").at(-1) ?? "Model.ili")
+    : "Model.ili";
+  return {
+    fileBased,
+    title: filename.toLowerCase().endsWith(".ili")
+      ? filename
+      : `${filename}.ili`,
+    defaultPath: fileBased
+      ? uri.path.toLowerCase().endsWith(".ili")
+        ? `${uri.path.slice(0, -4)}.docx`
+        : `${uri.path}.docx`
+      : "Model.docx",
+  };
+}
+
 const DEFAULT_MODEL_REPOSITORIES = "%ILI_DIR;https://models.interlis.ch";
 const jarDirectoryWarningKey = "interlisLanguageTools.warnedJarDirectory";
 const ignoredWorkspaceSegments = new Set([
@@ -292,6 +318,45 @@ export function createOnTypeMiddleware(
   };
 }
 
+export async function exportDocxFromActiveDocument(
+  client: LanguageClientFacade,
+): Promise<void> {
+  const document = vscode.window.activeTextEditor?.document;
+  if (!document || document.languageId !== "interlis") return;
+  if (isBlankInterlisDocument(document.getText())) {
+    void vscode.window.showInformationMessage(
+      "The INTERLIS file is empty. Add a model before exporting documentation.",
+    );
+    return;
+  }
+  try {
+    const proposal = docxExportProposal(document.uri);
+    const target = await vscode.window.showSaveDialog({
+      defaultUri: proposal.fileBased
+        ? document.uri.with({ path: proposal.defaultPath })
+        : vscode.Uri.file(proposal.defaultPath),
+      filters: { "Word document": ["docx"] },
+      saveLabel: "Export INTERLIS documentation",
+    });
+    if (!target) return;
+    const data = await client.sendRequest<number[]>(
+      InterlisProtocol.exportDocx,
+      {
+        uri: document.uri.toString(),
+        title: proposal.title,
+      } satisfies ExportDocxParams,
+    );
+    await vscode.workspace.fs.writeFile(target, Uint8Array.from(data));
+    void vscode.window.showInformationMessage(
+      `Saved INTERLIS documentation to ${target.toString(true)}`,
+    );
+  } catch (error) {
+    void vscode.window.showErrorMessage(
+      `Failed to export INTERLIS documentation: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
 export function registerClientWorkflows(
   context: vscode.ExtensionContext,
   client: LanguageClientFacade,
@@ -371,56 +436,8 @@ export function registerClientWorkflows(
         }
       },
     ),
-    vscode.commands.registerCommand(
-      "interlisLanguageTools.docx.export",
-      async () => {
-        const document = vscode.window.activeTextEditor?.document;
-        if (!document || document.languageId !== "interlis") return;
-        if (isBlankInterlisDocument(document.getText())) {
-          void vscode.window.showInformationMessage(
-            "The INTERLIS file is empty. Add a model before exporting documentation.",
-          );
-          return;
-        }
-        try {
-          const data = await client.sendRequest<number[]>(
-            InterlisProtocol.exportDocx,
-            { uri: document.uri.toString() } satisfies ExportDocxParams,
-          );
-          const bytes = Uint8Array.from(data);
-          const siblingPath = document.uri.path.toLowerCase().endsWith(".ili")
-            ? `${document.uri.path.slice(0, -4)}.docx`
-            : `${document.uri.path}.docx`;
-          let target =
-            document.uri.scheme === "untitled"
-              ? undefined
-              : document.uri.with({ path: siblingPath });
-          if (!target)
-            target = await vscode.window.showSaveDialog({
-              defaultUri: vscode.Uri.file("Model.docx"),
-              filters: { "Word document": ["docx"] },
-            });
-          if (!target) return;
-          try {
-            await vscode.workspace.fs.writeFile(target, bytes);
-          } catch {
-            const fallback = await vscode.window.showSaveDialog({
-              defaultUri: vscode.Uri.file("Model.docx"),
-              filters: { "Word document": ["docx"] },
-            });
-            if (!fallback) return;
-            target = fallback;
-            await vscode.workspace.fs.writeFile(target, bytes);
-          }
-          void vscode.window.showInformationMessage(
-            `Saved INTERLIS documentation to ${target.toString(true)}`,
-          );
-        } catch (error) {
-          void vscode.window.showErrorMessage(
-            `Failed to export INTERLIS documentation: ${error instanceof Error ? error.message : String(error)}`,
-          );
-        }
-      },
+    vscode.commands.registerCommand("interlisLanguageTools.docx.export", () =>
+      exportDocxFromActiveDocument(client),
     ),
     vscode.commands.registerCommand(
       "interlisLanguageTools.snippet.nextPlaceholder",

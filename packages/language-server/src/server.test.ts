@@ -351,6 +351,25 @@ describe("language server repository contract", () => {
     expect(harness.spies.compileDocument).toHaveBeenCalledWith(uri, "diagram");
   });
 
+  it("passes the DOCX title through the export protocol", async () => {
+    const harness = contractHarness();
+    const exportDocx = vi.fn(() => Promise.resolve(new Uint8Array([1, 2, 3])));
+    bindLanguageServer(harness.connection, harness.service, { exportDocx });
+
+    const result = await harness.handler<
+      (params: { uri: string; title?: string }) => Promise<number[]>
+    >(`onRequest:${InterlisProtocol.exportDocx}`)({
+      uri: "file:///Model.ili",
+      title: "Model.ili",
+    });
+
+    expect(exportDocx).toHaveBeenCalledWith({
+      uri: "file:///Model.ili",
+      title: "Model.ili",
+    });
+    expect(result).toEqual([1, 2, 3]);
+  });
+
   it("answers document symbols immediately from the live outline", () => {
     const harness = contractHarness();
     bindLanguageServer(harness.connection, harness.service);

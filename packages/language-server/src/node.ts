@@ -121,7 +121,7 @@ export async function startNodeLanguageServer(
         throw new Error(
           "No saved semantic INTERLIS snapshot is available. Save or compile the document first.",
         );
-      return generateDocx(result.value);
+      return generateDocx(result.value, { title: params.title });
     },
   });
   connection.listen();

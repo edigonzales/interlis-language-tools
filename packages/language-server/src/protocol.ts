@@ -91,4 +91,5 @@ export interface SemanticSnapshotChangedParams {
 }
 export interface ExportDocxParams {
   readonly uri: string;
+  readonly title?: string;
 }

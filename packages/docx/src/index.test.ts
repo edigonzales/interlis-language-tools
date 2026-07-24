@@ -44,6 +44,44 @@ const snapshot: SemanticSnapshot = {
         level: 1,
       },
     ],
+    models: [
+      {
+        name: "Model",
+        uri: "memory:/Model.ili",
+        title: "Model title",
+        shortDescription: "Description",
+        viewables: [
+          {
+            name: "Thing",
+            kind: "class",
+            isAbstract: false,
+            documentation: "A thing",
+            rows: [
+              {
+                name: "Name",
+                cardinality: "1",
+                type: "Text",
+                description: "A name",
+              },
+            ],
+          },
+        ],
+        enumerations: [
+          {
+            name: "State",
+            entries: [{ value: "open", documentation: "Open state" }],
+          },
+        ],
+        topics: [
+          {
+            name: "Data",
+            documentation: "Topic documentation",
+            viewables: [],
+            enumerations: [],
+          },
+        ],
+      },
+    ],
   },
   diagnostics: [
     {
@@ -65,9 +103,34 @@ describe("DOCX generation", () => {
     expect([...data.slice(0, 2)]).toEqual([0x50, 0x4b]);
     const files = unzipSync(data);
     const documentXml = strFromU8(files["word/document.xml"]!);
-    expect(documentXml).toContain("Model documentation");
-    expect(documentXml).toContain("Model elements");
-    expect(documentXml).toContain("Example warning");
+    const stylesXml = strFromU8(files["word/styles.xml"]!);
+    const numberingXml = strFromU8(files["word/numbering.xml"]!);
+    expect(documentXml).toContain("Model.ili");
+    expect(documentXml).toContain("Attributname");
+    expect(documentXml).toContain("Wert");
+    expect(documentXml).not.toContain("Model elements");
+    expect(documentXml).not.toContain("Example warning");
+    expect(stylesXml).toContain("Arial");
+    expect(stylesXml).not.toContain("2E74B5");
+    expect(numberingXml).toContain("%1.%2");
+    expect(documentXml).toContain('w:w="9000"');
+    expect(documentXml).toContain('w:w="2250"');
+    expect(documentXml).toContain('w:w="1500"');
+    expect(documentXml).toContain('w:w="3000"');
+    expect(documentXml).toContain('w:type="fixed"');
+    expect(documentXml).not.toContain('w:type="pct"');
+    expect(documentXml).toContain('w:pgSz w:w="11906" w:h="16838"');
+  });
+
+  it("rejects snapshots without the structured documentation projection", async () => {
+    const legacySnapshot = {
+      ...snapshot,
+      documentation: { ...snapshot.documentation },
+    };
+    delete legacySnapshot.documentation.models;
+    await expect(generateDocx(legacySnapshot)).rejects.toThrow(
+      "Structured INTERLIS documentation is unavailable",
+    );
   });
 
   it("writes beside a source through the shared binary workspace API", async () => {
