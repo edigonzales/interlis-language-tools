@@ -106,6 +106,7 @@ describe("DOCX generation", () => {
     const stylesXml = strFromU8(files["word/styles.xml"]!);
     const numberingXml = strFromU8(files["word/numbering.xml"]!);
     expect(documentXml).toContain("Model.ili");
+    expect(documentXml).toContain("Data (Topic)");
     expect(documentXml).toContain("Attributname");
     expect(documentXml).toContain("Wert");
     expect(documentXml).not.toContain("Model elements");

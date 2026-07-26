@@ -202,7 +202,7 @@ function renderEnumeration(
 }
 
 function renderTopic(topic: DocumentationTopic): Array<Paragraph | Table> {
-  const result: Array<Paragraph | Table> = [heading(topic.name, 0)];
+  const result: Array<Paragraph | Table> = [heading(`${topic.name} (Topic)`, 0)];
   const description = documentationParagraph(topic.documentation);
   if (description) result.push(description);
   for (const viewable of topic.viewables)
