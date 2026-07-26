@@ -12,6 +12,7 @@ import {
   DiagnosticSeverity,
   DocumentSymbol,
   InsertTextFormat,
+  InsertTextMode,
   Location,
   Position,
   Range,
@@ -88,6 +89,13 @@ export function toCompletion(value: CoreCompletionItem) {
       value.insertTextFormat === "snippet"
         ? InsertTextFormat.Snippet
         : InsertTextFormat.PlainText,
+    insertTextMode:
+      value.insertTextMode === "as-is"
+        ? InsertTextMode.asIs
+        : InsertTextMode.adjustIndentation,
+    filterText: value.filterText,
+    sortText: value.sortText,
+    textEdit: value.textEdit ? toTextEdit(value.textEdit) : undefined,
   };
 }
 

@@ -30,7 +30,10 @@ same diagnostics in structured form. Unsaved changes keep the last result
 visible as outdated. Future live language intelligence is tracked in
 [BACKLOG.md](BACKLOG.md). The state, invalidation and refresh contract between
 editor buffers, VS Code OUTLINE and open diagrams is documented in
-[ADR 0002](docs/adr/0002-save-driven-editor-synchronization.md).
+[ADR 0002](docs/adr/0002-save-driven-editor-synchronization.md). The
+editor-facing behavior of contextual suggestions, snippets, placeholders and
+Enter-based auto-closing is documented in
+[Completion and snippets (German)](docs/completion-und-snippets.md).
 
 ## Published packages
 

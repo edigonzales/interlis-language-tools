@@ -27,6 +27,12 @@ Web and compatible Theia products.
 Desktop runs the bundled Node server. VS Code Web runs the browser-worker server
 from the same package. No Java runtime is downloaded or required.
 
+The German guide
+[Completion, Snippets und automatisches Blockende](https://github.com/edigonzales/interlis-language-tools/blob/main/docs/completion-und-snippets.md)
+explains exactly where suggestions appear and what Enter, Tab and the cursor
+keys do, with MODEL, TOPIC, CLASS, STRUCTURE, DOMAIN, UNIT and VIEW TOPIC
+examples.
+
 ## Coexistence with the Java extension
 
 This extension conflicts safely with `edigonzales.interlis-editor`: when the

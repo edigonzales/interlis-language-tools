@@ -4,6 +4,7 @@ import type {
   SyntaxSnapshot,
 } from "@ilic/compiler-wasm";
 import { contextAt } from "./features.js";
+import { detectCompletionContext } from "./completion.js";
 import type { EditorPosition } from "./features.js";
 import type { CompilationOutputEvent } from "./types.js";
 
@@ -68,7 +69,35 @@ function tokensBefore(snapshot: SyntaxSnapshot, position: EditorPosition) {
 export function suggestionActivation(
   snapshot: SyntaxSnapshot,
   position: EditorPosition,
+  text?: string,
 ): SuggestionActivation {
+  if (text !== undefined) {
+    const completion = detectCompletionContext(snapshot, text, position);
+    if (!completion) return { open: false, reason: "none", suppress: false };
+    if (
+      completion.slot === "top-level-root" ||
+      completion.slot === "container-body-root"
+    )
+      return {
+        open: false,
+        reason: "container-body",
+        suppress: false,
+      };
+    if (
+      completion.slot.startsWith("declaration-header") ||
+      completion.slot === "extends-target"
+    ) {
+      const suppress = completion.ownerKind === "model";
+      return {
+        open: !suppress,
+        reason: completion.slot === "extends-target" ? "extends" : "header",
+        suppress,
+      };
+    }
+    if (completion.slot.startsWith("metaattribute"))
+      return { open: true, reason: "metaattribute", suppress: false };
+    return { open: true, reason: "type-expression", suppress: false };
+  }
   const tokens = tokensBefore(snapshot, position);
   const last = tokens.at(-1);
   const previous = tokens.at(-2);
@@ -136,14 +165,19 @@ export function snippetKeyAction(
   active: boolean,
   placeholder: SnippetPlaceholder,
   key: SnippetKey,
+  options: {
+    readonly hasNextTabstop?: boolean;
+    readonly suggestWidgetVisible?: boolean;
+  } = {},
 ): SnippetAction {
   if (!active) return "default";
-  if (placeholder === "model-header") {
-    if (key === "Enter" || key === "Tab") return "next-placeholder";
-    return "suppress-suggestions";
+  if (key === "Enter" || key === "Tab") {
+    if (options.suggestWidgetVisible || options.hasNextTabstop === false)
+      return "default";
+    return "next-placeholder";
   }
-  if (key === "Enter" || key === "Tab") return "next-placeholder";
-  if (placeholder === "block-header") return "leave-and-move";
+  if (placeholder === "model-header" || placeholder === "block-header")
+    return "leave-and-move";
   return "default";
 }
 

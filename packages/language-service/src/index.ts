@@ -23,6 +23,7 @@ export { LanguageService } from "./service.js";
 export type {
   CompletionItem,
   DocumentSymbol,
+  EditorFormattingOptions,
   EditorPosition,
   EditorRange,
   HoverResult,
@@ -31,7 +32,17 @@ export type {
   TemplateEdit,
   TextEdit,
 } from "./features.js";
-export { contains, contextAt, toEditorRange } from "./features.js";
+export type {
+  CompletionContext,
+  CompletionSlot,
+  CompletionSymbolKind,
+} from "./completion.js";
+export {
+  completionContextAt,
+  contains,
+  contextAt,
+  toEditorRange,
+} from "./features.js";
 export {
   DEFAULT_TEMPLATE_TIMEOUT_MS,
   DEFAULT_TEMPLATE_URL,

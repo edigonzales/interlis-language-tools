@@ -54,7 +54,10 @@ const {
   compileOpenedDocument,
   docxExportProposal,
   exportDocxFromActiveDocument,
+  expectedSuggestionLabels,
+  isSuggestBoundary,
   registerDocumentOpenCompilation,
+  suggestionRetriggerPlan,
 } = await import("./common.js");
 
 beforeEach(() => {
@@ -103,6 +106,80 @@ describe("VS Code startup compilation", () => {
     await compileActiveDocumentOnStartup(client, undefined);
 
     expect(sendRequest).not.toHaveBeenCalled();
+  });
+});
+
+describe("Java-like suggestion retrigger", () => {
+  const change = (text: string) =>
+    ({
+      text,
+      range: {
+        start: { line: 1, character: 8 },
+        end: { line: 1, character: 8 },
+      },
+    }) as Parameters<typeof isSuggestBoundary>[0];
+
+  it("probes only provider-relevant single-line edit boundaries", () => {
+    expect(isSuggestBoundary(change(" "), "  CLASS C ", "")).toBe(true);
+    expect(isSuggestBoundary(change(" "), "  ASSOCIATION A ", "=")).toBe(false);
+    expect(isSuggestBoundary(change("\n"), "  CLASS C ", "")).toBe(false);
+    expect(isSuggestBoundary(change(" "), "   ", "")).toBe(false);
+    expect(isSuggestBoundary(change("x"), "  CLASS Cx", "")).toBe(false);
+    expect(isSuggestBoundary(change("X"), "  CLASS C (EX", "")).toBe(true);
+    expect(isSuggestBoundary(change("g"), "  !!@ ili2db.mapping", "")).toBe(
+      true,
+    );
+  });
+
+  it("requires stable labels in DOMAIN, UNIT and attribute RHS slots", () => {
+    expect(expectedSuggestionLabels("  DOMAIN D = ")).toEqual([
+      "TEXT",
+      "NUMERIC",
+    ]);
+    expect(expectedSuggestionLabels("  UNIT U = ")).toEqual(["[BaseUnit]"]);
+    expect(expectedSuggestionLabels("  value: ")).toEqual([
+      "TEXT",
+      "MANDATORY",
+    ]);
+    expect(expectedSuggestionLabels("  CLASS C ")).toEqual([
+      "(ABSTRACT)",
+      "(EXTENDED)",
+      "(FINAL)",
+      "EXTENDS",
+      "=",
+    ]);
+    expect(expectedSuggestionLabels("  DOMAIN D ", "=")).not.toContain("=");
+  });
+
+  it("retries multi-character and replacement edits but keeps a provider label contract", () => {
+    expect(
+      suggestionRetriggerPlan(
+        {
+          ...change("TEXT"),
+          rangeLength: 0,
+        },
+        "  value: TEXT",
+        "",
+      ),
+    ).toEqual({
+      eligible: true,
+      retry: true,
+      expectedLabels: ["*"],
+    });
+    expect(
+      suggestionRetriggerPlan(
+        {
+          ...change(" "),
+          rangeLength: 2,
+        },
+        "  UNIT U = ",
+        ";",
+      ),
+    ).toEqual({
+      eligible: true,
+      retry: true,
+      expectedLabels: ["[BaseUnit]"],
+    });
   });
 });
 

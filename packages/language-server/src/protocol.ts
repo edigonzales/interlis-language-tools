@@ -56,6 +56,10 @@ export interface OnTypeEditParams {
   readonly uri: string;
   readonly position: { line: number; character: number };
   readonly character: string;
+  readonly options?: {
+    readonly tabSize?: number;
+    readonly insertSpaces?: boolean;
+  };
 }
 
 export interface DiagramSnapshotParams {

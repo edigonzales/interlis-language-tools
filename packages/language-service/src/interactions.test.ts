@@ -141,13 +141,23 @@ describe("snippet navigation and guards", () => {
       "next-placeholder",
     );
     expect(snippetKeyAction(true, "model-header", "ArrowLeft")).toBe(
-      "suppress-suggestions",
+      "leave-and-move",
     );
     expect(snippetKeyAction(true, "block-header", "ArrowRight")).toBe(
       "leave-and-move",
     );
     expect(snippetKeyAction(true, "body", "Tab")).toBe("next-placeholder");
     expect(snippetKeyAction(true, "body", "Home")).toBe("default");
+    expect(
+      snippetKeyAction(true, "body", "Enter", {
+        hasNextTabstop: false,
+      }),
+    ).toBe("default");
+    expect(
+      snippetKeyAction(true, "block-header", "Enter", {
+        suggestWidgetVisible: true,
+      }),
+    ).toBe("default");
   });
 
   it("recognizes blank documents while preserving missing-document distinction", () => {

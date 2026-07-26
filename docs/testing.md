@@ -17,6 +17,7 @@ files are never trusted merely because the workspace compiles.
 
 ```sh
 pnpm check
+pnpm test:extension-host
 pnpm --filter @ilic/language-service test:coverage
 pnpm pack:verify
 pnpm package:vsix
@@ -38,6 +39,13 @@ in a clean consumer, runs the WASM compiler, and rejects moving internal
 dependency specifications. `package:vsix` unpacks the extension and asserts its
 identity, license, icon, WASM binary and Node/browser client and server entry
 points.
+
+`test:extension-host` builds the desktop extension and starts an isolated
+VS-Code Extension Host. It executes the documented completion/snippet
+workflows, including Enter/Tab-equivalent placeholder navigation,
+provider-backed Suggest acceptance, cursor escape from header snippets and
+on-type block closing. On macOS it reuses VSCodium when available; CI downloads
+the pinned VS Code 1.96.4 test runtime and runs it under Xvfb.
 
 Language-service tests exercise workspace precedence, transitive repository
 sources, exact import navigation, generation cancellation, repository-aware

@@ -54,6 +54,9 @@ jobs:
       - name: Lint, typecheck, test and build
         working-directory: interlis-language-tools
         run: pnpm check
+      - name: Verify VS Code completion and snippet keyboard contracts
+        working-directory: interlis-language-tools
+        run: xvfb-run -a pnpm test:extension-host
       - name: Generate core coverage report (non-blocking)
         continue-on-error: true
         working-directory: interlis-language-tools

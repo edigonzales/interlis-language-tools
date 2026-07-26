@@ -233,6 +233,93 @@ function backend(
 }
 
 describe("save-driven LanguageService", () => {
+  it("computes completion from a live parse without invoking the compiler", async () => {
+    const compiler = backend();
+    compiler.parse.mockReturnValue({
+      ...syntax(rootUri),
+      documentVersion: 1,
+    });
+    const service = new LanguageService(compiler);
+    service.openDocument(rootUri, "INTERLIS 2.4;\nMOD", 1);
+
+    const labels = (
+      await service.completion(rootUri, {
+        line: 1,
+        character: 3,
+      })
+    ).map((item) => item.label);
+
+    expect(labels).toContain("MODEL");
+    expect(compiler.parse).toHaveBeenCalledOnce();
+    expect(compiler.analyze).not.toHaveBeenCalled();
+    expect(compiler.compileAndAnalyze).not.toHaveBeenCalled();
+  });
+
+  it("uses last-good external symbols but the current dirty IMPORTS list", async () => {
+    const externalUri = "repository:///External.ili";
+    const externalSymbol: SemanticSnapshot["symbols"][number] = {
+      id: "external-code",
+      name: "Code",
+      qualifiedName: "External.Code",
+      kind: "domain",
+      containerId: "external-model",
+      range: {
+        uri: externalUri,
+        start: { line: 1, character: 2, byteOffset: 20 },
+        end: { line: 1, character: 6, byteOffset: 24 },
+      },
+      selectionRange: null,
+      endRange: null,
+      abstract: false,
+    };
+    const compiler = backend((request) =>
+      analysis(request.roots, {
+        documentVersions: { [rootUri]: 1, [externalUri]: 1 },
+        symbols: [externalSymbol],
+        syntax: [
+          { ...syntax(rootUri, ["External"]), documentVersion: 1 },
+          { ...syntax(externalUri), documentVersion: 1 },
+        ],
+      }),
+    );
+    const service = new LanguageService(compiler);
+    const importedText = [
+      "MODEL Root =",
+      "  IMPORTS External;",
+      "  CLASS C =",
+      "    value: Co",
+      "  END C;",
+      "END Root.",
+    ].join("\n");
+    service.openDocument(rootUri, importedText, 1);
+    service.markSaved(rootUri);
+    await service.compileDocument(rootUri, "save");
+
+    compiler.parse.mockReturnValue({
+      ...syntax(rootUri, ["External"]),
+      documentVersion: 2,
+    });
+    service.changeDocument(rootUri, importedText, 2);
+    expect(
+      (await service.completion(rootUri, { line: 3, character: 13 })).map(
+        (item) => item.label,
+      ),
+    ).toContain("Code");
+
+    const withoutImport = importedText.replace("  IMPORTS External;\n", "");
+    compiler.parse.mockReturnValue({
+      ...syntax(rootUri),
+      documentVersion: 3,
+    });
+    service.changeDocument(rootUri, withoutImport, 3);
+    expect(
+      (await service.completion(rootUri, { line: 2, character: 13 })).map(
+        (item) => item.label,
+      ),
+    ).not.toContain("Code");
+    expect(compiler.compileAndAnalyze).toHaveBeenCalledOnce();
+  });
+
   it("does no parse, analysis, or compilation while opening and typing", () => {
     const compiler = backend();
     const service = new LanguageService(compiler);

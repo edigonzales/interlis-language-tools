@@ -12,6 +12,7 @@ current evidence; detailed commands are in [testing.md](testing.md).
 | Save/manual diagnostics; stale result while typing       |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                  ✅ unit/contract/E2E |
 | Compile saved editable document on open                  |             — |             — |           — |              ✅ |          ✅ |    ✅ |          — |                                            ✅ extension/unit/contract |
 | Import and repository-model completion                   |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                      ✅ unit/contract |
+| Slot- und scope-basierte INTERLIS-2.3/2.4-Completion     |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                ✅ golden/unit/adapter |
 | Transitive repository resolution and warm offline cache  |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                               ✅ native/unit/contract |
 | Ctrl-click into read-only repository models              |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                  ✅ unit/manual smoke |
 | Definition and references                                |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                       ✅ unit/adapter |
@@ -20,8 +21,8 @@ current evidence; detailed commands are in [testing.md](testing.md).
 | Hover information                                        |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                       ✅ unit/adapter |
 | Full-document and on-type formatting                     |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                ✅ native/unit/adapter |
 | Autoclosing and structured templates                     |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                  ✅ unit/manifest/E2E |
-| Parser-context suggestion activation                     |             — |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                           ✅ unit/E2E |
-| Snippet key and final-caret contract                     |             — |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                       ✅ unit/adapter |
+| Parser-context suggestion activation                     |             — |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                              ✅ golden/extension-host |
+| Snippet key and final-caret contract                     |             — |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                            ✅ manifest/extension-host |
 | Compile command, cache and structured logs               |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                ✅ native/contract/E2E |
 | Output channels, blank guards and focus preservation     |             — |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                 ✅ extension/unit/E2E |
 | TextMate grammar, comments, brackets, folding and colors |             — |            ✅ |           — |              ✅ |          ✅ |    ✅ |         ✅ |                                                       ✅ manifest/E2E |
@@ -60,3 +61,10 @@ external VS Code Web and Theia hosts have completed. npm snapshots use only the
 `snapshot` dist-tag in CI. During the pre-release bootstrap phase, `latest` is
 manually synchronized to the same snapshot with local npm web authentication as
 documented in the release process.
+
+The user-visible completion, snippet and auto-close contracts in this table are
+documented in [Completion und Snippets](completion-und-snippets.md). Its code
+examples are mirrored by the language-service golden/contract cases; LSP and
+Monaco text edits are covered by adapter tests, while VS Code keybindings and
+snippet navigation are covered by manifest tests plus the isolated real
+extension-host suite.

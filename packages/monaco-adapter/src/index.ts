@@ -150,7 +150,7 @@ export class MonacoLanguageAdapter implements Disposable {
   ) {
     const syntax = this.service.getSyntaxSnapshot(model.uri.toString())?.value;
     return syntax
-      ? suggestionActivation(syntax, position(value))
+      ? suggestionActivation(syntax, position(value), model.getValue())
       : { open: false, reason: "none" as const, suppress: false };
   }
 
@@ -183,7 +183,7 @@ export class MonacoLanguageAdapter implements Disposable {
     const languages = this.monaco.languages;
     this.#registrations.push(
       languages.registerCompletionItemProvider("interlis", {
-        triggerCharacters: [" ", ".", "=", "(", "*", "@"],
+        triggerCharacters: [" ", ".", "=", "(", "*", "@", ":", "[", "/", ")"],
         provideCompletionItems: async (
           model: MonacoModel,
           value: { lineNumber: number; column: number },
@@ -192,8 +192,13 @@ export class MonacoLanguageAdapter implements Disposable {
             await this.service.completion(model.uri.toString(), position(value))
           ).map((item) => ({
             ...item,
-            insertText: item.insertText ?? item.label,
-            insertTextRules: item.insertTextFormat === "snippet" ? 4 : 0,
+            insertText: item.textEdit?.newText ?? item.insertText ?? item.label,
+            range: item.textEdit ? this.#range(item.textEdit.range) : undefined,
+            filterText: item.filterText,
+            sortText: item.sortText,
+            insertTextRules:
+              (item.insertTextFormat === "snippet" ? 4 : 0) |
+              (item.insertTextMode === "as-is" ? 1 : 0),
           })),
         }),
       }),
@@ -330,14 +335,20 @@ export class MonacoLanguageAdapter implements Disposable {
             })),
       }),
       languages.registerOnTypeFormattingEditProvider("interlis", {
-        autoFormatTriggerCharacters: ["\n", "="],
+        autoFormatTriggerCharacters: ["\n"],
         provideOnTypeFormattingEdits: (
           model: MonacoModel,
           value: { lineNumber: number; column: number },
           character: string,
+          options: { tabSize?: number; insertSpaces?: boolean } = {},
         ) =>
           this.service
-            .onTypeEdit(model.uri.toString(), position(value), character)
+            .onTypeEdit(
+              model.uri.toString(),
+              position(value),
+              character,
+              options,
+            )
             ?.edits.map((edit) => ({
               range: this.#range(edit.range),
               text: edit.newText,

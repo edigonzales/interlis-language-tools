@@ -5,6 +5,7 @@ export default tseslint.config(
   {
     ignores: [
       "**/dist/**",
+      "**/dist-test/**",
       "**/coverage/**",
       "artifacts/**",
       "**/*.d.ts",
@@ -28,7 +29,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["scripts/**/*.mjs", "test/**/*.mjs"],
+    files: ["scripts/**/*.mjs", "**/test/**/*.mjs"],
     ...tseslint.configs.disableTypeChecked,
     languageOptions: {
       ...tseslint.configs.disableTypeChecked.languageOptions,

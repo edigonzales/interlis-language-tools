@@ -151,6 +151,13 @@ describe("language server repository contract", () => {
       expect.objectContaining({ repositoryCachePath: "/cache" }),
     );
     expect(result.capabilities.definitionProvider).toBe(true);
+    expect(result.capabilities.completionProvider?.triggerCharacters).toEqual(
+      expect.arrayContaining([":", "[", "/", ")"]),
+    );
+    expect(
+      result.capabilities.documentOnTypeFormattingProvider
+        ?.moreTriggerCharacter,
+    ).toBeUndefined();
   });
 
   it("applies watcher and configuration messages without dropping init options", async () => {

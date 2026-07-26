@@ -6,6 +6,7 @@ import type {
   SyntaxSnapshot,
 } from "@ilic/compiler-wasm";
 import {
+  completionContextAt,
   completionsAt,
   contains,
   contextAt,
@@ -220,17 +221,202 @@ describe("syntax-driven feature helpers", () => {
     expect(contains(range(1, 2, 1, 4), { line: 2, character: 0 })).toBe(false);
   });
 
-  it("combines context keywords and semantic symbols without duplicates", () => {
-    const items = completionsAt(syntax(), semantic(), {
-      line: 3,
-      character: 0,
+  it.each([
+    {
+      name: "document root",
+      text: "INTERLIS 2.4;\nMO",
+      position: { line: 1, character: 2 },
+      slot: "top-level-root",
+      labels: ["MODEL", "MODEL Name (lang) AT ... VERSION ... = ... END Name."],
+      replacement: { start: 0, end: 2 },
+    },
+    {
+      name: "model body",
+      text: 'MODEL M (de) AT "x" VERSION "1" =\n  TO\nEND M.',
+      position: { line: 1, character: 4 },
+      slot: "container-body-root",
+      labels: ["TOPIC", "TOPIC Name = ... END Name;"],
+      replacement: { start: 2, end: 4 },
+    },
+    {
+      name: "class header modifier",
+      text: "MODEL M =\n  CLASS C (AB\nEND M.",
+      position: { line: 1, character: 13 },
+      slot: "declaration-header-modifier-value",
+      labels: ["ABSTRACT"],
+      replacement: { start: 11, end: 13 },
+    },
+    {
+      name: "attribute type",
+      text: "MODEL M =\n  TOPIC T =\n    CLASS C =\n      a: TE\n    END C;\n  END T;\nEND M.",
+      position: { line: 3, character: 11 },
+      slot: "attribute-type-root",
+      labels: ["TEXT"],
+      replacement: { start: 9, end: 11 },
+    },
+    {
+      name: "imports",
+      text: "MODEL M =\n  IMPORTS Ba",
+      position: { line: 1, character: 12 },
+      slot: "import-model",
+      labels: [],
+      replacement: { start: 10, end: 12 },
+    },
+  ])(
+    "detects the $name completion slot with precise replacement",
+    ({ text, position, slot, labels, replacement }) => {
+      const snapshot = syntax();
+      const context = completionContextAt(snapshot, text, position);
+      expect(context?.slot).toBe(slot);
+      expect(context?.replaceRange).toEqual({
+        start: { line: position.line, character: replacement.start },
+        end: { line: position.line, character: replacement.end },
+      });
+      expect(
+        completionsAt(snapshot, null, position, text).map((item) => item.label),
+      ).toEqual(expect.arrayContaining(labels));
+    },
+  );
+
+  it("returns no misleading items outside a recognized slot", () => {
+    const snapshot = syntax();
+    const text = "MODEL M =\n  ?? invalid";
+    expect(
+      completionsAt(snapshot, null, { line: 1, character: 12 }, text),
+    ).toEqual([]);
+  });
+
+  it("keeps keyword and snippet items distinct and stable", () => {
+    const text = "INTERLIS 2.4;\nMOD";
+    const items = completionsAt(
+      syntax(),
+      null,
+      { line: 1, character: 3 },
+      text,
+    ).filter((item) => item.filterText === "MODEL");
+    expect(items).toHaveLength(2);
+    expect(items.map((item) => item.kind)).toEqual(["keyword", "snippet"]);
+    expect(items[0]?.sortText).toBe("25-MODEL");
+    expect(items[1]?.textEdit).toMatchObject({
+      range: {
+        start: { line: 1, character: 0 },
+        end: { line: 1, character: 3 },
+      },
     });
-    expect(items.map((item) => item.label)).toEqual(
-      expect.arrayContaining(["EXTENDS", "TEXT", "Model", "Building"]),
+    expect(items[1]?.insertText).toContain('AT "${3:https://example.com}"');
+  });
+
+  it("keeps block and value snippets name-first with independent tabstops", () => {
+    const text = [
+      "MODEL M =",
+      "  TOPIC T =",
+      "    ",
+      "  END T;",
+      "END M.",
+    ].join("\n");
+    const items = completionsAt(
+      syntax(),
+      null,
+      { line: 2, character: 4 },
+      text,
+    );
+    const classSnippet = items.find(
+      (item) => item.label === "CLASS Name = ... END Name;",
+    );
+    expect(classSnippet?.insertText).toBe(
+      "CLASS ${1:Name} ${2:}=\n      $0\n    END ${1/^([A-Za-z_][A-Za-z0-9_]*).*$/$1/};",
     );
     expect(
-      completionsAt(syntax(), null, { line: 20, character: 0 })[0]?.label,
-    ).toBe("MODEL");
+      items.find((item) => item.label === "DOMAIN Name = ...;")?.insertText,
+    ).toBe("DOMAIN ${1:Name} ${2:}= ${3};$0");
+    expect(
+      items.find((item) => item.label === "UNIT Name = ...;")?.insertText,
+    ).toBe("UNIT ${1:Name} ${2:}= ${3};$0");
+    expect(
+      items.find((item) => item.label === "VIEW TOPIC Name = ... END Name;")
+        ?.insertText,
+    ).toContain("DEPENDS ON ${3:Topic}");
+  });
+
+  it.each([
+    ["CLASS C ", "declaration-header-after-name", "EXTENDS"],
+    ["CLASS C (ABSTRACT) ", "declaration-header-after-modifier", "EXTENDS"],
+    ["CLASS C EXTENDS Base ", "declaration-header-after-extends", "="],
+    ["UNIT U [m] ", "declaration-header-after-name", "EXTENDS"],
+    ["value: TEXT", "text-length-tail", "*"],
+    ["value: 1", "inline-numeric-range-tail", ".."],
+    ["value: REFERENCE", "reference-post-keyword", "TO"],
+    ["value: LIST", "collection-post-keyword", "OF"],
+    ["value: FORMAT INTERLIS.XMLD", "format-type-target", "XMLDate"],
+    ["UNIT U = [", "unit-bracket-target", undefined],
+    ["END ", "end-name", "M"],
+  ])("maps %s to %s", (source, slot, expectedLabel) => {
+    const text = `MODEL M =\n  ${source}`;
+    const position = { line: 1, character: text.split("\n")[1]!.length };
+    const context = completionContextAt(syntax(), text, position);
+    expect(context?.slot).toBe(slot);
+    if (expectedLabel)
+      expect(
+        completionsAt(syntax(), null, position, text).map((item) => item.label),
+      ).toContain(expectedLabel);
+  });
+
+  it("does not apply staged Java header completion to association, view or graphic declarations", () => {
+    for (const source of [
+      "ASSOCIATION A (EX",
+      "VIEW V (AB",
+      "GRAPHIC G EXTENDS ",
+    ]) {
+      const text = `MODEL M =\n  ${source}`;
+      expect(
+        completionContextAt(syntax(), text, {
+          line: 1,
+          character: text.split("\n")[1]!.length,
+        }),
+      ).toBeNull();
+    }
+  });
+
+  it.each([
+    "CLASS C (GENERIC) ",
+    "TOPIC T (EXTENDED) ",
+    "UNIT U (FINAL) ",
+    "CLASS C [abbr] ",
+  ])(
+    "does not suggest continuations for an invalid staged header: %s",
+    (source) => {
+      const text = `MODEL M =\n  ${source}`;
+      expect(
+        completionContextAt(syntax(), text, {
+          line: 1,
+          character: text.split("\n")[1]!.length,
+        }),
+      ).toBeNull();
+    },
+  );
+
+  it("offers contextual metaattributes and values", () => {
+    const rootText = "MODEL M =\n  !!@ ili2db.\n  CLASS C =";
+    const rootPosition = {
+      line: 1,
+      character: rootText.split("\n")[1]!.length,
+    };
+    expect(
+      completionsAt(syntax(), null, rootPosition, rootText).map(
+        (item) => item.filterText,
+      ),
+    ).toContain("ili2db.dispName");
+
+    const valueText = "MODEL M =\n  !!@ ili2db.mapping=\n  STRUCTURE S =";
+    const valuePosition = {
+      line: 1,
+      character: valueText.split("\n")[1]!.length,
+    };
+    expect(
+      completionsAt(syntax(), null, valuePosition, valueText).map(
+        (item) => item.label,
+      ),
+    ).toContain("MultiSurface");
   });
 
   it("creates structured end templates only after declaration equals tokens", () => {
@@ -271,6 +457,310 @@ describe("syntax-driven feature helpers", () => {
     expect(
       templateForNewline(classSyntax, { line: 2, character: 4 }),
     ).toBeNull();
+    classSyntax.tokens = [
+      { kind: "TOPIC", text: "TOPIC", channel: 0, range: range(0, 0, 0, 5) },
+      { kind: "NAME", text: "T", channel: 0, range: range(0, 6, 0, 7) },
+      { kind: "EQUAL", text: "=", channel: 0, range: range(0, 8, 0, 9) },
+      { kind: "DOMAIN", text: "DOMAIN", channel: 0, range: range(1, 2, 1, 8) },
+      { kind: "NAME", text: "D", channel: 0, range: range(1, 9, 1, 10) },
+      { kind: "EQUAL", text: "=", channel: 0, range: range(1, 11, 1, 12) },
+    ];
+    expect(
+      templateForNewline(classSyntax, { line: 1, character: 13 }),
+    ).toBeNull();
+  });
+
+  it.each([
+    ["MODEL", ".", "  "],
+    ["TOPIC", ";", "  "],
+    ["CLASS", ";", "  "],
+    ["STRUCTURE", ";", "  "],
+    ["ASSOCIATION", ";", "  "],
+    ["VIEW", ";", "  "],
+    ["GRAPHIC", ";", "  "],
+  ])(
+    "auto-closes %s only after the typed newline",
+    (keyword, terminator, childIndent) => {
+      const snapshot = syntax();
+      const text = `${keyword} Block =\n`;
+      const edit = templateForNewline(
+        snapshot,
+        text,
+        { line: 1, character: 0 },
+        { tabSize: 2, insertSpaces: true },
+      );
+      expect(edit?.edits[0]).toEqual({
+        range: {
+          start: { line: 1, character: 0 },
+          end: { line: 1, character: 0 },
+        },
+        newText: `${childIndent}\nEND Block${terminator}`,
+      });
+      expect(edit?.finalSelection.start).toEqual({
+        line: 1,
+        character: childIndent.length,
+      });
+    },
+  );
+
+  it("does not offer a second UNIT abbreviation", () => {
+    const text = "MODEL M =\n  UNIT U [m] ";
+    expect(
+      completionsAt(
+        syntax(),
+        null,
+        { line: 1, character: text.split("\n")[1]!.length },
+        text,
+      ).map((item) => item.label),
+    ).not.toContain("[Name]");
+  });
+
+  it("supports modifiers, multi-line EXTENDS, tabs and an existing editor indent", () => {
+    const snapshot = syntax();
+    const text = [
+      "MODEL M =",
+      "\tTOPIC T =",
+      "\t\tCLASS Child (ABSTRACT)",
+      "\t\t  EXTENDS Base =",
+      "\t\t",
+    ].join("\n");
+    const edit = templateForNewline(
+      snapshot,
+      text,
+      { line: 4, character: 2 },
+      { tabSize: 8, insertSpaces: false },
+    );
+    expect(edit?.edits[0]?.newText).toBe("\t\t\t\n\t\tEND Child;");
+    expect(edit?.finalSelection.start.character).toBe(3);
+  });
+
+  it("creates the VIEW TOPIC DEPENDS ON placeholder before the body", () => {
+    const edit = templateForNewline(
+      syntax(),
+      "VIEW TOPIC Overview =\n",
+      { line: 1, character: 0 },
+      { tabSize: 2, insertSpaces: true },
+    );
+    expect(edit?.edits[0]?.newText).toBe("  DEPENDS ON \n  \nEND Overview;");
+    expect(edit?.finalSelection.start).toEqual({
+      line: 1,
+      character: 13,
+    });
+  });
+
+  it.each([
+    "DOMAIN D =\n",
+    "UNIT U =\n",
+    "name: TEXT =\n",
+    "!!@ name =\n",
+    "!! CLASS Fake =\n",
+    'label: TEXT = "CLASS Fake ="\n',
+  ])("does not auto-close non-block equals: %s", (text) => {
+    expect(
+      templateForNewline(syntax(), text, { line: 1, character: 0 }),
+    ).toBeNull();
+  });
+
+  it("does not duplicate an existing matching END", () => {
+    const text = "CLASS Building =\n  \nEND Building;";
+    expect(
+      templateForNewline(syntax(), text, { line: 1, character: 2 }),
+    ).toBeNull();
+  });
+
+  it("does not auto-close when Enter is pressed again on an empty body line", () => {
+    expect(
+      templateForNewline(syntax(), "CLASS Building =\n\n", {
+        line: 2,
+        character: 0,
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("scope-aware completion", () => {
+  it("only proposes locally visible declarations before the caret", () => {
+    const text = [
+      "MODEL M =",
+      "  DOMAIN Before = TEXT;",
+      "  TOPIC T =",
+      "    CLASS C =",
+      "      value: Be",
+      "    END C;",
+      "  END T;",
+      "  DOMAIN Behind = TEXT;",
+      "END M.",
+    ].join("\n");
+    const labels = completionsAt(
+      syntax(),
+      null,
+      { line: 4, character: 15 },
+      text,
+    ).map((item) => item.label);
+    expect(labels).toContain("Before");
+    expect(labels).not.toContain("Behind");
+  });
+
+  it("resolves a qualified path one segment at a time", () => {
+    const text = [
+      "MODEL M =",
+      "  TOPIC Types =",
+      "    DOMAIN Code = TEXT;",
+      "  END Types;",
+      "  TOPIC Use =",
+      "    CLASS C =",
+      "      value: Types.Co",
+      "    END C;",
+      "  END Use;",
+      "END M.",
+    ].join("\n");
+    const items = completionsAt(
+      syntax(),
+      null,
+      { line: 6, character: 21 },
+      text,
+    );
+    expect(items.map((item) => item.label)).toContain("Code");
+    expect(
+      items.find((item) => item.label === "Code")?.textEdit?.range,
+    ).toEqual({
+      start: { line: 6, character: 19 },
+      end: { line: 6, character: 21 },
+    });
+  });
+
+  it("prefers the nearest declaration when a local symbol shadows a model symbol", () => {
+    const text = [
+      "MODEL M =",
+      "  DOMAIN Code = TEXT;",
+      "  TOPIC T =",
+      "    DOMAIN Code = NUMERIC;",
+      "    CLASS C =",
+      "      value: Co",
+      "    END C;",
+      "  END T;",
+      "END M.",
+    ].join("\n");
+    const items = completionsAt(
+      syntax(),
+      null,
+      { line: 5, character: 15 },
+      text,
+    ).filter((item) => item.label === "Code");
+    expect(items).toHaveLength(1);
+    expect(items[0]?.detail).toBe("M.T.Code");
+  });
+
+  it("does not resolve an ambiguous simple qualifier from sibling containers", () => {
+    const text = [
+      "MODEL M =",
+      "  TOPIC Left =",
+      "    STRUCTURE Shared =",
+      "    END Shared;",
+      "  END Left;",
+      "  TOPIC Right =",
+      "    STRUCTURE Shared =",
+      "    END Shared;",
+      "  END Right;",
+      "  TOPIC Use =",
+      "    CLASS C =",
+      "      values: LIST OF Shared.",
+      "    END C;",
+      "  END Use;",
+      "END M.",
+    ].join("\n");
+    expect(
+      completionsAt(syntax(), null, { line: 11, character: 29 }, text),
+    ).toEqual([]);
+  });
+
+  it("applies the INTERLIS 2.3/2.4 DATE and collection rules", () => {
+    const text = "MODEL M =\n  DOMAIN D = DA";
+    const version24 = syntax();
+    const version23 = syntax();
+    version23.iliVersion = "2.3";
+    expect(
+      completionsAt(version24, null, { line: 1, character: 15 }, text).map(
+        (item) => item.label,
+      ),
+    ).toContain("DATE");
+    expect(
+      completionsAt(version23, null, { line: 1, character: 15 }, text).map(
+        (item) => item.label,
+      ),
+    ).not.toContain("DATE");
+
+    const collectionText = [
+      "MODEL M =",
+      "  DOMAIN D = TEXT;",
+      "  STRUCTURE S =",
+      "  END S;",
+      "  CLASS C =",
+      "    value: LIST OF ",
+      "  END C;",
+      "END M.",
+    ].join("\n");
+    const collectionPosition = {
+      line: 5,
+      character: collectionText.split("\n")[5]!.length,
+    };
+    const labels24 = completionsAt(
+      version24,
+      null,
+      collectionPosition,
+      collectionText,
+    ).map((item) => item.label);
+    const labels23 = completionsAt(
+      version23,
+      null,
+      collectionPosition,
+      collectionText,
+    ).map((item) => item.label);
+    expect(labels24).toEqual(expect.arrayContaining(["D", "S"]));
+    expect(labels23).toContain("S");
+    expect(labels23).not.toContain("D");
+  });
+
+  it("uses imported semantic symbols only while the current IMPORTS allows them", () => {
+    const snapshot = syntax();
+    snapshot.imports = ["External"];
+    const imported = semantic();
+    imported.symbols = [
+      {
+        id: "external-code",
+        name: "Code",
+        qualifiedName: "External.Code",
+        kind: "domain",
+        containerId: "external",
+        range: {
+          ...range(0, 0),
+          uri: "repository:///External.ili",
+        },
+        selectionRange: null,
+        endRange: null,
+        abstract: false,
+      },
+    ];
+    const text = [
+      "MODEL M =",
+      "  IMPORTS External;",
+      "  CLASS C =",
+      "    value: Co",
+      "  END C;",
+      "END M.",
+    ].join("\n");
+    const position = { line: 3, character: 13 };
+    expect(
+      completionsAt(snapshot, imported, position, text).map(
+        (item) => item.label,
+      ),
+    ).toContain("Code");
+    snapshot.imports = [];
+    expect(
+      completionsAt(snapshot, imported, position, text).map(
+        (item) => item.label,
+      ),
+    ).not.toContain("Code");
   });
 });
 

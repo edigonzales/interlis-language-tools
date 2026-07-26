@@ -48,8 +48,10 @@
   ],
   "scripts": {
     "build": "node ../../scripts/build-extension.mjs",
+    "build:test:extension-host": "node ../../scripts/build-extension-host-tests.mjs",
     "typecheck": "tsc -b tsconfig.json --pretty false",
     "test": "vitest run --passWithNoTests",
+    "test:extension-host": "pnpm build && pnpm build:test:extension-host && node test/extension-host/run.mjs",
     "test:coverage": "vitest run --coverage --passWithNoTests",
     "vscode:prepublish": "pnpm build"
   },
@@ -60,7 +62,8 @@
     "vscode-languageclient": "^9.0.1"
   },
   "devDependencies": {
-    "@types/vscode": "^1.96.0"
+    "@types/vscode": "^1.96.0",
+    "@vscode/test-electron": "^2.5.2"
   },
   "contributes": {
     "languages": [
@@ -139,26 +142,82 @@
       {
         "command": "interlisLanguageTools.docx.export",
         "title": "INTERLIS: Export Documentation (DOCX)"
-      },
-      {
-        "command": "interlisLanguageTools.snippet.nextPlaceholder",
-        "title": "INTERLIS: Next Snippet Placeholder"
-      },
-      {
-        "command": "interlisLanguageTools.snippet.cursorMove",
-        "title": "INTERLIS: Leave Snippet and Move Cursor"
       }
     ],
     "keybindings": [
       {
         "command": "interlisLanguageTools.snippet.nextPlaceholder",
         "key": "tab",
-        "when": "editorLangId == interlis && inSnippetMode"
+        "when": "editorTextFocus && editorLangId == interlis && inSnippetMode && hasNextTabstop && !suggestWidgetVisible"
       },
       {
         "command": "interlisLanguageTools.snippet.nextPlaceholder",
         "key": "enter",
-        "when": "editorLangId == interlis && inSnippetMode"
+        "when": "editorTextFocus && editorLangId == interlis && inSnippetMode && hasNextTabstop && !suggestWidgetVisible"
+      },
+      {
+        "command": "interlisLanguageTools.snippet.cursorMove",
+        "key": "left",
+        "args": {
+          "command": "cursorLeft"
+        },
+        "when": "editorTextFocus && editorLangId == interlis && inSnippetMode"
+      },
+      {
+        "command": "interlisLanguageTools.snippet.cursorMove",
+        "key": "right",
+        "args": {
+          "command": "cursorRight"
+        },
+        "when": "editorTextFocus && editorLangId == interlis && inSnippetMode"
+      },
+      {
+        "command": "interlisLanguageTools.snippet.cursorMove",
+        "key": "up",
+        "args": {
+          "command": "cursorUp"
+        },
+        "when": "editorTextFocus && editorLangId == interlis && inSnippetMode"
+      },
+      {
+        "command": "interlisLanguageTools.snippet.cursorMove",
+        "key": "down",
+        "args": {
+          "command": "cursorDown"
+        },
+        "when": "editorTextFocus && editorLangId == interlis && inSnippetMode"
+      },
+      {
+        "command": "interlisLanguageTools.snippet.cursorMove",
+        "key": "home",
+        "args": {
+          "command": "cursorHome"
+        },
+        "when": "editorTextFocus && editorLangId == interlis && inSnippetMode"
+      },
+      {
+        "command": "interlisLanguageTools.snippet.cursorMove",
+        "key": "end",
+        "args": {
+          "command": "cursorEnd"
+        },
+        "when": "editorTextFocus && editorLangId == interlis && inSnippetMode"
+      },
+      {
+        "command": "interlisLanguageTools.snippet.cursorMove",
+        "key": "pageup",
+        "args": {
+          "command": "cursorPageUp"
+        },
+        "when": "editorTextFocus && editorLangId == interlis && inSnippetMode"
+      },
+      {
+        "command": "interlisLanguageTools.snippet.cursorMove",
+        "key": "pagedown",
+        "args": {
+          "command": "cursorPageDown"
+        },
+        "when": "editorTextFocus && editorLangId == interlis && inSnippetMode"
       }
     ],
     "configurationDefaults": {

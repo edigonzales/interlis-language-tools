@@ -11,6 +11,7 @@
     "build": "pnpm -r build",
     "build:packages": "pnpm --filter './packages/**' -r build",
     "test": "pnpm -r test",
+    "test:extension-host": "pnpm --filter interlis-language-tools test:extension-host",
     "test:coverage": "pnpm -r test:coverage",
     "typecheck": "pnpm -r typecheck",
     "lint": "eslint . --no-error-on-unmatched-pattern",

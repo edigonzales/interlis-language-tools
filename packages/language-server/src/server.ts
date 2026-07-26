@@ -113,7 +113,18 @@ export function bindLanguageServer(
             save: { includeText: true },
           },
           completionProvider: {
-            triggerCharacters: [" ", ".", "=", "(", "*", "@"],
+            triggerCharacters: [
+              " ",
+              ".",
+              "=",
+              "(",
+              "*",
+              "@",
+              ":",
+              "[",
+              "/",
+              ")",
+            ],
           },
           definitionProvider: true,
           referencesProvider: true,
@@ -123,7 +134,6 @@ export function bindLanguageServer(
           documentFormattingProvider: true,
           documentOnTypeFormattingProvider: {
             firstTriggerCharacter: "\n",
-            moreTriggerCharacter: ["="],
           },
         },
         serverInfo: { name: "@ilic/language-server", version: "0.1.0" },
@@ -217,14 +227,24 @@ export function bindLanguageServer(
   connection.onDocumentOnTypeFormatting(
     (params) =>
       service
-        .onTypeEdit(params.textDocument.uri, params.position, params.ch)
+        .onTypeEdit(
+          params.textDocument.uri,
+          params.position,
+          params.ch,
+          params.options,
+        )
         ?.edits.map(toTextEdit) ?? [],
   );
 
   connection.onRequest(
     InterlisProtocol.onTypeEdit,
     (params: OnTypeEditParams) =>
-      service.onTypeEdit(params.uri, params.position, params.character),
+      service.onTypeEdit(
+        params.uri,
+        params.position,
+        params.character,
+        params.options,
+      ),
   );
   connection.onRequest(
     InterlisProtocol.diagramSnapshot,

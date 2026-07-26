@@ -11,6 +11,13 @@ interface Manifest {
     configurationDefaults: Record<string, Record<string, unknown>>;
     configuration: { properties: Record<string, unknown> };
     languages: Array<{ id: string; extensions: string[] }>;
+    commands: Array<{ command: string; title: string }>;
+    keybindings: Array<{
+      command: string;
+      key: string;
+      when: string;
+      args?: { command?: string };
+    }>;
   };
 }
 
@@ -50,5 +57,46 @@ describe("VS Code extension manifest", () => {
         "interlisLanguageTools.diagram.rendering.target"
       ],
     ).toMatchObject({ default: "STANDARD" });
+  });
+
+  it("keeps snippet helpers internal and gives the suggest widget precedence", () => {
+    const commandIds = manifest.contributes.commands.map(
+      (command) => command.command,
+    );
+    expect(commandIds).not.toContain(
+      "interlisLanguageTools.snippet.nextPlaceholder",
+    );
+    expect(commandIds).not.toContain(
+      "interlisLanguageTools.snippet.cursorMove",
+    );
+    const placeholderKeys = manifest.contributes.keybindings.filter(
+      (binding) =>
+        binding.command === "interlisLanguageTools.snippet.nextPlaceholder",
+    );
+    expect(placeholderKeys.map((binding) => binding.key).sort()).toEqual([
+      "enter",
+      "tab",
+    ]);
+    for (const binding of placeholderKeys) {
+      expect(binding.when).toContain("hasNextTabstop");
+      expect(binding.when).toContain("!suggestWidgetVisible");
+    }
+    const cursorKeys = manifest.contributes.keybindings
+      .filter(
+        (binding) =>
+          binding.command === "interlisLanguageTools.snippet.cursorMove",
+      )
+      .map((binding) => binding.key)
+      .sort();
+    expect(cursorKeys).toEqual([
+      "down",
+      "end",
+      "home",
+      "left",
+      "pagedown",
+      "pageup",
+      "right",
+      "up",
+    ]);
   });
 });

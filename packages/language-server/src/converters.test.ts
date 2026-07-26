@@ -7,7 +7,12 @@ import {
   toTextEdit,
   toWorkspaceEdit,
 } from "./converters.js";
-import { SymbolKind } from "vscode-languageserver";
+import {
+  CompletionItemKind,
+  InsertTextFormat,
+  InsertTextMode,
+  SymbolKind,
+} from "vscode-languageserver";
 
 const range = {
   start: { line: 1, character: 2 },
@@ -20,20 +25,88 @@ describe("LSP converters", () => {
       1,
     );
     expect(toTextEdit({ range, newText: "Name" }).newText).toBe("Name");
-    expect(
-      toCompletion({
-        label: "CLASS",
-        kind: "snippet",
-        insertText: "CLASS ${1:Name}",
-        insertTextFormat: "snippet",
-      }).insertTextFormat,
-    ).toBe(2);
+    const completion = toCompletion({
+      label: "CLASS",
+      kind: "snippet",
+      insertText: "CLASS ${1:Name}",
+      insertTextFormat: "snippet",
+      insertTextMode: "as-is",
+      filterText: "CLASS",
+      sortText: "30-CLASS",
+      textEdit: { range, newText: "CLASS ${1:Name}" },
+    });
+    expect(completion).toMatchObject({
+      insertTextFormat: 2,
+      insertTextMode: 1,
+      filterText: "CLASS",
+      sortText: "30-CLASS",
+      textEdit: { range, newText: "CLASS ${1:Name}" },
+    });
     expect(
       toWorkspaceEdit({
         changes: { "memory:///M.ili": [{ range, newText: "Renamed" }] },
       }).changes?.["memory:///M.ili"]?.[0]?.newText,
     ).toBe("Renamed");
   });
+
+  it.each([
+    [
+      "MODEL",
+      "keyword",
+      "MODEL",
+      "25-MODEL",
+      CompletionItemKind.Keyword,
+      InsertTextFormat.PlainText,
+    ],
+    [
+      "CLASS Name = ... END Name;",
+      "snippet",
+      "CLASS ${1:Name} ${2:}=\n  $0\nEND ${1};",
+      "30-CLASS",
+      CompletionItemKind.Snippet,
+      InsertTextFormat.Snippet,
+    ],
+    [
+      "External",
+      "module",
+      "External",
+      "20-External",
+      CompletionItemKind.Module,
+      InsertTextFormat.PlainText,
+    ],
+    [
+      "Code",
+      "value",
+      "Code",
+      "10-Code",
+      CompletionItemKind.Value,
+      InsertTextFormat.PlainText,
+    ],
+  ] as const)(
+    "preserves the completion contract for %s",
+    (label, kind, newText, sortText, expectedKind, expectedFormat) => {
+      expect(
+        toCompletion({
+          label,
+          kind,
+          insertText: newText,
+          insertTextFormat: expectedFormat === 2 ? "snippet" : "plain",
+          insertTextMode: "as-is",
+          filterText: label.split(" ")[0],
+          sortText,
+          textEdit: { range, newText },
+        }),
+      ).toMatchObject({
+        label,
+        kind: expectedKind,
+        insertTextFormat: expectedFormat,
+        insertTextMode: InsertTextMode.asIs,
+        filterText: label.split(" ")[0],
+        sortText,
+        textEdit: { range, newText },
+      });
+    },
+  );
 
   it("maps diagnostics with related locations and safe fallback ranges", () => {
     const diagnostic = toDiagnostic({

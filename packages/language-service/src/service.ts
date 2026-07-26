@@ -7,7 +7,7 @@ import type {
 } from "@ilic/compiler-wasm";
 import {
   completionsAt,
-  contextAt,
+  completionContextAt,
   documentSymbols,
   locationsForDefinition,
   locationsForReferences,
@@ -20,6 +20,7 @@ import {
 import type {
   CompletionItem,
   DocumentSymbol,
+  EditorFormattingOptions,
   EditorPosition,
   HoverResult,
   Location,
@@ -27,6 +28,7 @@ import type {
   TemplateEdit,
   TextEdit,
 } from "./features.js";
+import type { CompletionContext } from "./completion.js";
 import type {
   ModelCatalogEntry,
   ModelRepository,
@@ -288,15 +290,15 @@ export class LanguageService {
   ): Promise<CompletionItem[]> {
     const syntax = this.getSyntaxSnapshot(uri)?.value;
     if (!syntax) return [];
+    const text = this.#effectiveSources.get(uri)?.text ?? "";
+    const context = completionContextAt(syntax, text, position);
     const base = completionsAt(
       syntax,
-      this.#semanticForDocument(uri)?.value ?? null,
+      this.#completionSemanticForDocument(uri)?.value ?? null,
       position,
+      text,
     );
-    if (
-      syntax.iliVersion === "1.0" ||
-      !this.#isImportPosition(syntax, position)
-    )
+    if (syntax.iliVersion === "1.0" || context?.slot !== "import-model")
       return base;
 
     let catalog = this.#catalog ?? [];
@@ -316,6 +318,12 @@ export class LanguageService {
           label: name,
           kind: "module",
           detail: "Workspace model",
+          insertText: name,
+          insertTextFormat: "plain",
+          insertTextMode: "adjust-indentation",
+          filterText: name,
+          sortText: `10-${name}`,
+          textEdit: { range: context.replaceRange, newText: name },
         });
     }
     for (const model of catalog) {
@@ -330,9 +338,26 @@ export class LanguageService {
         label: model.name,
         kind: "module",
         detail: `${model.version || "unversioned"} — ${model.repository}`,
+        insertText: model.name,
+        insertTextFormat: "plain",
+        insertTextMode: "adjust-indentation",
+        filterText: model.name,
+        sortText: `20-${model.name}`,
+        textEdit: { range: context.replaceRange, newText: model.name },
       });
     }
     return this.#deduplicate([...base, ...entries.values()]);
+  }
+
+  completionContext(
+    uri: string,
+    position: EditorPosition,
+  ): CompletionContext | null {
+    const syntax = this.getSyntaxSnapshot(uri)?.value;
+    const text = this.#effectiveSources.get(uri)?.text;
+    return syntax && text !== undefined
+      ? completionContextAt(syntax, text, position)
+      : null;
   }
 
   definition(uri: string, position: EditorPosition): Location[] {
@@ -474,10 +499,14 @@ export class LanguageService {
     uri: string,
     position: EditorPosition,
     character: string,
+    options: EditorFormattingOptions = {},
   ): TemplateEdit | null {
     if (character !== "\n" || this.isReadOnlyUri(uri)) return null;
     const syntax = this.getSyntaxSnapshot(uri)?.value;
-    return syntax ? templateForNewline(syntax, position) : null;
+    const text = this.#effectiveSources.get(uri)?.text;
+    return syntax && text !== undefined
+      ? templateForNewline(syntax, text, position, options)
+      : null;
   }
 
   async compile(roots: readonly string[]): Promise<CompilationResult> {
@@ -1204,24 +1233,6 @@ export class LanguageService {
     return result;
   }
 
-  #isImportPosition(syntax: SyntaxSnapshot, position: EditorPosition): boolean {
-    const context = contextAt(syntax, position)?.kind;
-    if (context === "importDef" || context === "importing") return true;
-    const lineTokens = syntax.tokens.filter(
-      (token) =>
-        token.channel === 0 &&
-        token.range.start.line === position.line &&
-        token.range.start.character <= position.character,
-    );
-    let imports = -1;
-    let semicolon = -1;
-    lineTokens.forEach((token, index) => {
-      if (token.kind === "IMPORTS") imports = index;
-      if (token.kind === "SEMI") semicolon = index;
-    });
-    return imports >= 0 && imports > semicolon;
-  }
-
   #deduplicate(items: readonly CompletionItem[]): CompletionItem[] {
     return items.filter(
       (item, index) =>
@@ -1273,6 +1284,26 @@ export class LanguageService {
             snapshot.freshness === "fresh" && this.#snapshotIsCurrent(snapshot),
         ) ?? null
     );
+  }
+
+  #completionSemanticForDocument(
+    uri: string,
+  ): VersionedResult<SemanticSnapshot> | null {
+    const current = this.#semanticForDocument(uri);
+    if (current) return current;
+    const candidates = [...this.#lastGoodSemanticByRoot.entries()]
+      .filter(
+        ([rootUri, snapshot]) =>
+          rootUri === uri ||
+          uri in snapshot.documentVersions ||
+          snapshot.value?.symbols.some((symbol) => symbol.range?.uri === uri),
+      )
+      .sort(([leftRoot, left], [rightRoot, right]) => {
+        if (leftRoot === uri && rightRoot !== uri) return -1;
+        if (rightRoot === uri && leftRoot !== uri) return 1;
+        return right.generation - left.generation;
+      });
+    return candidates[0]?.[1] ?? null;
   }
 
   #semanticOutline(uri: string): DocumentSymbol[] {

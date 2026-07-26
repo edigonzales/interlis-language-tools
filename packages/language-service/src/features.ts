@@ -5,6 +5,8 @@ import type {
   SyntaxContext,
   SyntaxSnapshot,
 } from "@ilic/compiler-wasm";
+import { completionItemsAt, detectCompletionContext } from "./completion.js";
+import type { CompletionContext } from "./completion.js";
 
 export interface EditorPosition {
   readonly line: number;
@@ -26,6 +28,10 @@ export interface TemplateEdit {
   readonly edits: readonly TextEdit[];
   readonly finalSelection: EditorRange;
 }
+export interface EditorFormattingOptions {
+  readonly tabSize?: number;
+  readonly insertSpaces?: boolean;
+}
 export interface CompletionItem {
   readonly label: string;
   readonly kind:
@@ -33,6 +39,10 @@ export interface CompletionItem {
   readonly detail?: string;
   readonly insertText?: string;
   readonly insertTextFormat?: "plain" | "snippet";
+  readonly insertTextMode?: "adjust-indentation" | "as-is";
+  readonly filterText?: string;
+  readonly sortText?: string;
+  readonly textEdit?: TextEdit;
 }
 export interface DocumentSymbol {
   readonly name: string;
@@ -50,51 +60,6 @@ export interface HoverResult {
   readonly markdown: string;
   readonly range: EditorRange;
 }
-
-const keywordItems: Readonly<Record<string, readonly CompletionItem[]>> = {
-  root: [
-    {
-      label: "MODEL",
-      kind: "snippet",
-      insertText: "MODEL ${1:Name} =\n  $0\nEND ${1:Name}.",
-      insertTextFormat: "snippet",
-    },
-  ],
-  modelDef: [
-    { label: "IMPORTS", kind: "keyword" },
-    {
-      label: "TOPIC",
-      kind: "snippet",
-      insertText: "TOPIC ${1:Name} =\n  $0\nEND ${1:Name};",
-      insertTextFormat: "snippet",
-    },
-    { label: "DOMAIN", kind: "keyword" },
-    { label: "UNIT", kind: "keyword" },
-  ],
-  topicDef: [
-    {
-      label: "CLASS",
-      kind: "snippet",
-      insertText: "CLASS ${1:Name} =\n  $0\nEND ${1:Name};",
-      insertTextFormat: "snippet",
-    },
-    { label: "STRUCTURE", kind: "keyword" },
-    { label: "ASSOCIATION", kind: "keyword" },
-    { label: "DOMAIN", kind: "keyword" },
-  ],
-  classDef: [
-    { label: "EXTENDS", kind: "keyword" },
-    { label: "MANDATORY", kind: "keyword" },
-    { label: "TEXT", kind: "value" },
-    { label: "NUMERIC", kind: "value" },
-  ],
-  attributeDef: [
-    { label: "TEXT", kind: "value" },
-    { label: "NUMERIC", kind: "value" },
-    { label: "BOOLEAN", kind: "value" },
-    { label: "DATE", kind: "value" },
-  ],
-};
 
 export function toEditorRange(range: SourceRange): EditorRange {
   return {
@@ -138,23 +103,17 @@ export function completionsAt(
   syntax: SyntaxSnapshot,
   semantic: SemanticSnapshot | null,
   position: EditorPosition,
+  text = "",
 ): CompletionItem[] {
-  const context = contextAt(syntax, position);
-  const base = keywordItems[context?.kind ?? "root"] ?? keywordItems.root ?? [];
-  const semanticItems = (semantic?.symbols ?? []).map((symbol) => ({
-    label: symbol.name,
-    kind:
-      symbol.kind === "Model"
-        ? ("module" as const)
-        : symbol.kind === "Attribute"
-          ? ("property" as const)
-          : ("class" as const),
-    detail: symbol.qualifiedName,
-  }));
-  return [...base, ...semanticItems].filter(
-    (item, index, items) =>
-      items.findIndex((candidate) => candidate.label === item.label) === index,
-  );
+  return completionItemsAt(syntax, text, semantic, position);
+}
+
+export function completionContextAt(
+  syntax: SyntaxSnapshot,
+  text: string,
+  position: EditorPosition,
+): CompletionContext | null {
+  return detectCompletionContext(syntax, text, position);
 }
 
 export function diagnosticsFor(
@@ -794,7 +753,7 @@ export function syntaxDocumentSymbols(
   );
 }
 
-export function templateForNewline(
+function legacyTemplateForNewline(
   syntax: SyntaxSnapshot,
   position: EditorPosition,
 ): TemplateEdit | null {
@@ -807,14 +766,33 @@ export function templateForNewline(
   });
   const equal = before.at(-1);
   if (equal?.kind !== "EQUAL") return null;
+  const declarationKinds = [
+    "MODEL",
+    "TOPIC",
+    "CLASS",
+    "STRUCTURE",
+    "ASSOCIATION",
+    "VIEW",
+    "GRAPHIC",
+    "DOMAIN",
+    "UNIT",
+  ];
   const declaration = [...before]
     .reverse()
-    .find((token) =>
-      ["MODEL", "TOPIC", "CLASS", "STRUCTURE", "ASSOCIATION"].includes(
-        token.kind,
-      ),
-    );
-  if (!declaration) return null;
+    .find((token) => declarationKinds.includes(token.kind));
+  if (
+    !declaration ||
+    declaration.kind === "DOMAIN" ||
+    declaration.kind === "UNIT"
+  )
+    return null;
+  const headerTokens = before.slice(before.indexOf(declaration) + 1, -1);
+  if (
+    headerTokens.some(
+      (token) => token.kind === "COLON" || token.kind === "SEMI",
+    )
+  )
+    return null;
   const name = before
     .slice(before.indexOf(declaration) + 1)
     .find((token) => token.kind === "NAME")?.text;
@@ -833,4 +811,164 @@ export function templateForNewline(
     edits: [{ range: { start: position, end: position }, newText: insertion }],
     finalSelection: { start: cursor, end: cursor },
   };
+}
+
+const namedBlockHeader =
+  /^\s*(MODEL|TOPIC|CLASS|STRUCTURE|ASSOCIATION|VIEW\s+TOPIC|VIEW|GRAPHIC)\s+([A-Za-z_][A-Za-z0-9_]*)\b([\s\S]*?)=\s*$/iu;
+
+function withoutCommentsAndStrings(value: string): string {
+  let result = "";
+  let quoted = false;
+  for (let index = 0; index < value.length; index++) {
+    const current = value[index]!;
+    const next = value[index + 1];
+    if (!quoted && current === "!" && next === "!") {
+      while (index < value.length && value[index] !== "\n") index++;
+      result += "\n";
+      continue;
+    }
+    if (current === '"' && value[index - 1] !== "\\") {
+      quoted = !quoted;
+      result += " ";
+      continue;
+    }
+    result += quoted && current !== "\n" ? " " : current;
+  }
+  return result;
+}
+
+function explicitIndentUnit(
+  text: string,
+  lines: readonly string[],
+  headerLine: number,
+  baseIndent: string,
+  name: string,
+  options: EditorFormattingOptions,
+): string {
+  const matchingEnd = new RegExp(
+    `^${baseIndent.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}END\\s+${name}\\s*[.;]`,
+    "iu",
+  );
+  for (const line of lines.slice(headerLine + 1)) {
+    if (matchingEnd.test(line)) break;
+    if (!line.trim() || /^\s*!!/u.test(line)) continue;
+    const indent = line.match(/^\s*/u)?.[0] ?? "";
+    if (indent.startsWith(baseIndent) && indent.length > baseIndent.length)
+      return indent.slice(baseIndent.length);
+  }
+  if (options.insertSpaces === false) return "\t";
+  if (lines.some((line) => /^\t+\S/u.test(line))) return "\t";
+  if (options.insertSpaces === true)
+    return " ".repeat(Math.max(1, options.tabSize ?? 2));
+  if (text.includes("\n\t")) return "\t";
+  return "  ";
+}
+
+function logicalHeaderBefore(
+  lines: readonly string[],
+  line: number,
+): { readonly line: number; readonly value: string } | null {
+  const startPattern =
+    /^\s*(?:MODEL|TOPIC|CLASS|STRUCTURE|ASSOCIATION|VIEW\s+TOPIC|VIEW|GRAPHIC)\b/iu;
+  for (let start = line - 1; start >= Math.max(0, line - 20); start--) {
+    const candidate = lines[start] ?? "";
+    if (!startPattern.test(candidate)) continue;
+    return {
+      line: start,
+      value: lines.slice(start, line).join("\n"),
+    };
+  }
+  return null;
+}
+
+function robustTemplateForNewline(
+  syntax: SyntaxSnapshot,
+  text: string,
+  position: EditorPosition,
+  options: EditorFormattingOptions,
+): TemplateEdit | null {
+  if (syntax.iliVersion === "1.0" || position.line <= 0) return null;
+  const lines = text.split(/\r?\n/u);
+  const currentLine = lines[position.line] ?? "";
+  if (currentLine.slice(0, position.character).trim()) return null;
+  const previousLine = withoutCommentsAndStrings(
+    lines[position.line - 1] ?? "",
+  ).trimEnd();
+  if (!previousLine.endsWith("=")) return null;
+  const logical = logicalHeaderBefore(lines, position.line);
+  if (!logical) return null;
+  const sanitized = withoutCommentsAndStrings(logical.value);
+  if ((sanitized.match(/=/gu) ?? []).length !== 1) return null;
+  const match = sanitized.match(namedBlockHeader);
+  if (!match?.[1] || !match[2]) return null;
+
+  const kind = match[1].replace(/\s+/gu, " ").toUpperCase();
+  const name = match[2];
+  const originalStart = lines[logical.line] ?? "";
+  const baseIndent = originalStart.match(/^\s*/u)?.[0] ?? "";
+  const terminator = kind === "MODEL" ? "." : ";";
+  const duplicate = lines
+    .slice(position.line)
+    .some((line) =>
+      new RegExp(
+        `^${baseIndent.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}END\\s+${name}\\s*${terminator === "." ? "\\." : ";"}`,
+        "iu",
+      ).test(line),
+    );
+  if (duplicate) return null;
+
+  const child =
+    baseIndent +
+    explicitIndentUnit(text, lines, position.line, baseIndent, name, options);
+  const replaceRange: EditorRange = {
+    start: { line: position.line, character: 0 },
+    end: position,
+  };
+  if (kind === "VIEW TOPIC") {
+    const depends = `${child}DEPENDS ON `;
+    const cursor = {
+      line: position.line,
+      character: depends.length,
+    };
+    return {
+      edits: [
+        {
+          range: replaceRange,
+          newText: `${depends}\n${child}\n${baseIndent}END ${name};`,
+        },
+      ],
+      finalSelection: { start: cursor, end: cursor },
+    };
+  }
+  const cursor = { line: position.line, character: child.length };
+  return {
+    edits: [
+      {
+        range: replaceRange,
+        newText: `${child}\n${baseIndent}END ${name}${terminator}`,
+      },
+    ],
+    finalSelection: { start: cursor, end: cursor },
+  };
+}
+
+export function templateForNewline(
+  syntax: SyntaxSnapshot,
+  position: EditorPosition,
+): TemplateEdit | null;
+export function templateForNewline(
+  syntax: SyntaxSnapshot,
+  text: string,
+  position: EditorPosition,
+  options?: EditorFormattingOptions,
+): TemplateEdit | null;
+export function templateForNewline(
+  syntax: SyntaxSnapshot,
+  textOrPosition: string | EditorPosition,
+  position?: EditorPosition,
+  options: EditorFormattingOptions = {},
+): TemplateEdit | null {
+  return typeof textOrPosition === "string" && position
+    ? robustTemplateForNewline(syntax, textOrPosition, position, options)
+    : legacyTemplateForNewline(syntax, textOrPosition as EditorPosition);
 }

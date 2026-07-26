@@ -92,7 +92,7 @@ function compiler(): CompilerBackend {
 }
 
 describe("MonacoLanguageAdapter", () => {
-  it("registers direct providers and owns model lifecycle", () => {
+  it("registers direct providers and owns model lifecycle", async () => {
     const providers: unknown[] = [];
     const disposable = () => ({ dispose: vi.fn() });
     class ValueRange {
@@ -149,9 +149,10 @@ describe("MonacoLanguageAdapter", () => {
     const adapter = new MonacoLanguageAdapter(monaco, service);
     let listener: () => void = () => undefined;
     let version = 1;
+    let modelText = "INTERLIS 2.4;\nMOD";
     const model: MonacoModel = {
       uri: { toString: () => "memory:///M.ili" },
-      getValue: () => "INTERLIS 2.4;",
+      getValue: () => modelText,
       getVersionId: () => version,
       onDidChangeContent: (next) => {
         listener = next;
@@ -161,9 +162,85 @@ describe("MonacoLanguageAdapter", () => {
     const attached = adapter.attachModel(model);
     expect(providers).toHaveLength(8);
     expect(markers).toHaveBeenCalled();
+    const completionProvider = providers[0] as {
+      triggerCharacters: string[];
+      provideCompletionItems(
+        model: MonacoModel,
+        position: { lineNumber: number; column: number },
+      ): Promise<{
+        suggestions: Array<{
+          label: string;
+          insertText: string;
+          insertTextRules: number;
+          filterText?: string;
+          sortText?: string;
+          range?: ValueRange;
+        }>;
+      }>;
+    };
+    expect(completionProvider.triggerCharacters).toEqual(
+      expect.arrayContaining([":", "[", "/", ")"]),
+    );
+    const completions = await completionProvider.provideCompletionItems(model, {
+      lineNumber: 2,
+      column: 4,
+    });
+    expect(
+      completions.suggestions.find(
+        (item) =>
+          item.label === "MODEL Name (lang) AT ... VERSION ... = ... END Name.",
+      ),
+    ).toMatchObject({
+      insertTextRules: 5,
+      filterText: "MODEL",
+      sortText: "30-MODEL Name (lang) AT ... VERSION ... = ... END Name.",
+      range: {
+        startLine: 2,
+        startColumn: 1,
+        endLine: 2,
+        endColumn: 4,
+      },
+    });
     version = 2;
+    modelText = [
+      "INTERLIS 2.4;",
+      "MODEL M =",
+      "  TOPIC T =",
+      "    CLA",
+      "  END T;",
+      "END M.",
+    ].join("\n");
     listener();
-    expect(service.getDocument("memory:///M.ili")?.version).toBe(2);
+    const classCompletions = await completionProvider.provideCompletionItems(
+      model,
+      {
+        lineNumber: 4,
+        column: 8,
+      },
+    );
+    expect(
+      classCompletions.suggestions.find(
+        (item) => item.label === "CLASS Name = ... END Name;",
+      ),
+    ).toMatchObject({
+      insertTextRules: 5,
+      filterText: "CLASS",
+      sortText: "30-CLASS Name = ... END Name;",
+      range: {
+        startLine: 4,
+        startColumn: 5,
+        endLine: 4,
+        endColumn: 8,
+      },
+    });
+    const onTypeProvider = providers[7] as {
+      autoFormatTriggerCharacters: string[];
+    };
+    expect(onTypeProvider.autoFormatTriggerCharacters).toEqual(["\n"]);
+    version = 3;
+    modelText = "INTERLIS 2.4;\nMODE";
+    listener();
+    expect(service.getDocument("memory:///M.ili")?.version).toBe(3);
     expect(
       adapter.suggestionActivation(model, { lineNumber: 1, column: 1 }).open,
     ).toBe(false);
