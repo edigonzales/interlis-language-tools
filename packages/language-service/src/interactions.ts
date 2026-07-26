@@ -10,11 +10,6 @@ import type { CompilationOutputEvent } from "./types.js";
 export const DEFAULT_TEMPLATE_URL =
   "https://geo.so.ch/models/AGI/SO_AGI_Modellvorlage_20260324.ili";
 export const DEFAULT_TEMPLATE_TIMEOUT_MS = 3_000;
-export const OFFLINE_TEMPLATE = `INTERLIS 2.4;
-MODEL NewModel AT "https://example.invalid/models" VERSION "1" =
-
-END NewModel.
-`;
 
 export type SuggestionReason =
   | "none"

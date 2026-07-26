@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import type { SyntaxSnapshot } from "@ilic/compiler-wasm";
 import {
   DEFAULT_TEMPLATE_URL,
-  OFFLINE_TEMPLATE,
   OutputBuffer,
   fetchTemplate,
   isBlankInterlisDocument,
@@ -155,7 +154,6 @@ describe("snippet navigation and guards", () => {
     expect(isBlankInterlisDocument(" \n\t")).toBe(true);
     expect(isBlankInterlisDocument("MODEL M")).toBe(false);
     expect(isBlankInterlisDocument(undefined)).toBe(false);
-    expect(OFFLINE_TEMPLATE).toContain("END NewModel.");
   });
 });
 

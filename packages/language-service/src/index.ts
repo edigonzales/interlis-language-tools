@@ -35,7 +35,6 @@ export { contains, contextAt, toEditorRange } from "./features.js";
 export {
   DEFAULT_TEMPLATE_TIMEOUT_MS,
   DEFAULT_TEMPLATE_URL,
-  OFFLINE_TEMPLATE,
   OutputBuffer,
   fetchTemplate,
   formatCompilationOutput,

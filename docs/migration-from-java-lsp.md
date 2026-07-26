@@ -25,10 +25,9 @@ values are read as fallbacks where they still have meaning. Java-, JAR-, JVM-
 and GLSP-WebSocket settings have no equivalent because no JRE or diagram server
 is shipped.
 
-The remote template keeps the established default URL and three-second timeout;
-an offline template is bundled. Compiler and debug output remain visible through
-dedicated output channels. `autoShowOutputOnStart` is now evaluated instead of
-being declaration-only.
+The remote template keeps the established default URL and three-second timeout.
+Compiler and debug output remain visible through dedicated output channels.
+`autoShowOutputOnStart` is now evaluated instead of being declaration-only.
 
 ## Behavioral differences
 
