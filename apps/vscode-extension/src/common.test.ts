@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LanguageClientFacade } from "./common.js";
 
+let didOpenHandler:
+  | ((document: {
+      languageId: string;
+      uri: { scheme: string; toString(): string };
+    }) => void)
+  | undefined;
+
 const vscodeMock = {
   window: {
     activeTextEditor: undefined as unknown,
@@ -8,7 +15,17 @@ const vscodeMock = {
     showInformationMessage: vi.fn(),
     showErrorMessage: vi.fn(),
   },
-  workspace: { fs: { writeFile: vi.fn() } },
+  workspace: {
+    fs: { writeFile: vi.fn() },
+    onDidOpenTextDocument: vi.fn(
+      (
+        handler: NonNullable<typeof didOpenHandler>,
+      ): { readonly dispose: () => void } => {
+        didOpenHandler = handler;
+        return { dispose: vi.fn() };
+      },
+    ),
+  },
   Uri: {
     file: vi.fn((path: string) => ({
       scheme: "file",
@@ -34,12 +51,15 @@ doMock("vscode", () => vscodeMock, { virtual: true });
 
 const {
   compileActiveDocumentOnStartup,
+  compileOpenedDocument,
   docxExportProposal,
   exportDocxFromActiveDocument,
+  registerDocumentOpenCompilation,
 } = await import("./common.js");
 
 beforeEach(() => {
   vscodeMock.window.activeTextEditor = undefined;
+  didOpenHandler = undefined;
   vi.clearAllMocks();
 });
 
@@ -49,7 +69,7 @@ describe("VS Code startup compilation", () => {
     const client = { sendRequest } as unknown as LanguageClientFacade;
     const document = {
       languageId: "interlis",
-      uri: { toString: () => "file:///Root.ili" },
+      uri: { scheme: "file", toString: () => "file:///Root.ili" },
     };
 
     await compileActiveDocumentOnStartup(client, document);
@@ -61,19 +81,102 @@ describe("VS Code startup compilation", () => {
     });
   });
 
-  it("does not compile a non-INTERLIS or missing active document", async () => {
+  it("does not compile an ineligible or missing active document", async () => {
     const sendRequest = vi.fn(() => Promise.resolve({}));
     const client = { sendRequest } as unknown as LanguageClientFacade;
 
     await compileActiveDocumentOnStartup(client, {
       languageId: "plaintext",
-      uri: { toString: () => "file:///notes.txt" },
+      uri: { scheme: "file", toString: () => "file:///notes.txt" },
+    });
+    await compileActiveDocumentOnStartup(client, {
+      languageId: "interlis",
+      uri: { scheme: "untitled", toString: () => "untitled:Untitled-1" },
+    });
+    await compileActiveDocumentOnStartup(client, {
+      languageId: "interlis",
+      uri: {
+        scheme: "interlis-repository",
+        toString: () => "interlis-repository:/Units.ili",
+      },
     });
     await compileActiveDocumentOnStartup(client, undefined);
 
     expect(sendRequest).not.toHaveBeenCalled();
   });
+});
 
+describe("VS Code open compilation", () => {
+  it.each([
+    ["file", "file:///Root.ili"],
+    ["vscode-vfs", "vscode-vfs://github/workspace/Root.ili"],
+  ])(
+    "compiles an opened %s document with the open trigger",
+    async (scheme, uri) => {
+      const sendRequest = vi.fn(() => Promise.resolve({}));
+      const client = { sendRequest } as unknown as LanguageClientFacade;
+
+      await compileOpenedDocument(client, {
+        languageId: "interlis",
+        uri: { scheme, toString: () => uri },
+      });
+
+      expect(sendRequest).toHaveBeenCalledOnce();
+      expect(sendRequest).toHaveBeenCalledWith("interlis/compile", {
+        uri,
+        trigger: "open",
+      });
+    },
+  );
+
+  it.each([
+    ["plaintext", "file", "file:///notes.txt"],
+    ["interlis", "untitled", "untitled:Untitled-1"],
+    ["interlis", "interlis-repository", "interlis-repository:/Units.ili"],
+  ])(
+    "does not compile %s documents with the %s scheme",
+    async (languageId, scheme, uri) => {
+      const sendRequest = vi.fn(() => Promise.resolve({}));
+      const client = { sendRequest } as unknown as LanguageClientFacade;
+
+      await compileOpenedDocument(client, {
+        languageId,
+        uri: { scheme, toString: () => uri },
+      });
+
+      expect(sendRequest).not.toHaveBeenCalled();
+    },
+  );
+
+  it("registers once and reports request failures only to debug output", async () => {
+    const sendRequest = vi.fn(() =>
+      Promise.reject(new Error("transport unavailable")),
+    );
+    const debug = { appendLine: vi.fn() };
+    const context = { subscriptions: [] };
+
+    registerDocumentOpenCompilation(
+      context as never,
+      { sendRequest } as unknown as LanguageClientFacade,
+      debug,
+    );
+    didOpenHandler?.({
+      languageId: "interlis",
+      uri: { scheme: "file", toString: () => "file:///Root.ili" },
+    });
+
+    await vi.waitFor(() => expect(debug.appendLine).toHaveBeenCalledOnce());
+    expect(sendRequest).toHaveBeenCalledOnce();
+    expect(debug.appendLine).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "open compilation request failed: transport unavailable",
+      ),
+    );
+    expect(context.subscriptions).toHaveLength(1);
+  });
+});
+
+describe("VS Code DOCX export", () => {
   it("proposes a neighboring DOCX and preserves the source title", () => {
     expect(
       docxExportProposal({ scheme: "file", path: "/workspace/Model.ili" }),

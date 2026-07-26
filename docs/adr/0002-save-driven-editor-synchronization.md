@@ -26,9 +26,19 @@ nicht verdrängen.
 
 ## Entscheidung
 
-Semantische Analyse bleibt grundsätzlich save-driven. Öffnen und Tippen
-aktualisieren nur die effektive Quelle. Ein Save oder ein expliziter manueller
-Compile kompiliert genau eine Root-URI samt transitiven Abhängigkeiten.
+Semantische Analyse bleibt nach dem initialen Laden grundsätzlich save-driven.
+Beim Öffnen eines gespeicherten, editierbaren INTERLIS-Dokuments fordert die
+VS-Code-Extension genau eine Kompilation mit dem Trigger `open` für die Root-URI
+samt transitiven Abhängigkeiten an. Das gilt für Desktop- und Browser-URIs;
+`untitled:` und schreibgeschützte `interlis-repository:`-Dokumente sind
+ausgeschlossen. Ein beim Start bereits aktives Dokument verwendet weiterhin
+den Trigger `startup`.
+
+Nach dieser initialen Kompilation aktualisiert Tippen nur die effektive Quelle.
+Ein Save oder ein expliziter manueller Compile kompiliert die Root-URI erneut.
+Eine Änderung oder ein Save, die einen noch ausstehenden Open-Lauf überholen,
+verwerfen dessen Resultat nach denselben Regeln wie andere automatische
+Kompilationen.
 
 Eine eng begrenzte Ausnahme gilt beim ersten Öffnen eines Diagramms: Existiert
 für eine nichtleere, gespeicherte Root-URI noch kein semantischer Snapshot,
@@ -69,13 +79,14 @@ geänderte URI enthält. Nicht zuordenbare Source-Additions, Löschungen und
 Repository-Wechsel invalidieren vorhandene Root-Snapshots konservativ. Der
 `lastGood`-Snapshot wird dabei nicht gelöscht.
 
-| Ereignis                         | Semantischer Zustand                                                                        | Sichtbare Projektion                                                                                               |
-| -------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| Tippen oder Rename               | Betroffene `current`- und gespeicherte Snapshots werden `stale`; `lastGood` bleibt bestehen | OUTLINE wartet auf Analyse; offene betroffene Diagramme behalten SVG und Viewport und werden als veraltet markiert |
-| Save                             | Keine zweite Invalidierung; ein gültiges Resultat ersetzt `current` und `lastGood` atomar   | OUTLINE erhält neue Symbole; offene betroffene Diagramme werden neu gelayoutet                                     |
-| Ungültiger Save                  | Das Fehlerresultat wird `current`; `lastGood` bleibt bestehen                               | Das vorherige OUTLINE bleibt sichtbar; Diagramme behalten SVG und Viewport und zeigen einen Fehlerstatus           |
-| Watcher-Echo einer offenen Datei | Nur die Workspace-Hintergrundquelle wird nachgeführt                                        | Kein Flackern und keine erneute Invalidierung                                                                      |
-| Überholte Kompilation            | Das Resultat wird verworfen                                                                 | Keine Notification und kein UI-Update                                                                              |
+| Ereignis                             | Semantischer Zustand                                                                                          | Sichtbare Projektion                                                                                               |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Öffnen eines gespeicherten Dokuments | Ein `open`-Lauf erzeugt den initialen Root-Snapshot; `untitled:` und Repository-Dokumente bleiben ausgenommen | Compiler-Output, Problems, OUTLINE und offene Diagramme erhalten denselben atomaren Stand                          |
+| Tippen oder Rename                   | Betroffene `current`- und gespeicherte Snapshots werden `stale`; `lastGood` bleibt bestehen                   | OUTLINE wartet auf Analyse; offene betroffene Diagramme behalten SVG und Viewport und werden als veraltet markiert |
+| Save                                 | Keine zweite Invalidierung; ein gültiges Resultat ersetzt `current` und `lastGood` atomar                     | OUTLINE erhält neue Symbole; offene betroffene Diagramme werden neu gelayoutet                                     |
+| Ungültiger Save                      | Das Fehlerresultat wird `current`; `lastGood` bleibt bestehen                                                 | Das vorherige OUTLINE bleibt sichtbar; Diagramme behalten SVG und Viewport und zeigen einen Fehlerstatus           |
+| Watcher-Echo einer offenen Datei     | Nur die Workspace-Hintergrundquelle wird nachgeführt                                                          | Kein Flackern und keine erneute Invalidierung                                                                      |
+| Überholte Kompilation                | Das Resultat wird verworfen                                                                                   | Keine Notification und kein UI-Update                                                                              |
 
 ### Rename
 
@@ -137,6 +148,8 @@ werden keine Panels als Nebeneffekt eines Saves geöffnet; der manuelle Befehl
 
 ## Konsequenzen
 
+- Gespeicherte editierbare Dokumente liefern beim Öffnen sofort Compiler-Output
+  und Problems, ohne einen vorherigen Save oder manuellen Compile.
 - UI-Projektionen bleiben während des Tippens stabil, können aber bewusst als
   veraltet markiert sein.
 - Ein Save ist die atomare Grenze, an der Compilerzustand und sichtbare
@@ -150,9 +163,10 @@ werden keine Panels als Nebeneffekt eines Saves geöffnet; der manuelle Befehl
 
 ## Verifikation
 
-Unit- und Vertragstests decken Root-Isolation, Versionsvektoren,
-Watcher-Echos, Cancellation, ungültige Saves, abhängige Diagramme,
-Deduplizierung sowie überholte Requests ab. Die Diagrammtests decken
+Unit- und Vertragstests decken Open-Kompilationen für Desktop- und Web-URIs,
+die Ausschlüsse für Untitled- und Repository-Dokumente, Root-Isolation,
+Versionsvektoren, Watcher-Echos, Cancellation, ungültige Saves, abhängige
+Diagramme, Deduplizierung sowie überholte Requests ab. Die Diagrammtests decken
 zusätzlich den `CustomDocument`-Lifecycle, unabhängige Fenster-Workflows,
 mehrere Panels pro URI, eigene Viewports und die Rehydrierung nach einem
 abgebrochenen alten Refresh ab. Die Desktop-Abnahme für „Move into New

@@ -47,7 +47,7 @@ export interface AnalysisEvent {
 }
 
 export type CompilationTrigger =
-  "save" | "manual" | "startup" | "dependency" | "diagram";
+  "save" | "manual" | "open" | "startup" | "dependency" | "diagram";
 
 export interface CompilationOutputEvent {
   readonly runId: number;

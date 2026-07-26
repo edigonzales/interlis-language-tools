@@ -238,7 +238,7 @@ describe("language server repository contract", () => {
     const makeEvent = (uri: string, code: string): CompilationEvent => ({
       runId: code === "first" ? 1 : 2,
       timestamp: "2026-07-20T12:00:00.000Z",
-      trigger: "save",
+      trigger: code === "first" ? "open" : "save",
       rootUri: uri,
       documentVersion: 1,
       compilation: {
@@ -306,6 +306,13 @@ describe("language server repository contract", () => {
       InterlisProtocol.compilationCompleted,
       expect.objectContaining({ rootUri: "file:///B.ili" }),
     );
+    expect(harness.sendNotification).toHaveBeenCalledWith(
+      InterlisProtocol.compilationCompleted,
+      expect.objectContaining({
+        rootUri: "file:///A.ili",
+        trigger: "open",
+      }),
+    );
     expect(harness.sendNotification).toHaveBeenLastCalledWith(
       InterlisProtocol.semanticSnapshotChanged,
       expect.objectContaining({
@@ -333,6 +340,14 @@ describe("language server repository contract", () => {
       `onRequest:${InterlisProtocol.compile}`,
     )({ uri });
     expect(harness.spies.compileDocument).toHaveBeenCalledWith(uri, "manual");
+
+    await harness.handler<
+      (params: { uri: string; trigger: "open" }) => Promise<unknown>
+    >(`onRequest:${InterlisProtocol.compile}`)({
+      uri,
+      trigger: "open",
+    });
+    expect(harness.spies.compileDocument).toHaveBeenCalledWith(uri, "open");
 
     await harness.handler<
       (params: { uri: string; trigger: "startup" }) => Promise<unknown>

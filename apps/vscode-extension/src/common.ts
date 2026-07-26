@@ -29,20 +29,60 @@ export interface LanguageClientFacade {
   ): vscode.Disposable;
 }
 
+interface OpenCompilationDocument {
+  readonly languageId: string;
+  readonly uri: {
+    readonly scheme: string;
+    toString(): string;
+  };
+}
+
+function supportsOpenCompilation(
+  document: OpenCompilationDocument | undefined,
+): document is OpenCompilationDocument {
+  return (
+    document?.languageId === "interlis" &&
+    document.uri.scheme !== "untitled" &&
+    document.uri.scheme !== "interlis-repository"
+  );
+}
+
+export async function compileOpenedDocument(
+  client: LanguageClientFacade,
+  document: OpenCompilationDocument,
+  trigger: "open" | "startup" = "open",
+): Promise<void> {
+  if (!supportsOpenCompilation(document)) return;
+  await client.sendRequest<CompilationResult>(InterlisProtocol.compile, {
+    uri: document.uri.toString(),
+    trigger,
+  } satisfies CompileParams);
+}
+
 /** Compile the active INTERLIS editor once after the language client starts. */
 export async function compileActiveDocumentOnStartup(
   client: LanguageClientFacade,
-  document:
-    | (Pick<vscode.TextDocument, "languageId"> & {
-        readonly uri: { toString(): string };
-      })
-    | undefined = vscode.window.activeTextEditor?.document,
+  document: OpenCompilationDocument | undefined = vscode.window.activeTextEditor
+    ?.document,
 ): Promise<void> {
-  if (!document || document.languageId !== "interlis") return;
-  await client.sendRequest<CompilationResult>(InterlisProtocol.compile, {
-    uri: document.uri.toString(),
-    trigger: "startup",
-  } satisfies CompileParams);
+  if (!document) return;
+  await compileOpenedDocument(client, document, "startup");
+}
+
+export function registerDocumentOpenCompilation(
+  context: vscode.ExtensionContext,
+  client: LanguageClientFacade,
+  debug: Pick<vscode.OutputChannel, "appendLine">,
+): void {
+  context.subscriptions.push(
+    vscode.workspace.onDidOpenTextDocument((document) => {
+      void compileOpenedDocument(client, document).catch((error: unknown) => {
+        debug.appendLine(
+          `[${new Date().toISOString()}] open compilation request failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
+    }),
+  );
 }
 
 export interface PendingSelection {

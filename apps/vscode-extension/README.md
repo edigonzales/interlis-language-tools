@@ -5,7 +5,7 @@ Web and compatible Theia products.
 
 ## Features
 
-- save/manual-compile diagnostics, plus snapshot-based completion, hover,
+- open/save/manual-compile diagnostics, plus snapshot-based completion, hover,
   definitions, references and rename for unchanged compiled documents;
 - document symbols, full-document and on-type formatting;
 - parser-aware suggestions, snippets, templates and INTERLIS syntax themes;

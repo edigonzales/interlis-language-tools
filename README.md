@@ -19,9 +19,11 @@ LSP adapter   Monaco adapter
 VS Code/Theia   Browser IDE
 ```
 
-Compilation is save-driven. Opening and typing only update the in-memory buffer;
-they do not parse, analyze, or compile. Save and the manual compile command run
-exactly one root plus its transitive imports and atomically produce compiler
+Compilation remains save-driven after the initial document load. In VS
+Code-based hosts, opening a saved, editable `.ili` document runs exactly one
+root plus its transitive imports; untitled buffers and read-only repository
+documents are excluded. Typing only updates the in-memory buffer. Save and the
+manual compile command run the root again and atomically produce compiler
 Output, Problems, and editor snapshots. Output is the compiler-owned CLI-style
 transcript, including the final error/warning summary; Problems contains the
 same diagnostics in structured form. Unsaved changes keep the last result

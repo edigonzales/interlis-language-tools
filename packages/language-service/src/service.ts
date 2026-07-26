@@ -538,6 +538,7 @@ export class LanguageService {
       save: 1,
       diagram: 2,
       dependency: 3,
+      open: 4,
       startup: 4,
     };
     try {

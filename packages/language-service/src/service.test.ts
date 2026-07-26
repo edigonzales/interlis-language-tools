@@ -264,23 +264,26 @@ describe("save-driven LanguageService", () => {
     ).rejects.toThrow("Exactly one root");
   });
 
-  it("publishes a startup compilation with exactly one root", async () => {
-    const compiler = backend();
-    const events: CompilationEvent[] = [];
-    const service = new LanguageService(compiler, {
-      onCompilation: (event) => events.push(event),
-    });
-    service.openDocument(rootUri, "MODEL Root", 1);
+  it.each(["open", "startup"] as const)(
+    "publishes a %s-triggered compilation with exactly one root",
+    async (trigger) => {
+      const compiler = backend();
+      const events: CompilationEvent[] = [];
+      const service = new LanguageService(compiler, {
+        onCompilation: (event) => events.push(event),
+      });
+      service.openDocument(rootUri, "MODEL Root", 1);
 
-    await service.compileDocument(rootUri, "startup");
+      await service.compileDocument(rootUri, trigger);
 
-    expect(compiler.compileAndAnalyze).toHaveBeenCalledWith({
-      roots: [rootUri],
-    });
-    expect(events).toHaveLength(1);
-    expect(events[0]?.trigger).toBe("startup");
-    expect(events[0]?.rootUri).toBe(rootUri);
-  });
+      expect(compiler.compileAndAnalyze).toHaveBeenCalledWith({
+        roots: [rootUri],
+      });
+      expect(events).toHaveLength(1);
+      expect(events[0]?.trigger).toBe(trigger);
+      expect(events[0]?.rootUri).toBe(rootUri);
+    },
+  );
 
   it("publishes a diagram-triggered first-demand compilation", async () => {
     const compiler = backend();
@@ -332,6 +335,40 @@ describe("save-driven LanguageService", () => {
     });
     expect(events).toHaveLength(1);
     expect(events[0]?.runId).toBe(2);
+  });
+
+  it("lets a changed document save supersede its pending open compile", async () => {
+    const compiler = backend((request) =>
+      analysis(request.roots, {
+        documentVersions: { [rootUri]: 2 },
+        symbols: [modelSymbol(rootUri, "Saved")],
+      }),
+    );
+    const events: CompilationEvent[] = [];
+    const service = new LanguageService(compiler, {
+      onCompilation: (event) => events.push(event),
+    });
+    service.openDocument(rootUri, "MODEL Opened", 1);
+
+    const opened = service.compileDocument(rootUri, "open");
+    service.changeDocument(rootUri, "MODEL Saved", 2);
+    service.markSaved(rootUri);
+    const saved = service.compileDocument(rootUri, "save");
+
+    await expect(opened).resolves.toMatchObject({
+      compilation: { cancelled: true },
+      semantic: { freshness: "cancelled" },
+    });
+    await expect(saved).resolves.toMatchObject({
+      compilation: { cancelled: false },
+      semantic: { freshness: "fresh" },
+    });
+    expect(compiler.compileAndAnalyze).toHaveBeenCalledOnce();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      trigger: "save",
+      documentVersion: 2,
+    });
   });
 
   it("coalesces pending automatic compiles to the newest source state", async () => {

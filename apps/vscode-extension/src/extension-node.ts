@@ -11,6 +11,7 @@ import {
   documentSelector,
   hasActiveLegacyExtension,
   registerClientWorkflows,
+  registerDocumentOpenCompilation,
   registerRepositoryWorkflows,
 } from "./common.js";
 import type { PendingSelection } from "./common.js";
@@ -68,6 +69,7 @@ export async function activate(
   });
   registerClientWorkflows(context, client, output, debug, pending);
   await client.start();
+  registerDocumentOpenCompilation(context, client, debug);
   registerRepositoryWorkflows(context, client, false);
   const startupDocument = vscode.window.activeTextEditor?.document;
   const startupReady = compileActiveDocumentOnStartup(
