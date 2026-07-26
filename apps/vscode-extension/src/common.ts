@@ -10,6 +10,8 @@ import type {
   CompilationCompletedParams,
   ExportDocxParams,
   InterlisInitializationOptions,
+  LiveAnalysisStatusParams,
+  LiveDiagnosticsConfigurationParams,
   OnTypeEditParams,
   RepositoryConfigurationParams,
   RepositorySourceResult,
@@ -216,6 +218,9 @@ export async function createInitializationOptions(
   return {
     modelRepositories: configuration.repositories,
     workspaceSources: await collectWorkspaceSources(),
+    liveDiagnostics: vscode.workspace
+      .getConfiguration("interlisLanguageTools")
+      .get<"off" | "conservative">("liveDiagnostics", "conservative"),
     repositoryCachePath: nodeRuntime
       ? context.globalStorageUri.fsPath
       : undefined,
@@ -253,6 +258,15 @@ export function registerRepositoryWorkflows(
       } satisfies WorkspaceSourceChangedParams);
     }),
     vscode.workspace.onDidChangeConfiguration(async (event) => {
+      if (event.affectsConfiguration("interlisLanguageTools.liveDiagnostics"))
+        await client.sendNotification(
+          InterlisProtocol.liveDiagnosticsConfiguration,
+          {
+            mode: vscode.workspace
+              .getConfiguration("interlisLanguageTools")
+              .get<"off" | "conservative">("liveDiagnostics", "conservative"),
+          } satisfies LiveDiagnosticsConfigurationParams,
+        );
       if (
         !event.affectsConfiguration("interlisLanguageTools.modelRepositories")
       )
@@ -293,6 +307,52 @@ export function registerRepositoryWorkflows(
         },
       ),
     );
+}
+
+export function registerLiveAnalysisStatus(
+  context: vscode.ExtensionContext,
+  client: LanguageClientFacade,
+): void {
+  const item = vscode.languages.createLanguageStatusItem(
+    "interlisLanguageTools.liveAnalysis",
+    documentSelector(),
+  );
+  item.name = "INTERLIS live analysis";
+  item.text = "$(sync~spin) INTERLIS: Preparing live analysis";
+  item.detail =
+    "Conservative live diagnostics run independently from save and compile.";
+  item.severity = vscode.LanguageStatusSeverity.Information;
+  context.subscriptions.push(
+    item,
+    client.onNotification(InterlisProtocol.liveAnalysisStatus, (value) => {
+      const event = value as LiveAnalysisStatusParams;
+      switch (event.status) {
+        case "scheduled":
+        case "running":
+          item.text = "$(sync~spin) INTERLIS: Analyzing";
+          item.detail = "Conservative editor analysis is catching up.";
+          item.severity = vscode.LanguageStatusSeverity.Information;
+          break;
+        case "ready":
+          item.text = "$(check) INTERLIS: Live analysis";
+          item.detail = "Conservative live diagnostics are current.";
+          item.severity = vscode.LanguageStatusSeverity.Information;
+          break;
+        case "unavailable":
+          item.text = "$(warning) INTERLIS: Save-based diagnostics";
+          item.detail =
+            "Live analysis is temporarily unavailable; save and manual compile still provide authoritative diagnostics.";
+          item.severity = vscode.LanguageStatusSeverity.Warning;
+          break;
+        case "off":
+          item.text = "$(circle-slash) INTERLIS: Save-based diagnostics";
+          item.detail =
+            "Live diagnostics are disabled; save and manual compile remain active.";
+          item.severity = vscode.LanguageStatusSeverity.Information;
+          break;
+      }
+    }),
+  );
 }
 
 export function fallbackSetting<T>(

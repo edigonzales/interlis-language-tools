@@ -123,6 +123,10 @@ describe("MonacoLanguageAdapter", () => {
           providers.push(provider),
           disposable()
         ),
+        registerCodeActionProvider: (_language: string, provider: unknown) => (
+          providers.push(provider),
+          disposable()
+        ),
         registerDocumentSymbolProvider: (
           _language: string,
           provider: unknown,
@@ -146,6 +150,43 @@ describe("MonacoLanguageAdapter", () => {
       Selection: ValueRange,
     } as unknown as MonacoApi;
     const service = new LanguageService(compiler());
+    vi.spyOn(service, "diagnostics").mockReturnValue([
+      {
+        severity: "warning",
+        code: "ILIC-LINT-UNUSED-IMPORT",
+        message: "Unused import",
+        range: {
+          uri: "memory:///M.ili",
+          start: { line: 1, character: 0, byteOffset: 15 },
+          end: { line: 1, character: 3, byteOffset: 18 },
+        },
+        relatedInformation: [],
+        notes: [],
+        treatedAsError: false,
+        source: "lint",
+        tags: ["unnecessary"],
+      },
+    ]);
+    vi.spyOn(service, "codeActions").mockReturnValue([
+      {
+        title: "Remove unused import",
+        kind: "quickfix",
+        diagnostics: ["ILIC-LINT-UNUSED-IMPORT"],
+        edit: {
+          changes: {
+            "memory:///M.ili": [
+              {
+                range: {
+                  start: { line: 1, character: 0 },
+                  end: { line: 1, character: 3 },
+                },
+                newText: "",
+              },
+            ],
+          },
+        },
+      },
+    ]);
     const adapter = new MonacoLanguageAdapter(monaco, service);
     let listener: () => void = () => undefined;
     let version = 1;
@@ -160,8 +201,14 @@ describe("MonacoLanguageAdapter", () => {
       },
     };
     const attached = adapter.attachModel(model);
-    expect(providers).toHaveLength(8);
+    expect(providers).toHaveLength(9);
     expect(markers).toHaveBeenCalled();
+    expect(markers.mock.calls.at(-1)?.[2]).toEqual([
+      expect.objectContaining({
+        source: "ilic-lint",
+        tags: [1],
+      }),
+    ]);
     const completionProvider = providers[0] as {
       triggerCharacters: string[];
       provideCompletionItems(
@@ -181,6 +228,37 @@ describe("MonacoLanguageAdapter", () => {
     expect(completionProvider.triggerCharacters).toEqual(
       expect.arrayContaining([":", "[", "/", ")"]),
     );
+    const codeActionProvider = providers[4] as {
+      provideCodeActions(
+        model: MonacoModel,
+        range: {
+          startLineNumber: number;
+          startColumn: number;
+          endLineNumber: number;
+          endColumn: number;
+        },
+        context: { markers: Array<{ code: string }> },
+      ): {
+        actions: Array<{
+          title: string;
+          edit: {
+            edits: Array<{ textEdit: { text: string } }>;
+          };
+        }>;
+      };
+    };
+    const codeActions = codeActionProvider.provideCodeActions(
+      model,
+      {
+        startLineNumber: 2,
+        startColumn: 1,
+        endLineNumber: 2,
+        endColumn: 4,
+      },
+      { markers: [{ code: "ILIC-LINT-UNUSED-IMPORT" }] },
+    );
+    expect(codeActions.actions[0]?.title).toBe("Remove unused import");
+    expect(codeActions.actions[0]?.edit.edits[0]?.textEdit.text).toBe("");
     const completions = await completionProvider.provideCompletionItems(model, {
       lineNumber: 2,
       column: 4,
@@ -233,7 +311,7 @@ describe("MonacoLanguageAdapter", () => {
         endColumn: 8,
       },
     });
-    const onTypeProvider = providers[7] as {
+    const onTypeProvider = providers[8] as {
       autoFormatTriggerCharacters: string[];
     };
     expect(onTypeProvider.autoFormatTriggerCharacters).toEqual(["\n"]);

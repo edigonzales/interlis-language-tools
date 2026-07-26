@@ -26,9 +26,12 @@ documents are excluded. Typing only updates the in-memory buffer. Save and the
 manual compile command run the root again and atomically produce compiler
 Output, Problems, and editor snapshots. Output is the compiler-owned CLI-style
 transcript, including the final error/warning summary; Problems contains the
-same diagnostics in structured form. Unsaved changes keep the last result
-visible as outdated. Future live language intelligence is tracked in
-[BACKLOG.md](BACKLOG.md). The state, invalidation and refresh contract between
+same diagnostics in structured form. Unsaved changes keep the last save-based
+result visible as outdated while a separate, versioned editor worker provides
+conservative live diagnostics and dirty-code navigation. The user-facing
+behavior and safety rules are documented in
+[Live diagnostics and dirty navigation (German)](docs/live-diagnostik-und-dirty-navigation.md).
+The state, invalidation and refresh contract between
 editor buffers, VS Code OUTLINE and open diagrams is documented in
 [ADR 0002](docs/adr/0002-save-driven-editor-synchronization.md). The
 editor-facing behavior of contextual suggestions, snippets, placeholders and

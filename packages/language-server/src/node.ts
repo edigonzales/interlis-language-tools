@@ -1,5 +1,6 @@
 import {
   createWorkerCompilerBackend,
+  createWorkerEditorAnalysisBackend,
   createWasmCompilerBackend,
   LanguageService,
 } from "@ilic/language-service";
@@ -92,7 +93,13 @@ export async function startNodeLanguageServer(
         },
       )
     : localCompiler;
+  const editorAnalysis = options.compilerWorkerFactory
+    ? createWorkerEditorAnalysisBackend(options.compilerWorkerFactory, {
+        onWarning: (message) => connection.console.warn(message),
+      })
+    : undefined;
   const service = new LanguageService(compiler, {
+    editorAnalysis,
     onError: (error) =>
       connection.console.error(
         error instanceof Error ? error.message : String(error),

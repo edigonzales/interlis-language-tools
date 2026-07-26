@@ -230,6 +230,22 @@ werden. Entscheidend bleibt jedoch die aktuelle `IMPORTS`-Zeile: Entfernt der
 Benutzer einen Import im Dirty-Code, verschwinden dessen Symbole sofort aus der
 Completion. Completion startet keinen Compilerlauf.
 
+## Zusammenspiel mit Live-Analyse
+
+Completion und Snippets reagieren direkt auf den aktuellen Editorinhalt. Nach
+250 ms Tipp-Pause aktualisiert ein separater Worker zusätzlich die
+konservativen Live-Problems, die Outline sowie Hover und Navigation für den
+ungespeicherten Stand. Ein Rename im Dirty-Code wird abgelehnt, wenn das Ziel
+oder die vom Live-Index erkannten betroffenen Dateien nicht eindeutig und
+aktuell sind.
+
+Speichern und der Befehl **Compile Model** bleiben die autoritative Prüfung.
+Sie verwenden den vollständigen Compiler und liefern insbesondere die
+vollständige Syntax- und Typprüfung. Welche Live-Problems und Quick Fixes
+angeboten werden und welche Grenzen für Navigation und Rename gelten,
+beschreibt die Anleitung
+[Live-Diagnostik und Navigation bei ungespeicherten Änderungen](live-diagnostik-und-dirty-navigation.md).
+
 ## INTERLIS-Versionen und Grenzen
 
 Die Completion berücksichtigt INTERLIS 2.3 und 2.4. Dazu gehören insbesondere

@@ -2,6 +2,7 @@ import type {
   CompilationAnalysisResult,
   CompilationResult,
   Diagnostic,
+  EditorSnapshot,
   SemanticSnapshot,
   SyntaxSnapshot,
 } from "@ilic/compiler-wasm";
@@ -19,15 +20,23 @@ import {
 } from "./features.js";
 import type {
   CompletionItem,
+  CodeAction,
   DocumentSymbol,
   EditorFormattingOptions,
   EditorPosition,
+  EditorRange,
   HoverResult,
   Location,
   RenameResult,
   TemplateEdit,
   TextEdit,
 } from "./features.js";
+import {
+  analyzeLiveDocument,
+  editorOccurrences,
+  editorTargetAt,
+} from "./live-analysis.js";
+import type { LiveQuickFix } from "./live-analysis.js";
 import type { CompletionContext } from "./completion.js";
 import type {
   ModelCatalogEntry,
@@ -40,7 +49,10 @@ import type {
   CompilationEvent,
   CompilationTrigger,
   CompilerBackend,
+  DiagnosticsChangedEvent,
+  EditorAnalysisBackend,
   LanguageServiceOptions,
+  LiveAnalysisStatus,
   OpenDocument,
   VersionedResult,
   WorkspaceSource,
@@ -78,10 +90,26 @@ export class LanguageService {
   readonly #syntax = new Map<string, VersionedResult<SyntaxSnapshot>>();
   readonly #diagnostics = new Map<string, Diagnostic[]>();
   readonly #diagnosticsByRoot = new Map<string, Map<string, Diagnostic[]>>();
+  readonly #liveDiagnostics = new Map<string, Diagnostic[]>();
+  readonly #liveFixes = new Map<string, readonly LiveQuickFix[]>();
+  readonly #editorSnapshots = new Map<
+    string,
+    VersionedResult<EditorSnapshot>
+  >();
+  readonly #liveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  readonly #liveRequests = new Map<string, number>();
+  readonly #liveStatuses = new Map<string, LiveAnalysisStatus>();
+  readonly #diagnosticsListeners = new Set<
+    (event: DiagnosticsChangedEvent) => void
+  >();
   readonly #reverseDependencies = new Map<string, Set<string>>();
   readonly #analysisListeners = new Set<(event: AnalysisEvent) => void>();
   readonly #compilationListeners = new Set<(event: CompilationEvent) => void>();
   readonly #onError?: (error: unknown) => void;
+  readonly #editorAnalysis?: EditorAnalysisBackend;
+  #liveDiagnosticsMode: "off" | "conservative";
+  readonly #liveDiagnosticsDelayMs: number;
+  readonly #editorAnalysisTimeoutMs: number;
   #modelRepository?: ModelRepository;
   #catalog: readonly ModelCatalogEntry[] | null = null;
   #catalogPromise: Promise<readonly ModelCatalogEntry[]> | null = null;
@@ -120,6 +148,16 @@ export class LanguageService {
       this.#compilationListeners.add(options.onCompilation);
     this.#onError = options.onError;
     this.#modelRepository = options.modelRepository;
+    this.#editorAnalysis = options.editorAnalysis;
+    this.#liveDiagnosticsMode = options.liveDiagnostics ?? "conservative";
+    this.#liveDiagnosticsDelayMs = Math.max(
+      0,
+      options.liveDiagnosticsDelayMs ?? 250,
+    );
+    this.#editorAnalysisTimeoutMs = Math.max(
+      0,
+      options.editorAnalysisTimeoutMs ?? 1_500,
+    );
   }
 
   get generation(): number {
@@ -144,6 +182,33 @@ export class LanguageService {
     return { dispose: () => this.#compilationListeners.delete(listener) };
   }
 
+  onDiagnosticsChanged(listener: (event: DiagnosticsChangedEvent) => void): {
+    dispose(): void;
+  } {
+    this.#diagnosticsListeners.add(listener);
+    return { dispose: () => this.#diagnosticsListeners.delete(listener) };
+  }
+
+  liveAnalysisStatus(uri: string): LiveAnalysisStatus {
+    if (!this.#editorAnalysis || this.#liveDiagnosticsMode === "off")
+      return "off";
+    return this.#liveStatuses.get(uri) ?? "scheduled";
+  }
+
+  configureLiveDiagnostics(mode: "off" | "conservative"): void {
+    if (this.#liveDiagnosticsMode === mode) return;
+    this.#liveDiagnosticsMode = mode;
+    for (const document of this.#documents.values()) {
+      if (mode === "off") {
+        this.#liveDiagnostics.delete(document.uri);
+        this.#liveFixes.delete(document.uri);
+        this.#emitDiagnosticsChanged(document.uri, document.version, "off");
+      } else {
+        this.#scheduleEditorAnalysis(document.uri, document.version);
+      }
+    }
+  }
+
   openDocument(
     uri: string,
     text: string,
@@ -166,6 +231,9 @@ export class LanguageService {
     const document = this.#documents.get(uri);
     if (!document) return;
     this.#documents.set(uri, { ...document, dirty: false });
+    this.#liveDiagnostics.delete(uri);
+    this.#liveFixes.delete(uri);
+    this.#emitDiagnosticsChanged(uri, document.version, "ready");
     if (!this.isReadOnlyUri(uri))
       this.#workspaceSources.set(uri, {
         text: document.text,
@@ -175,9 +243,19 @@ export class LanguageService {
 
   closeDocument(uri: string): void {
     this.#assertActive();
+    const previous = this.#documents.get(uri);
     this.#documents.delete(uri);
+    const timer = this.#liveTimers.get(uri);
+    if (timer) clearTimeout(timer);
+    this.#liveTimers.delete(uri);
+    this.#liveRequests.delete(uri);
+    this.#liveStatuses.delete(uri);
+    this.#editorSnapshots.delete(uri);
+    this.#liveDiagnostics.delete(uri);
+    this.#liveFixes.delete(uri);
     this.#refreshEffectiveSource(uri);
     if (!this.#repositorySources.has(uri)) this.#readOnlyUris.delete(uri);
+    this.#emitDiagnosticsChanged(uri, previous?.version ?? null, "off");
   }
 
   replaceWorkspaceSources(sources: readonly WorkspaceSource[]): void {
@@ -281,16 +359,59 @@ export class LanguageService {
   }
 
   diagnostics(uri: string): Diagnostic[] {
+    const document = this.#documents.get(uri);
+    const live = this.#editorSnapshots.get(uri);
+    if (
+      document?.dirty &&
+      live?.value?.documentVersion === document.version &&
+      this.#liveDiagnosticsMode !== "off"
+    )
+      return [...(this.#liveDiagnostics.get(uri) ?? [])];
     return [...(this.#diagnostics.get(uri) ?? [])];
+  }
+
+  codeActions(
+    uri: string,
+    requestedRange: EditorRange,
+    diagnosticCodes: readonly string[] = [],
+  ): CodeAction[] {
+    const accepted = new Set(diagnosticCodes);
+    return (this.#liveFixes.get(uri) ?? [])
+      .filter(
+        (fix) =>
+          (accepted.size === 0 || accepted.has(fix.diagnosticCode)) &&
+          this.#editorRangesOverlap(fix.diagnosticRange, requestedRange),
+      )
+      .map((fix) => ({
+        title: fix.title,
+        kind: "quickfix" as const,
+        diagnostics: [fix.diagnosticCode],
+        edit: { changes: fix.edits },
+      }));
+  }
+
+  getEditorSnapshot(uri: string): VersionedResult<EditorSnapshot> | null {
+    const result = this.#editorSnapshots.get(uri);
+    const effective = this.#effectiveSources.get(uri);
+    return result?.value?.documentVersion === effective?.version
+      ? (result ?? null)
+      : null;
   }
 
   async completion(
     uri: string,
     position: EditorPosition,
   ): Promise<CompletionItem[]> {
-    const syntax = this.getSyntaxSnapshot(uri)?.value;
-    if (!syntax) return [];
+    const editor = await this.#ensureEditorSnapshot(uri);
     const text = this.#effectiveSources.get(uri)?.text ?? "";
+    const syntax =
+      (editor ? this.#syntaxFromEditor(editor) : null) ??
+      (this.#editorAnalysis
+        ? this.#liveStatuses.get(uri) === "unavailable"
+          ? this.#syntaxForText(uri, text)
+          : null
+        : this.getSyntaxSnapshot(uri)?.value);
+    if (!syntax) return [];
     const context = completionContextAt(syntax, text, position);
     const base = completionsAt(
       syntax,
@@ -353,17 +474,48 @@ export class LanguageService {
     uri: string,
     position: EditorPosition,
   ): CompletionContext | null {
-    const syntax = this.getSyntaxSnapshot(uri)?.value;
+    const editor = this.getEditorSnapshot(uri)?.value;
     const text = this.#effectiveSources.get(uri)?.text;
+    const syntax =
+      (editor ? this.#syntaxFromEditor(editor) : null) ??
+      (this.#editorAnalysis
+        ? text !== undefined && this.#liveStatuses.get(uri) === "unavailable"
+          ? this.#syntaxForText(uri, text)
+          : null
+        : this.getSyntaxSnapshot(uri)?.value);
     return syntax && text !== undefined
       ? completionContextAt(syntax, text, position)
       : null;
   }
 
   definition(uri: string, position: EditorPosition): Location[] {
+    const editor = this.getEditorSnapshot(uri)?.value;
+    const semantic = this.#completionSemanticForDocument(uri)?.value ?? null;
+    if (this.#documents.get(uri)?.dirty && editor) {
+      const target = editorTargetAt(
+        editor,
+        position,
+        semantic,
+        this.#currentEditorDeclarations(),
+      );
+      if (target?.kind === "editor")
+        return [
+          {
+            uri: target.declaration.selectionRange.uri,
+            range: toEditorRange(target.declaration.selectionRange),
+          },
+        ];
+      const range =
+        target?.kind === "semantic"
+          ? (target.symbol.selectionRange ?? target.symbol.range)
+          : null;
+      return range ? [{ uri: range.uri, range: toEditorRange(range) }] : [];
+    }
     if (!this.#hasFreshSemanticFor(uri)) return [];
-    const semantic = this.#semanticForDocument(uri)?.value;
-    return semantic ? locationsForDefinition(semantic, uri, position) : [];
+    const currentSemantic = this.#semanticForDocument(uri)?.value;
+    return currentSemantic
+      ? locationsForDefinition(currentSemantic, uri, position)
+      : [];
   }
 
   references(
@@ -371,29 +523,177 @@ export class LanguageService {
     position: EditorPosition,
     includeDeclaration = true,
   ): Location[] {
+    const editor = this.getEditorSnapshot(uri)?.value;
+    const semantic = this.#completionSemanticForDocument(uri)?.value ?? null;
+    if (this.#documents.get(uri)?.dirty && editor) {
+      const snapshots = this.#currentEditorSnapshots();
+      const declarations = snapshots.flatMap(
+        (snapshot) => snapshot.declarations,
+      );
+      const target = editorTargetAt(editor, position, semantic, declarations);
+      if (target?.kind === "semantic") {
+        return semantic
+          ? locationsForReferences(
+              semantic,
+              target.symbol.id,
+              includeDeclaration,
+            )
+          : [];
+      }
+      if (target?.kind !== "editor") return [];
+      const result: Location[] = [];
+      for (const snapshot of snapshots) {
+        for (const range of editorOccurrences(
+          snapshot,
+          target.declaration,
+          semantic,
+          declarations,
+        ))
+          if (
+            includeDeclaration ||
+            range.start.byteOffset !==
+              target.declaration.selectionRange.start.byteOffset ||
+            range.uri !== target.declaration.selectionRange.uri
+          )
+            result.push({ uri: range.uri, range: toEditorRange(range) });
+      }
+      return this.#deduplicateLocations(result);
+    }
     if (!this.#hasFreshSemanticFor(uri)) return [];
-    const semantic = this.#semanticForDocument(uri)?.value;
-    if (!semantic) return [];
-    const symbol = symbolAt(semantic, uri, position);
+    const currentSemantic = this.#semanticForDocument(uri)?.value;
+    if (!currentSemantic) return [];
+    const symbol = symbolAt(currentSemantic, uri, position);
     return symbol
-      ? locationsForReferences(semantic, symbol.id, includeDeclaration)
+      ? locationsForReferences(currentSemantic, symbol.id, includeDeclaration)
       : [];
+  }
+
+  renameRejectionReason(
+    uri: string,
+    position: EditorPosition,
+    newName?: string,
+  ): string | null {
+    if (this.isReadOnlyUri(uri))
+      return "Repository models are read-only and cannot be renamed.";
+    if (newName !== undefined && !/^[_A-Za-z][_A-Za-z0-9]*$/.test(newName))
+      return "The new INTERLIS name is not a valid identifier.";
+
+    const document = this.#documents.get(uri);
+    if (document?.dirty) {
+      const editor = this.getEditorSnapshot(uri)?.value;
+      if (!editor)
+        return this.liveAnalysisStatus(uri) === "unavailable"
+          ? "Live INTERLIS analysis is unavailable. Save the document and try Rename again."
+          : "Live INTERLIS analysis is still running. Wait for it to finish and try Rename again.";
+      const snapshots = this.#currentEditorSnapshots();
+      const declarations = snapshots.flatMap(
+        (snapshot) => snapshot.declarations,
+      );
+      const semantic = this.#completionSemanticForDocument(uri)?.value ?? null;
+      const target = editorTargetAt(editor, position, semantic, declarations);
+      if (target?.kind !== "editor")
+        return target?.kind === "semantic"
+          ? "The target comes from the last compiled external model and cannot be renamed from this dirty document."
+          : "Rename requires one unambiguous INTERLIS declaration at the cursor.";
+      if (this.isReadOnlyUri(target.declaration.selectionRange.uri))
+        return "Repository models are read-only and cannot be renamed.";
+      if (
+        [...this.#documents.values()].some(
+          (candidate) =>
+            candidate.dirty &&
+            this.getEditorSnapshot(candidate.uri)?.value?.documentVersion !==
+              candidate.version,
+        )
+      )
+        return "At least one affected editor snapshot is still pending. Wait for live analysis and try Rename again.";
+      if (
+        newName !== undefined &&
+        declarations.some(
+          (declaration) =>
+            declaration.id !== target.declaration.id &&
+            declaration.selectionRange.uri ===
+              target.declaration.selectionRange.uri &&
+            declaration.containerId === target.declaration.containerId &&
+            declaration.name.toUpperCase() === newName.toUpperCase(),
+        )
+      )
+        return `A declaration named '${newName}' already exists in this container.`;
+
+      const semanticTarget = semantic?.symbols.find(
+        (symbol) =>
+          symbol.qualifiedName.toUpperCase() ===
+          target.declaration.qualifiedName.toUpperCase(),
+      );
+      if (semantic && semanticTarget && newName !== undefined) {
+        const currentUris = new Set(snapshots.map((snapshot) => snapshot.uri));
+        const stable = renameSymbol(semantic, semanticTarget.id, newName);
+        if (
+          Object.keys(stable.changes).some(
+            (resource) =>
+              !this.isReadOnlyUri(resource) && !currentUris.has(resource),
+          )
+        )
+          return "Rename would affect an editable file without a current editor snapshot. Open or save the affected files and try again.";
+      }
+      return null;
+    }
+
+    if (!this.#hasFreshSemanticFor(uri))
+      return "No current compiled INTERLIS model is available. Save or compile the document and try Rename again.";
+    const semantic = this.#semanticForDocument(uri)?.value;
+    const symbol = semantic ? symbolAt(semantic, uri, position) : undefined;
+    const declaration = symbol?.selectionRange ?? symbol?.range;
+    if (!semantic || !symbol || !declaration)
+      return "No unambiguous INTERLIS symbol is available at the cursor.";
+    if (this.isReadOnlyUri(declaration.uri))
+      return "Repository models are read-only and cannot be renamed.";
+    if (
+      newName !== undefined &&
+      semantic.symbols.some(
+        (candidate) =>
+          candidate.id !== symbol.id &&
+          candidate.containerId === symbol.containerId &&
+          candidate.name.toUpperCase() === newName.toUpperCase(),
+      )
+    )
+      return `A declaration named '${newName}' already exists in this container.`;
+    return null;
   }
 
   prepareRename(
     uri: string,
     position: EditorPosition,
   ): { range: TextEdit["range"]; placeholder: string } | null {
+    if (this.renameRejectionReason(uri, position)) return null;
+    const editor = this.getEditorSnapshot(uri)?.value;
+    const semantic = this.#completionSemanticForDocument(uri)?.value ?? null;
+    if (this.#documents.get(uri)?.dirty && editor) {
+      const declarations = this.#currentEditorDeclarations();
+      const target = editorTargetAt(editor, position, semantic, declarations);
+      if (target?.kind !== "editor") return null;
+      const occurrence = editorOccurrences(
+        editor,
+        target.declaration,
+        semantic,
+        declarations,
+      ).find((range) => this.#contains(range, position));
+      return {
+        range: toEditorRange(occurrence ?? target.declaration.selectionRange),
+        placeholder: target.declaration.name,
+      };
+    }
     if (!this.#hasFreshSemanticFor(uri)) return null;
-    const semantic = this.#semanticForDocument(uri)?.value;
-    const symbol = semantic ? symbolAt(semantic, uri, position) : undefined;
+    const currentSemantic = this.#semanticForDocument(uri)?.value;
+    const symbol = currentSemantic
+      ? symbolAt(currentSemantic, uri, position)
+      : undefined;
     const declaration = symbol?.selectionRange ?? symbol?.range;
     if (!symbol || !declaration || this.isReadOnlyUri(declaration.uri))
       return null;
     const occurrence = [
       symbol.selectionRange,
       symbol.endRange,
-      ...(semantic?.references
+      ...(currentSemantic?.references
         .filter((reference) => reference.targetId === symbol.id)
         .map((reference) => reference.range) ?? []),
     ].find((range) => range?.uri === uri && this.#contains(range, position));
@@ -408,6 +708,98 @@ export class LanguageService {
     position: EditorPosition,
     newName: string,
   ): RenameResult | null {
+    if (this.renameRejectionReason(uri, position, newName)) return null;
+    const editor = this.getEditorSnapshot(uri)?.value;
+    const fallbackSemantic =
+      this.#completionSemanticForDocument(uri)?.value ?? null;
+    if (this.#documents.get(uri)?.dirty && editor) {
+      if (!/^[_A-Za-z][_A-Za-z0-9]*$/.test(newName)) return null;
+      const snapshots = this.#currentEditorSnapshots();
+      const declarations = snapshots.flatMap(
+        (snapshot) => snapshot.declarations,
+      );
+      const target = editorTargetAt(
+        editor,
+        position,
+        fallbackSemantic,
+        declarations,
+      );
+      if (target?.kind !== "editor") return null;
+      if (
+        [...this.#documents.values()].some(
+          (document) =>
+            document.dirty &&
+            this.getEditorSnapshot(document.uri)?.value?.documentVersion !==
+              document.version,
+        )
+      )
+        return null;
+      if (
+        declarations.some(
+          (declaration) =>
+            declaration.id !== target.declaration.id &&
+            declaration.selectionRange.uri ===
+              target.declaration.selectionRange.uri &&
+            declaration.containerId === target.declaration.containerId &&
+            declaration.name.toUpperCase() === newName.toUpperCase(),
+        )
+      )
+        return null;
+
+      const changes: Record<string, TextEdit[]> = {};
+      const semanticTarget = fallbackSemantic?.symbols.find(
+        (symbol) =>
+          symbol.qualifiedName.toUpperCase() ===
+          target.declaration.qualifiedName.toUpperCase(),
+      );
+      if (fallbackSemantic && semanticTarget) {
+        const stable = renameSymbol(
+          fallbackSemantic,
+          semanticTarget.id,
+          newName,
+        );
+        const currentUris = new Set(snapshots.map((snapshot) => snapshot.uri));
+        if (
+          Object.keys(stable.changes).some(
+            (resource) =>
+              !this.isReadOnlyUri(resource) && !currentUris.has(resource),
+          )
+        )
+          return null;
+        for (const [resource, edits] of Object.entries(stable.changes))
+          if (!this.isReadOnlyUri(resource)) changes[resource] = [...edits];
+      }
+      for (const snapshot of snapshots) {
+        const occurrences = editorOccurrences(
+          snapshot,
+          target.declaration,
+          fallbackSemantic,
+          declarations,
+        );
+        if (occurrences.length === 0 || this.isReadOnlyUri(snapshot.uri))
+          continue;
+        changes[snapshot.uri] = [
+          ...(changes[snapshot.uri] ?? []).filter(
+            (edit) =>
+              !occurrences.some((range) =>
+                this.#editorRangesIntersect(edit.range, toEditorRange(range)),
+              ),
+          ),
+          ...occurrences.map((range) => ({
+            range: toEditorRange(range),
+            newText: newName,
+          })),
+        ];
+      }
+      return {
+        changes: Object.fromEntries(
+          Object.entries(changes).map(([resource, edits]) => [
+            resource,
+            this.#deduplicateEdits(edits),
+          ]),
+        ),
+      };
+    }
     if (!this.#hasFreshSemanticFor(uri)) return null;
     const semantic = this.#semanticForDocument(uri)?.value;
     const symbol = semantic ? symbolAt(semantic, uri, position) : undefined;
@@ -435,7 +827,12 @@ export class LanguageService {
 
   symbols(uri: string): DocumentSymbol[] {
     const document = this.#documents.get(uri);
-    const syntax = this.getSyntaxSnapshot(uri)?.value;
+    const editor = this.getEditorSnapshot(uri)?.value;
+    const syntax =
+      (editor ? this.#syntaxFromEditor(editor) : null) ??
+      (document && this.#editorAnalysis
+        ? this.#syntaxForText(uri, document.text)
+        : this.getSyntaxSnapshot(uri)?.value);
     if (document && syntax) {
       const baseline =
         this.#stickyOutlines.get(uri) ?? this.#semanticOutline(uri);
@@ -448,14 +845,51 @@ export class LanguageService {
 
   waitForDocumentSymbols(
     uri: string,
-    _documentVersion: number,
-    signal?: AbortSignal,
+    documentVersion: number,
+    signal?: {
+      readonly aborted?: boolean;
+      readonly isCancellationRequested?: boolean;
+    },
   ): Promise<DocumentSymbol[]> {
-    if (signal?.aborted) return Promise.resolve([]);
-    return Promise.resolve(this.symbols(uri));
+    if (signal?.aborted || signal?.isCancellationRequested)
+      return Promise.resolve(this.symbols(uri));
+    const document = this.#documents.get(uri);
+    if (
+      !this.#editorAnalysis ||
+      !document ||
+      document.version !== documentVersion ||
+      this.getEditorSnapshot(uri)
+    )
+      return Promise.resolve(this.symbols(uri));
+    return this.#ensureEditorSnapshot(uri).then(() => this.symbols(uri));
   }
 
   hover(uri: string, position: EditorPosition): HoverResult | null {
+    const editor = this.getEditorSnapshot(uri)?.value;
+    const semantic = this.#completionSemanticForDocument(uri)?.value ?? null;
+    if (this.#documents.get(uri)?.dirty && editor) {
+      const target = editorTargetAt(
+        editor,
+        position,
+        semantic,
+        this.#currentEditorDeclarations(),
+      );
+      if (target?.kind === "editor")
+        return {
+          markdown: `**${target.declaration.kind}** \`${target.declaration.qualifiedName}\``,
+          range: toEditorRange(target.declaration.selectionRange),
+        };
+      const range =
+        target?.kind === "semantic"
+          ? (target.symbol.selectionRange ?? target.symbol.range)
+          : null;
+      return target?.kind === "semantic" && range
+        ? {
+            markdown: `**${target.symbol.kind}** \`${target.symbol.qualifiedName}\``,
+            range: toEditorRange(range),
+          }
+        : null;
+    }
     if (!this.#hasFreshSemanticFor(uri)) return null;
     const semanticResult = this.#semanticForDocument(uri);
     const symbol = semanticResult?.value
@@ -502,8 +936,11 @@ export class LanguageService {
     options: EditorFormattingOptions = {},
   ): TemplateEdit | null {
     if (character !== "\n" || this.isReadOnlyUri(uri)) return null;
-    const syntax = this.getSyntaxSnapshot(uri)?.value;
     const text = this.#effectiveSources.get(uri)?.text;
+    const editor = this.getEditorSnapshot(uri)?.value;
+    const syntax =
+      (editor ? this.#syntaxFromEditor(editor) : null) ??
+      (text !== undefined ? this.#syntaxForText(uri, text) : null);
     return syntax && text !== undefined
       ? templateForNewline(syntax, text, position, options)
       : null;
@@ -824,10 +1261,14 @@ export class LanguageService {
     this.#generation++;
     for (const pending of this.#pendingCompilations.splice(0))
       pending.resolve(this.#cancelledCompilation(pending));
+    for (const timer of this.#liveTimers.values()) clearTimeout(timer);
+    this.#liveTimers.clear();
     this.#analysisListeners.clear();
     this.#compilationListeners.clear();
+    this.#diagnosticsListeners.clear();
     this.#readOnlyUris.clear();
     void this.#modelRepository?.dispose?.();
+    this.#editorAnalysis?.dispose();
     this.compiler.dispose();
   }
 
@@ -843,6 +1284,7 @@ export class LanguageService {
       throw new Error(`Document version must increase for ${uri}`);
     this.#documents.set(uri, { uri, text, version, dirty });
     this.#applyEffectiveSource(uri, text, version);
+    this.#scheduleEditorAnalysis(uri, version);
     return {
       value: null,
       freshness: "stale",
@@ -897,7 +1339,9 @@ export class LanguageService {
     if (this.#effectiveSources.delete(uri)) {
       this.#removedSourceUris.add(uri);
       this.compiler.removeSource(uri);
+      this.#editorAnalysis?.removeSource(uri);
       this.#syntax.delete(uri);
+      this.#editorSnapshots.delete(uri);
       this.#invalidateSource(uri, conservativeIfUnknown);
     }
   }
@@ -1058,9 +1502,13 @@ export class LanguageService {
     rootUri: string,
     diagnostics: readonly Diagnostic[],
   ): void {
+    const affected = new Set<string>([
+      ...(this.#diagnosticsByRoot.get(rootUri)?.keys() ?? []),
+    ]);
     const grouped = new Map<string, Diagnostic[]>();
     for (const diagnostic of diagnostics) {
       const uri = diagnostic.range?.uri ?? rootUri;
+      affected.add(uri);
       const values = grouped.get(uri) ?? [];
       values.push(diagnostic);
       grouped.set(uri, values);
@@ -1073,6 +1521,12 @@ export class LanguageService {
           ...(this.#diagnostics.get(uri) ?? []),
           ...values,
         ]);
+    for (const uri of affected)
+      this.#emitDiagnosticsChanged(
+        uri,
+        this.#documents.get(uri)?.version ?? null,
+        this.liveAnalysisStatus(uri),
+      );
   }
 
   #invalidateSource(uri: string, conservativeIfUnknown = false): void {
@@ -1156,6 +1610,7 @@ export class LanguageService {
     this.#effectiveSources.set(uri, { text, version });
     this.#removedSourceUris.delete(uri);
     this.compiler.putSource(uri, text, version);
+    this.#editorAnalysis?.putSource(uri, text, version);
     this.#invalidateSource(uri, conservativeIfUnknown);
     return true;
   }
@@ -1327,6 +1782,289 @@ export class LanguageService {
       seen.add(key);
       return true;
     });
+  }
+
+  #deduplicateLocations(locations: readonly Location[]): Location[] {
+    const seen = new Set<string>();
+    return locations.filter((location) => {
+      const range = location.range;
+      const key = `${location.uri}:${range.start.line}:${range.start.character}:${range.end.line}:${range.end.character}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  #currentEditorSnapshots(): EditorSnapshot[] {
+    return [...this.#editorSnapshots.values()].flatMap((result) => {
+      const value = result.value;
+      const effective = value
+        ? this.#effectiveSources.get(value.uri)
+        : undefined;
+      return value && effective?.version === value.documentVersion
+        ? [value]
+        : [];
+    });
+  }
+
+  #currentEditorDeclarations(): EditorSnapshot["declarations"] {
+    return this.#currentEditorSnapshots().flatMap(
+      (snapshot) => snapshot.declarations,
+    );
+  }
+
+  async #ensureEditorSnapshot(uri: string): Promise<EditorSnapshot | null> {
+    const current = this.getEditorSnapshot(uri)?.value;
+    if (current) return current;
+    if (this.#liveStatuses.get(uri) === "unavailable") return null;
+    const effective = this.#effectiveSources.get(uri);
+    if (!effective || !this.#editorAnalysis) return null;
+    const timer = this.#liveTimers.get(uri);
+    if (timer) clearTimeout(timer);
+    this.#liveTimers.delete(uri);
+    return this.#runEditorAnalysis(uri, effective.version);
+  }
+
+  #scheduleEditorAnalysis(uri: string, version: number): void {
+    if (!this.#editorAnalysis) return;
+    const existing = this.#liveTimers.get(uri);
+    if (existing) clearTimeout(existing);
+    this.#liveRequests.set(uri, (this.#liveRequests.get(uri) ?? 0) + 1);
+    this.#liveStatuses.set(uri, "scheduled");
+    this.#editorSnapshots.delete(uri);
+    this.#liveDiagnostics.delete(uri);
+    this.#liveFixes.delete(uri);
+    this.#emitDiagnosticsChanged(uri, version, "scheduled");
+    const timer = setTimeout(() => {
+      this.#liveTimers.delete(uri);
+      void this.#runEditorAnalysis(uri, version);
+    }, this.#liveDiagnosticsDelayMs);
+    this.#liveTimers.set(uri, timer);
+  }
+
+  async #runEditorAnalysis(
+    uri: string,
+    version: number,
+  ): Promise<EditorSnapshot | null> {
+    if (!this.#editorAnalysis || this.#disposed) return null;
+    const request = (this.#liveRequests.get(uri) ?? 0) + 1;
+    this.#liveRequests.set(uri, request);
+    this.#liveStatuses.set(uri, "running");
+    this.#emitDiagnosticsChanged(uri, version, "running");
+    try {
+      const snapshot = await this.#editorSnapshotWithTimeout(uri);
+      const effective = this.#effectiveSources.get(uri);
+      if (
+        this.#disposed ||
+        this.#liveRequests.get(uri) !== request ||
+        effective?.version !== version ||
+        snapshot.documentVersion !== version
+      )
+        return null;
+      const result: VersionedResult<EditorSnapshot> = {
+        value: snapshot,
+        freshness: "fresh",
+        generation: this.#generation,
+        documentVersions: { [uri]: version },
+      };
+      this.#editorSnapshots.set(uri, result);
+      const document = this.#documents.get(uri);
+      if (document?.dirty && this.#liveDiagnosticsMode === "conservative") {
+        const analysis = analyzeLiveDocument(
+          snapshot,
+          effective.text,
+          this.#completionSemanticForDocument(uri)?.value ?? null,
+          this.#currentEditorDeclarations(),
+        );
+        this.#liveDiagnostics.set(uri, [...analysis.diagnostics]);
+        this.#liveFixes.set(uri, analysis.fixes);
+      }
+      this.#liveStatuses.set(uri, "ready");
+      this.#emitDiagnosticsChanged(uri, version, "ready");
+      return snapshot;
+    } catch (error) {
+      if (
+        this.#liveRequests.get(uri) === request &&
+        this.#effectiveSources.get(uri)?.version === version
+      ) {
+        this.#liveStatuses.set(uri, "unavailable");
+        this.#emitDiagnosticsChanged(uri, version, "unavailable");
+        this.#onError?.(error);
+      }
+      return null;
+    }
+  }
+
+  async #editorSnapshotWithTimeout(uri: string): Promise<EditorSnapshot> {
+    const analysis = this.#editorAnalysis!.analyze(uri);
+    if (this.#editorAnalysisTimeoutMs === 0) return analysis;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        analysis,
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(
+            () =>
+              reject(
+                new Error(
+                  `Live INTERLIS analysis exceeded ${this.#editorAnalysisTimeoutMs} ms`,
+                ),
+              ),
+            this.#editorAnalysisTimeoutMs,
+          );
+        }),
+      ]);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message.startsWith("Live INTERLIS analysis exceeded")
+      )
+        await this.#editorAnalysis?.restart?.();
+      throw error;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  #emitDiagnosticsChanged(
+    uri: string,
+    documentVersion: number | null,
+    status: LiveAnalysisStatus,
+  ): void {
+    const event = {
+      uri,
+      documentVersion,
+      status: this.#liveDiagnosticsMode === "off" ? ("off" as const) : status,
+    };
+    for (const listener of this.#diagnosticsListeners) listener(event);
+  }
+
+  #syntaxFromEditor(snapshot: EditorSnapshot): SyntaxSnapshot {
+    const nodeKind: Readonly<Record<string, string>> = {
+      model: "modelDef",
+      topic: "topicDef",
+      class: "classDef",
+      structure: "structureDef",
+      association: "associationDef",
+      view: "viewDef",
+      graphic: "graphicDef",
+      domain: "domainDef",
+      unit: "unitDef",
+      attribute: "attributeDef",
+    };
+    const keywordKind: Readonly<Record<string, string>> = {
+      model: "MODEL",
+      topic: "TOPIC",
+      class: "CLASS",
+      structure: "STRUCTURE",
+      association: "ASSOCIATION",
+      view: "VIEW",
+      graphic: "GRAPHIC",
+      domain: "ILIDOMAIN",
+      unit: "UNIT",
+    };
+    const ids = new Map(
+      snapshot.declarations.map((declaration, index) => [
+        declaration.id,
+        index + 1,
+      ]),
+    );
+    const nodes = snapshot.declarations.map((declaration) => ({
+      id: ids.get(declaration.id)!,
+      parent: declaration.containerId
+        ? (ids.get(declaration.containerId) ?? null)
+        : null,
+      kind: nodeKind[declaration.kind] ?? `${declaration.kind}Def`,
+      range: declaration.range,
+    }));
+    const tokens = snapshot.declarations
+      .flatMap((declaration) => {
+        const keyword = keywordKind[declaration.kind];
+        return [
+          ...(keyword
+            ? [
+                {
+                  kind: keyword,
+                  text: keyword === "ILIDOMAIN" ? "DOMAIN" : keyword,
+                  channel: 0,
+                  range: {
+                    uri: declaration.range.uri,
+                    start: declaration.range.start,
+                    end: declaration.selectionRange.start,
+                  },
+                },
+              ]
+            : []),
+          {
+            kind: "NAME",
+            text: declaration.name,
+            channel: 0,
+            range: declaration.selectionRange,
+          },
+        ];
+      })
+      .sort(
+        (left, right) =>
+          left.range.start.byteOffset - right.range.start.byteOffset,
+      );
+    return {
+      schemaVersion: 1,
+      abiVersion: snapshot.abiVersion,
+      compilerVersion: snapshot.compilerVersion,
+      kind: "syntax",
+      success: snapshot.success,
+      uri: snapshot.uri,
+      documentVersion: snapshot.documentVersion,
+      iliVersion: snapshot.iliVersion,
+      tokens,
+      nodes,
+      contexts: snapshot.contexts,
+      imports: snapshot.imports.map((entry) => entry.model),
+      importReferences: snapshot.imports,
+      diagnostics: snapshot.diagnostics,
+    };
+  }
+
+  #syntaxForText(uri: string, text: string): SyntaxSnapshot {
+    const version = this.#effectiveSources.get(uri)?.version ?? 0;
+    return {
+      schemaVersion: 1,
+      abiVersion: 1,
+      compilerVersion: "editor-fast-path",
+      kind: "syntax",
+      success: true,
+      uri,
+      documentVersion: version,
+      iliVersion: /^\s*TRANSFER\b/iu.test(text)
+        ? "1.0"
+        : /\bINTERLIS\s+2\.4\s*;/iu.test(text)
+          ? "2.4"
+          : "2.3",
+      tokens: [],
+      nodes: [],
+      contexts: [],
+      imports: [],
+      importReferences: [],
+      diagnostics: [],
+    };
+  }
+
+  #editorRangesOverlap(left: EditorRange, right: EditorRange): boolean {
+    return (
+      this.#compareEditorPositions(left.start, right.end) <= 0 &&
+      this.#compareEditorPositions(right.start, left.end) <= 0
+    );
+  }
+
+  #editorRangesIntersect(left: EditorRange, right: EditorRange): boolean {
+    return (
+      this.#compareEditorPositions(left.start, right.end) < 0 &&
+      this.#compareEditorPositions(right.start, left.end) < 0
+    );
+  }
+
+  #compareEditorPositions(left: EditorPosition, right: EditorPosition): number {
+    return left.line - right.line || left.character - right.character;
   }
 
   #hasFreshSemanticFor(uri: string): boolean {

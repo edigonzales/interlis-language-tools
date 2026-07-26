@@ -4,7 +4,11 @@ import type {
   InitializeParams,
   InitializeResult,
 } from "vscode-languageserver";
-import { TextDocumentSyncKind } from "vscode-languageserver";
+import {
+  ErrorCodes,
+  ResponseError,
+  TextDocumentSyncKind,
+} from "vscode-languageserver";
 import {
   toCompletion,
   toDiagnostic,
@@ -21,6 +25,8 @@ import type {
   DiagramSnapshotParams,
   ExportDocxParams,
   InterlisInitializationOptions,
+  LiveAnalysisStatusParams,
+  LiveDiagnosticsConfigurationParams,
   OnTypeEditParams,
   RepositoryConfigurationParams,
   RepositorySourceResult,
@@ -94,12 +100,26 @@ export function bindLanguageServer(
       ],
     } satisfies SemanticSnapshotChangedParams);
   });
+  const diagnosticsSubscription = service.onDiagnosticsChanged((event) => {
+    if (event.status !== "scheduled" && event.status !== "running")
+      void connection.sendDiagnostics({
+        uri: event.uri,
+        diagnostics: service.diagnostics(event.uri).map(toDiagnostic),
+      });
+    void connection.sendNotification(
+      InterlisProtocol.liveAnalysisStatus,
+      event satisfies LiveAnalysisStatusParams,
+    );
+  });
 
   connection.onInitialize(
     async (params: InitializeParams): Promise<InitializeResult> => {
       const options = (params.initializationOptions ??
         {}) as InterlisInitializationOptions;
       initializationOptions = options;
+      service.configureLiveDiagnostics(
+        options.liveDiagnostics ?? "conservative",
+      );
       service.replaceWorkspaceSources(options.workspaceSources ?? []);
       await hooks.configureRepositories?.(
         options.modelRepositories ?? ["https://models.interlis.ch"],
@@ -129,6 +149,7 @@ export function bindLanguageServer(
           definitionProvider: true,
           referencesProvider: true,
           renameProvider: { prepareProvider: true },
+          codeActionProvider: true,
           documentSymbolProvider: true,
           hoverProvider: true,
           documentFormattingProvider: true,
@@ -193,6 +214,13 @@ export function bindLanguageServer(
       params.textDocument.uri,
       params.position,
     );
+    if (!result) {
+      const reason = service.renameRejectionReason(
+        params.textDocument.uri,
+        params.position,
+      );
+      if (reason) throw new ResponseError(ErrorCodes.InvalidRequest, reason);
+    }
     return result
       ? { range: toRange(result.range), placeholder: result.placeholder }
       : null;
@@ -203,11 +231,42 @@ export function bindLanguageServer(
       params.position,
       params.newName,
     );
+    if (!result) {
+      const reason = service.renameRejectionReason(
+        params.textDocument.uri,
+        params.position,
+        params.newName,
+      );
+      if (reason) throw new ResponseError(ErrorCodes.InvalidRequest, reason);
+    }
     return result ? toWorkspaceEdit(result) : null;
   });
-  connection.onDocumentSymbol((params) =>
-    service.symbols(params.textDocument.uri).map(toDocumentSymbol),
+  connection.onCodeAction((params) =>
+    service
+      .codeActions(
+        params.textDocument.uri,
+        params.range,
+        params.context.diagnostics.flatMap((diagnostic) =>
+          diagnostic.code === undefined ? [] : [String(diagnostic.code)],
+        ),
+      )
+      .map((action) => ({
+        title: action.title,
+        kind: action.kind,
+        diagnostics: params.context.diagnostics.filter((diagnostic) =>
+          action.diagnostics.includes(String(diagnostic.code)),
+        ),
+        edit: toWorkspaceEdit(action.edit),
+      })),
   );
+  connection.onDocumentSymbol(async (params, token) => {
+    const uri = params.textDocument.uri;
+    const document = service.getDocument(uri);
+    const symbols = document
+      ? await service.waitForDocumentSymbols(uri, document.version, token)
+      : service.symbols(uri);
+    return symbols.map(toDocumentSymbol);
+  });
   connection.onHover((params) => {
     const result = service.hover(params.textDocument.uri, params.position);
     return result
@@ -265,6 +324,11 @@ export function bindLanguageServer(
       .then((event) => event.compilation),
   );
   connection.onNotification(
+    InterlisProtocol.liveDiagnosticsConfiguration,
+    (params: LiveDiagnosticsConfigurationParams) =>
+      service.configureLiveDiagnostics(params.mode),
+  );
+  connection.onNotification(
     InterlisProtocol.workspaceSources,
     (params: WorkspaceSourcesParams) =>
       service.replaceWorkspaceSources(params.sources),
@@ -318,6 +382,7 @@ export function bindLanguageServer(
   );
   connection.onShutdown(() => {
     compilationSubscription.dispose();
+    diagnosticsSubscription.dispose();
     service.dispose();
   });
 }

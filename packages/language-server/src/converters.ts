@@ -9,6 +9,7 @@ import type {
 import type { WorkspaceEdit } from "vscode-languageserver";
 import {
   CompletionItemKind,
+  DiagnosticTag,
   DiagnosticSeverity,
   DocumentSymbol,
   InsertTextFormat,
@@ -47,7 +48,17 @@ export function toDiagnostic(value: CoreDiagnostic) {
       ? DiagnosticSeverity.Error
       : severity[value.severity],
     code: value.code,
-    source: "ilic",
+    source:
+      value.source === "live"
+        ? "ilic-live"
+        : value.source === "lint"
+          ? "ilic-lint"
+          : "ilic",
+    tags: value.tags?.map((tag) =>
+      tag === "unnecessary"
+        ? DiagnosticTag.Unnecessary
+        : DiagnosticTag.Deprecated,
+    ),
     message: value.message,
     relatedInformation: value.relatedInformation.flatMap((information) =>
       information.range

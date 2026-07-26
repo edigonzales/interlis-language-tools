@@ -5,8 +5,10 @@ Web and compatible Theia products.
 
 ## Features
 
-- open/save/manual-compile diagnostics, plus snapshot-based completion, hover,
-  definitions, references and rename for unchanged compiled documents;
+- conservative live diagnostics in an independent editor worker, plus
+  authoritative open/save/manual-compile diagnostics;
+- snapshot-based completion, hover, definitions, references and safe rename
+  for current unsaved INTERLIS 2.3/2.4 documents;
 - document symbols, full-document and on-type formatting;
 - parser-aware suggestions, snippets, templates and INTERLIS syntax themes;
 - single-root, dependency-aware compilation with structured Problems and a
@@ -32,6 +34,11 @@ The German guide
 explains exactly where suggestions appear and what Enter, Tab and the cursor
 keys do, with MODEL, TOPIC, CLASS, STRUCTURE, DOMAIN, UNIT and VIEW TOPIC
 examples.
+
+The German guide
+[Live-Diagnostik und Dirty-Navigation](https://github.com/edigonzales/interlis-language-tools/blob/main/docs/live-diagnostik-und-dirty-navigation.md)
+explains which findings appear while typing, which Quick Fixes are offered,
+how qualified paths are navigated and when a rename is deliberately refused.
 
 ## Coexistence with the Java extension
 

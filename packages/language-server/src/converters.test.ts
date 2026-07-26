@@ -9,6 +9,7 @@ import {
 } from "./converters.js";
 import {
   CompletionItemKind,
+  DiagnosticTag,
   InsertTextFormat,
   InsertTextMode,
   SymbolKind,
@@ -131,6 +132,26 @@ describe("LSP converters", () => {
     expect(diagnostic.severity).toBe(2);
     expect(diagnostic.range.start).toEqual({ line: 0, character: 0 });
     expect(diagnostic.relatedInformation).toHaveLength(1);
+  });
+
+  it("preserves live diagnostic provenance and editor tags", () => {
+    const diagnostic = toDiagnostic({
+      severity: "warning",
+      code: "ILIC-LINT-UNUSED-IMPORT",
+      message: "Unused import",
+      range: {
+        uri: "memory:///M.ili",
+        start: { ...range.start, byteOffset: 2 },
+        end: { ...range.end, byteOffset: 5 },
+      },
+      relatedInformation: [],
+      notes: [],
+      treatedAsError: false,
+      source: "lint",
+      tags: ["unnecessary"],
+    });
+    expect(diagnostic.source).toBe("ilic-lint");
+    expect(diagnostic.tags).toEqual([DiagnosticTag.Unnecessary]);
   });
 
   it("maps hierarchical symbols and unknown kinds", () => {

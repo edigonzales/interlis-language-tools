@@ -43,6 +43,7 @@ export interface MonacoApi {
     registerDefinitionProvider(language: string, provider: unknown): Disposable;
     registerReferenceProvider(language: string, provider: unknown): Disposable;
     registerRenameProvider(language: string, provider: unknown): Disposable;
+    registerCodeActionProvider(language: string, provider: unknown): Disposable;
     registerDocumentSymbolProvider(
       language: string,
       provider: unknown,
@@ -109,6 +110,11 @@ export class MonacoLanguageAdapter implements Disposable {
       service.onCompilation(() => {
         for (const { model } of this.#models.values())
           this.#publishMarkers(model);
+      }),
+      service.onDiagnosticsChanged((event) => {
+        const entry = this.#models.get(event.uri);
+        if (entry && event.status !== "scheduled" && event.status !== "running")
+          this.#publishMarkers(entry.model);
       }),
     );
   }
@@ -259,15 +265,12 @@ export class MonacoLanguageAdapter implements Disposable {
               range: this.#range(result.range),
               text: result.placeholder,
             };
-          const repositorySymbol =
-            this.service.isReadOnlyUri(model.uri.toString()) ||
-            this.service
-              .definition(model.uri.toString(), editorPosition)
-              .some((location) => this.service.isReadOnlyUri(location.uri));
           return {
-            rejectReason: repositorySymbol
-              ? "Repository models are read-only and cannot be renamed."
-              : "No INTERLIS symbol at cursor.",
+            rejectReason:
+              this.service.renameRejectionReason(
+                model.uri.toString(),
+                editorPosition,
+              ) ?? "No INTERLIS symbol at cursor.",
           };
         },
         provideRenameEdits: (
@@ -296,6 +299,60 @@ export class MonacoLanguageAdapter implements Disposable {
               }
             : { edits: [] };
         },
+      }),
+      languages.registerCodeActionProvider("interlis", {
+        provideCodeActions: (
+          model: MonacoModel,
+          value: {
+            startLineNumber: number;
+            startColumn: number;
+            endLineNumber: number;
+            endColumn: number;
+          },
+          context: {
+            markers?: Array<{ code?: string | { value: string } }>;
+          } = {},
+        ) => ({
+          actions: this.service
+            .codeActions(
+              model.uri.toString(),
+              {
+                start: {
+                  line: value.startLineNumber - 1,
+                  character: value.startColumn - 1,
+                },
+                end: {
+                  line: value.endLineNumber - 1,
+                  character: value.endColumn - 1,
+                },
+              },
+              (context.markers ?? []).flatMap((marker) => {
+                const code =
+                  typeof marker.code === "string"
+                    ? marker.code
+                    : marker.code?.value;
+                return code ? [code] : [];
+              }),
+            )
+            .map((action) => ({
+              title: action.title,
+              kind: action.kind,
+              edit: {
+                edits: Object.entries(action.edit.changes).flatMap(
+                  ([resource, edits]) =>
+                    edits.map((edit) => ({
+                      resource: this.monaco.Uri.parse(resource),
+                      textEdit: {
+                        range: this.#range(edit.range),
+                        text: edit.newText,
+                      },
+                      versionId: undefined,
+                    })),
+                ),
+              },
+            })),
+          dispose() {},
+        }),
       }),
       languages.registerDocumentSymbolProvider("interlis", {
         provideDocumentSymbols: (model: MonacoModel) =>
@@ -373,7 +430,15 @@ export class MonacoLanguageAdapter implements Disposable {
                     ],
                 code: diagnostic.code,
                 message: diagnostic.message,
-                source: "ilic",
+                source:
+                  diagnostic.source === "live"
+                    ? "ilic-live"
+                    : diagnostic.source === "lint"
+                      ? "ilic-lint"
+                      : "ilic",
+                tags: diagnostic.tags?.map((tag) =>
+                  tag === "unnecessary" ? 1 : 2,
+                ),
               },
             ]
           : [],

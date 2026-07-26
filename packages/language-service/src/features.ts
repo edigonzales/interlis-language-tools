@@ -56,6 +56,12 @@ export interface DocumentSymbol {
 export interface RenameResult {
   readonly changes: Readonly<Record<string, readonly TextEdit[]>>;
 }
+export interface CodeAction {
+  readonly title: string;
+  readonly kind: "quickfix";
+  readonly diagnostics: readonly string[];
+  readonly edit: RenameResult;
+}
 export interface HoverResult {
   readonly markdown: string;
   readonly range: EditorRange;

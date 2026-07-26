@@ -5,9 +5,13 @@ import type {
   CompilerWorkerPort,
   CompilerWorkerRequest,
   CompilerWorkerResponse,
+  EditorSnapshot,
   SyntaxSnapshot,
 } from "./index.js";
-import { createWorkerCompilerBackend } from "./index.js";
+import {
+  createWorkerCompilerBackend,
+  createWorkerEditorAnalysisBackend,
+} from "./index.js";
 
 const uri = "memory:///Worker.ili";
 
@@ -24,6 +28,22 @@ const syntax = (): SyntaxSnapshot => ({
   nodes: [],
   contexts: [],
   imports: [],
+  diagnostics: [],
+});
+
+const editor = (documentVersion = 1): EditorSnapshot => ({
+  schemaVersion: 1,
+  abiVersion: 1,
+  compilerVersion: "test",
+  kind: "editor",
+  success: true,
+  uri,
+  documentVersion,
+  iliVersion: "2.4",
+  declarations: [],
+  references: [],
+  imports: [],
+  contexts: [],
   diagnostics: [],
 });
 
@@ -130,6 +150,45 @@ const localBackend = (): MockCompilerBackend => ({
 });
 
 describe("worker compiler backend", () => {
+  it("runs editor snapshots in an independent worker", async () => {
+    const worker = new FakeWorkerPort();
+    const backend = createWorkerEditorAnalysisBackend(() => worker);
+    backend.putSource(uri, "MODEL Worker", 3);
+    const pending = backend.analyze(uri);
+    expect(worker.messages.map((message) => message.method)).toEqual([
+      "putSource",
+      "editorSnapshot",
+    ]);
+    const request = worker.messages.at(-1)!;
+    worker.respond(request.id, editor(3));
+    await expect(pending).resolves.toEqual(editor(3));
+  });
+
+  it("restarts editor analysis and replays only the latest source", async () => {
+    const first = new FakeWorkerPort();
+    const second = new FakeWorkerPort();
+    const workers = [first, second];
+    const warning = vi.fn();
+    const backend = createWorkerEditorAnalysisBackend(() => workers.shift()!, {
+      onWarning: warning,
+    });
+    backend.putSource(uri, "MODEL Worker", 1);
+    backend.putSource(uri, "MODEL Worker =", 2);
+    const pending = backend.analyze(uri);
+    first.fail(new Error("crashed"));
+    await expect(pending).rejects.toThrow(
+      "INTERLIS editor worker failed: crashed",
+    );
+    expect(second.messages).toEqual([
+      expect.objectContaining({
+        method: "putSource",
+        uri,
+        version: 2,
+      }),
+    ]);
+    expect(warning).toHaveBeenCalledOnce();
+  });
+
   it("mirrors sources before async compilation while local syntax stays responsive", async () => {
     const worker = new FakeWorkerPort();
     const local = localBackend();

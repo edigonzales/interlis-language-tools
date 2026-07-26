@@ -1,9 +1,10 @@
 import type {
   CompilationAnalysisResult,
   CompilationRequest,
+  EditorSnapshot,
 } from "@ilic/compiler-wasm";
 import { createWasmCompilerBackend } from "./compiler.js";
-import type { CompilerBackend } from "./types.js";
+import type { CompilerBackend, EditorAnalysisBackend } from "./types.js";
 
 export interface CompilerWorkerPort {
   postMessage(message: CompilerWorkerRequest): void;
@@ -33,6 +34,11 @@ export type CompilerWorkerRequest =
       readonly id: number;
       readonly method: "compileAndAnalyze";
       readonly request: CompilationRequest;
+    }
+  | {
+      readonly id: number;
+      readonly method: "editorSnapshot";
+      readonly uri: string;
     }
   | { readonly id: number; readonly method: "dispose" };
 
@@ -195,6 +201,134 @@ export function createWorkerCompilerBackend(
   };
 }
 
+export function createWorkerEditorAnalysisBackend(
+  factory: CompilerWorkerFactory,
+  options: { readonly onWarning?: (message: string) => void } = {},
+): EditorAnalysisBackend {
+  const sources = new Map<
+    string,
+    { readonly source: string | Uint8Array; readonly version: number }
+  >();
+  const pending = new Map<number, PendingRequest>();
+  let nextId = 0;
+  let port: CompilerWorkerPort | null = null;
+  let messageSubscription: { dispose(): void } | null = null;
+  let errorSubscription: { dispose(): void } | null = null;
+  let disposed = false;
+  let warned = false;
+
+  const warn = (message: string): void => {
+    if (warned) return;
+    warned = true;
+    options.onWarning?.(message);
+  };
+  const rejectPending = (message: string): void => {
+    for (const request of pending.values()) request.reject(new Error(message));
+    pending.clear();
+  };
+  const detach = (): void => {
+    messageSubscription?.dispose();
+    errorSubscription?.dispose();
+    messageSubscription = null;
+    errorSubscription = null;
+    const current = port;
+    port = null;
+    if (current) void current.terminate();
+  };
+  const replay = (): void => {
+    for (const [uri, value] of sources)
+      port?.postMessage({
+        id: ++nextId,
+        method: "putSource",
+        uri,
+        source: value.source,
+        version: value.version,
+      });
+  };
+  const attach = (): boolean => {
+    if (disposed) return false;
+    try {
+      port = factory();
+      messageSubscription = port.onMessage((message) => {
+        const request = pending.get(message.id);
+        if (!request) return;
+        pending.delete(message.id);
+        if (message.ok) request.resolve(message.value);
+        else request.reject(new Error(message.error));
+      });
+      errorSubscription = port.onError((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        rejectPending(`INTERLIS editor worker failed: ${message}`);
+        detach();
+        if (!disposed) {
+          warn(
+            "Live INTERLIS analysis was restarted after an editor worker error.",
+          );
+          attach();
+        }
+      });
+      replay();
+      return true;
+    } catch (error) {
+      port = null;
+      warn(
+        `Live INTERLIS analysis is unavailable (${error instanceof Error ? error.message : String(error)}).`,
+      );
+      return false;
+    }
+  };
+  const notify = (
+    message: Extract<
+      CompilerWorkerCommand,
+      { method: "putSource" | "removeSource" | "dispose" }
+    >,
+  ): void => {
+    if (!port && !attach()) return;
+    port?.postMessage({ id: ++nextId, ...message });
+  };
+
+  attach();
+
+  return {
+    putSource(uri, source, version) {
+      sources.set(uri, { source, version });
+      notify({ method: "putSource", uri, source, version });
+    },
+    removeSource(uri) {
+      sources.delete(uri);
+      notify({ method: "removeSource", uri });
+    },
+    analyze(uri) {
+      if (!port && !attach())
+        return Promise.reject(new Error("editor worker unavailable"));
+      const current = port;
+      if (!current)
+        return Promise.reject(new Error("editor worker unavailable"));
+      const id = ++nextId;
+      return new Promise<EditorSnapshot>((resolve, reject) => {
+        pending.set(id, {
+          resolve: (value) => resolve(value as EditorSnapshot),
+          reject,
+        });
+        current.postMessage({ id, method: "editorSnapshot", uri });
+      });
+    },
+    restart() {
+      rejectPending("INTERLIS editor worker restarted");
+      detach();
+      attach();
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      rejectPending("INTERLIS editor worker disposed");
+      if (port) notify({ method: "dispose" });
+      detach();
+      sources.clear();
+    },
+  };
+}
+
 export async function runCompilerWorker(
   endpoint: WorkerEndpoint,
 ): Promise<void> {
@@ -214,6 +348,11 @@ export async function runCompilerWorker(
             break;
           case "compileAndAnalyze":
             value = await compiler.compileAndAnalyze(message.request);
+            break;
+          case "editorSnapshot":
+            if (!compiler.editorSnapshot)
+              throw new Error("editor snapshots are unavailable");
+            value = compiler.editorSnapshot(message.uri);
             break;
           case "dispose":
             compiler.dispose();

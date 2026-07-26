@@ -8,7 +8,8 @@ files are never trusted merely because the workspace compiles.
 - CMake/CTest covers native APIs, syntax and semantic snapshots, Unicode
   positions, repository resolution and INTERLIS regression models.
 - `@ilic/compiler-wasm` executes the documented session and repository examples
-  against the real WASM ABI.
+  against the real WASM ABI. Its compact editor snapshot additionally enforces
+  the 12 KB/150 ms and 80 KB/750 ms latency gates.
 - `@ilic/tools` resolves a repository dependency closure.
 - Repository tests also cover partial catalog failure and a warm cache with no
   network access.
@@ -18,6 +19,7 @@ files are never trusted merely because the workspace compiles.
 ```sh
 pnpm check
 pnpm test:extension-host
+pnpm test:installed-extension
 pnpm --filter @ilic/language-service test:coverage
 pnpm pack:verify
 pnpm package:vsix
@@ -44,12 +46,21 @@ points.
 VS-Code Extension Host. It executes the documented completion/snippet
 workflows, including Enter/Tab-equivalent placeholder navigation,
 provider-backed Suggest acceptance, cursor escape from header snippets and
-on-type block closing. On macOS it reuses VSCodium when available; CI downloads
-the pinned VS Code 1.96.4 test runtime and runs it under Xvfb.
+on-type block closing. It also waits for conservative live squiggles, applies a
+real Quick Fix and exercises definition, hover and all-occurrence rename on an
+unsaved document. On macOS it reuses VSCodium when available; CI downloads the
+pinned VS Code 1.96.4 test runtime and runs it under Xvfb.
+
+`test:installed-extension` packages and inspects the VSIX, installs that exact
+archive into an isolated extension directory and then runs the same activation,
+language-server, diagnostics, Quick Fix, navigation and rename smoke suite from
+the installed files.
 
 Language-service tests exercise workspace precedence, transitive repository
 sources, exact import navigation, generation cancellation, repository-aware
-completion and read-only rename. LSP adapter tests cover browser aliases and
+completion, 100 rapid changes, worker recovery, current imported scopes,
+qualified path segments and refusal-safe rename. LSP and Monaco adapter tests
+cover live diagnostic provenance, tags, Quick Fix edits, browser aliases and
 virtual repository URIs. The F5 example workspace provides the Desktop/Web
 Ctrl-click smoke path for `IMPORTS Units`.
 `test:repository-network` is the separate opt-in network smoke test for the two

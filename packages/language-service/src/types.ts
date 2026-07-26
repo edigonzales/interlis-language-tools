@@ -3,6 +3,7 @@ import type {
   CompilationRequest,
   CompilationResult,
   FormatResult,
+  EditorSnapshot,
   SemanticSnapshot,
   SyntaxSnapshot,
 } from "@ilic/compiler-wasm";
@@ -28,6 +29,7 @@ export interface CompilerBackend {
   putSource(uri: string, source: string | Uint8Array, version: number): void;
   removeSource(uri: string): boolean;
   parse(uri: string): SyntaxSnapshot;
+  editorSnapshot?(uri: string): EditorSnapshot;
   analyze(request: CompilationRequest): SemanticSnapshot;
   compileAndAnalyze(
     request: CompilationRequest,
@@ -41,9 +43,26 @@ export interface CompilerBackend {
   dispose(): void;
 }
 
+export interface EditorAnalysisBackend {
+  putSource(uri: string, source: string | Uint8Array, version: number): void;
+  removeSource(uri: string): void;
+  analyze(uri: string): Promise<EditorSnapshot>;
+  restart?(): Promise<void> | void;
+  dispose(): void;
+}
+
 export interface AnalysisEvent {
   readonly result: VersionedResult<SemanticSnapshot>;
   readonly affectedUris: readonly string[];
+}
+
+export type LiveAnalysisStatus =
+  "off" | "scheduled" | "running" | "ready" | "unavailable";
+
+export interface DiagnosticsChangedEvent {
+  readonly uri: string;
+  readonly documentVersion: number | null;
+  readonly status: LiveAnalysisStatus;
 }
 
 export type CompilationTrigger =
@@ -67,6 +86,10 @@ export interface LanguageServiceOptions {
   readonly onCompilation?: (event: CompilationEvent) => void;
   readonly onError?: (error: unknown) => void;
   readonly modelRepository?: ModelRepository;
+  readonly editorAnalysis?: EditorAnalysisBackend;
+  readonly liveDiagnostics?: "off" | "conservative";
+  readonly liveDiagnosticsDelayMs?: number;
+  readonly editorAnalysisTimeoutMs?: number;
 }
 
 export interface WorkspaceSource {

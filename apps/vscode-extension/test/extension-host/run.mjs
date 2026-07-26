@@ -1,11 +1,19 @@
-import { access, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdtemp,
+  mkdir,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { runTests } from "@vscode/test-electron";
+import { basename, dirname, join, resolve } from "node:path";
+import { downloadAndUnzipVSCode, runTests } from "@vscode/test-electron";
 
-const extensionDevelopmentPath = resolve(import.meta.dirname, "../..");
+const sourceExtensionPath = resolve(import.meta.dirname, "../..");
 const extensionTestsPath = resolve(
-  extensionDevelopmentPath,
+  sourceExtensionPath,
   "dist-test/extension-host-tests.cjs",
 );
 const temporaryBase = process.platform === "darwin" ? "/tmp" : tmpdir();
@@ -41,6 +49,53 @@ if (!vscodeExecutablePath && vscodiumExecutable)
   }
 
 try {
+  let extensionDevelopmentPath = sourceExtensionPath;
+  if (process.env.ILIC_TEST_INSTALLED_VSIX === "1") {
+    vscodeExecutablePath ??= await downloadAndUnzipVSCode("1.96.4");
+    const vsix = resolve(
+      sourceExtensionPath,
+      "../../artifacts/interlis-language-tools.vsix",
+    );
+    await access(vsix);
+    let installExecutable = vscodeExecutablePath;
+    if (process.platform === "darwin") {
+      const command =
+        basename(vscodeExecutablePath).toLowerCase() === "vscodium"
+          ? "codium"
+          : "code";
+      const candidate = resolve(
+        dirname(vscodeExecutablePath),
+        `../Resources/app/bin/${command}`,
+      );
+      await access(candidate);
+      installExecutable = candidate;
+    }
+    const installation = spawnSync(
+      installExecutable,
+      [
+        `--user-data-dir=${userData}`,
+        `--extensions-dir=${extensions}`,
+        "--install-extension",
+        vsix,
+        "--force",
+      ],
+      { encoding: "utf8" },
+    );
+    if (installation.status !== 0)
+      throw new Error(
+        `VSIX installation failed: ${installation.stderr || installation.stdout}`,
+      );
+    const installed = (await readdir(extensions)).find((entry) =>
+      entry.startsWith("edigonzales.interlis-language-tools-"),
+    );
+    if (!installed)
+      throw new Error("Installed INTERLIS extension directory was not found");
+    extensionDevelopmentPath = join(extensions, installed);
+    await access(join(extensionDevelopmentPath, "dist/server-node.js"));
+    await access(
+      join(extensionDevelopmentPath, "dist/compiler-worker-node.js"),
+    );
+  }
   await runTests({
     extensionDevelopmentPath,
     extensionTestsPath,

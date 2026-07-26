@@ -10,6 +10,8 @@ current evidence; detailed commands are in [testing.md](testing.md).
 | Capability                                               | legacy-server | legacy-client | shared-core | VS Code Desktop | VS Code Web | Theia | Monaco IDE |                                                        automated-test |
 | -------------------------------------------------------- | ------------: | ------------: | ----------: | --------------: | ----------: | ----: | ---------: | --------------------------------------------------------------------: |
 | Save/manual diagnostics; stale result while typing       |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                  ✅ unit/contract/E2E |
+| Conservative versioned live diagnostics                  |             — |             — |          ✅ |              ✅ |          🟡 |    🟡 |         ✅ |                              ✅ golden/unit/LSP/Monaco/extension-host |
+| Live quick fixes and diagnostic tags                     |             — |             — |          ✅ |              ✅ |          🟡 |    🟡 |         ✅ |                                     ✅ unit/LSP/Monaco/extension-host |
 | Compile saved editable document on open                  |             — |             — |           — |              ✅ |          ✅ |    ✅ |          — |                                            ✅ extension/unit/contract |
 | Import and repository-model completion                   |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                      ✅ unit/contract |
 | Slot- und scope-basierte INTERLIS-2.3/2.4-Completion     |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                ✅ golden/unit/adapter |
@@ -17,6 +19,7 @@ current evidence; detailed commands are in [testing.md](testing.md).
 | Ctrl-click into read-only repository models              |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                  ✅ unit/manual smoke |
 | Definition and references                                |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                       ✅ unit/adapter |
 | Prepare rename and rename                                |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                       ✅ unit/adapter |
+| Dirty navigation and all-or-nothing rename               |             — |             — |          ✅ |              ✅ |          🟡 |    🟡 |         ✅ |                           ✅ scope/unit/bundle/adapter/extension-host |
 | Document symbols and outline                             |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                       ✅ unit/adapter |
 | Hover information                                        |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                       ✅ unit/adapter |
 | Full-document and on-type formatting                     |            ✅ |            ✅ |          ✅ |              ✅ |          ✅ |    ✅ |         ✅ |                                                ✅ native/unit/adapter |
@@ -68,3 +71,9 @@ examples are mirrored by the language-service golden/contract cases; LSP and
 Monaco text edits are covered by adapter tests, while VS Code keybindings and
 snippet navigation are covered by manifest tests plus the isolated real
 extension-host suite.
+
+The conservative live-diagnostic and dirty-navigation contracts are documented
+in [Live-Diagnostik und Dirty-Navigation](live-diagnostik-und-dirty-navigation.md).
+The isolated desktop extension-host suite covers visible squiggles, Quick Fix
+invocation and dirty rename end to end. VS Code Web and Theia remain yellow
+until the same interactions have run in those external hosts.

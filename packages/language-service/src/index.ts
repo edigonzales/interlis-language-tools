@@ -2,6 +2,7 @@ export { AnalysisCache } from "./cache.js";
 export { createWasmCompilerBackend } from "./compiler.js";
 export {
   createWorkerCompilerBackend,
+  createWorkerEditorAnalysisBackend,
   runCompilerWorker,
 } from "./compiler-worker.js";
 export type {
@@ -22,6 +23,7 @@ export { WorkspaceRepositoryResolver } from "./repository.js";
 export { LanguageService } from "./service.js";
 export type {
   CompletionItem,
+  CodeAction,
   DocumentSymbol,
   EditorFormattingOptions,
   EditorPosition,
@@ -68,8 +70,11 @@ export type {
   CompilationEvent,
   CompilationOutputEvent,
   CompilationTrigger,
+  DiagnosticsChangedEvent,
   CompilerBackend,
+  EditorAnalysisBackend,
   LanguageServiceOptions,
+  LiveAnalysisStatus,
   OpenDocument,
   ResultFreshness,
   VersionedResult,
@@ -88,6 +93,9 @@ export type {
   CompilationAnalysisResult,
   CompilationRequest,
   Diagnostic,
+  EditorDeclaration,
+  EditorReference,
+  EditorSnapshot,
   DiagramEdge,
   DiagramNode,
   SemanticSnapshot,

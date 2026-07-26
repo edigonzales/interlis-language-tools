@@ -1,6 +1,7 @@
 import type {
   CompilationResult,
   CompilationTrigger,
+  LiveAnalysisStatus,
   SemanticSnapshot,
 } from "@ilic/language-service";
 
@@ -16,6 +17,8 @@ export const InterlisProtocol = {
   workspaceSourceChanged: "interlis/workspaceSourceChanged",
   repositoryConfiguration: "interlis/repositoryConfiguration",
   repositorySource: "interlis/repositorySource",
+  liveDiagnosticsConfiguration: "interlis/liveDiagnosticsConfiguration",
+  liveAnalysisStatus: "interlis/liveAnalysisStatus",
 } as const;
 
 export interface WorkspaceSourcePayload {
@@ -28,6 +31,7 @@ export interface InterlisInitializationOptions {
   readonly modelRepositories?: readonly string[];
   readonly workspaceSources?: readonly WorkspaceSourcePayload[];
   readonly repositoryCachePath?: string;
+  readonly liveDiagnostics?: "off" | "conservative";
 }
 
 export interface WorkspaceSourcesParams {
@@ -43,6 +47,16 @@ export interface WorkspaceSourceChangedParams {
 
 export interface RepositoryConfigurationParams {
   readonly modelRepositories: readonly string[];
+}
+
+export interface LiveDiagnosticsConfigurationParams {
+  readonly mode: "off" | "conservative";
+}
+
+export interface LiveAnalysisStatusParams {
+  readonly uri: string;
+  readonly documentVersion: number | null;
+  readonly status: LiveAnalysisStatus;
 }
 
 export interface RepositorySourceResult {

@@ -19,6 +19,7 @@ export async function createWasmCompilerBackend(): Promise<CompilerBackend> {
       return session.removeSource(uri);
     },
     parse: (uri) => session.parse(uri),
+    editorSnapshot: (uri) => session.editorSnapshot(uri),
     analyze: (request) => session.analyze(request),
     compileAndAnalyze: (request) => session.compileAndAnalyze(request),
     compile: (request) => session.compile(request),

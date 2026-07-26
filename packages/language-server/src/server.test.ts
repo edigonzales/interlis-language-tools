@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import type {
+  CodeAction,
   CompilationEvent,
+  Diagnostic,
   DocumentSymbol,
   LanguageService,
 } from "@ilic/language-service";
@@ -59,7 +61,15 @@ function contractHarness() {
   }) as unknown as Connection;
 
   let compilationListener: ((event: CompilationEvent) => void) | undefined;
+  let diagnosticsListener:
+    | ((event: {
+        uri: string;
+        documentVersion: number | null;
+        status: "ready";
+      }) => void)
+    | undefined;
   const compilationDispose = vi.fn();
+  const diagnosticsDispose = vi.fn();
   const spies = {
     replaceWorkspaceSources: vi.fn(),
     putWorkspaceSource: vi.fn(),
@@ -74,9 +84,17 @@ function contractHarness() {
     getRepositoryDocument: vi.fn(),
     compileDocument: vi.fn(() => Promise.resolve({ compilation: {} })),
     getSavedSemanticSnapshot: vi.fn(() => null),
+    configureLiveDiagnostics: vi.fn(),
+    diagnostics: vi.fn((): Diagnostic[] => []),
+    codeActions: vi.fn((): CodeAction[] => []),
+    renameRejectionReason: vi.fn((): string | null => null),
     symbols: vi.fn((): DocumentSymbol[] => []),
     waitForDocumentSymbols: vi.fn(
-      (uri: string, version: number, signal?: AbortSignal) => {
+      (
+        uri: string,
+        version: number,
+        signal?: AbortSignal,
+      ): Promise<DocumentSymbol[]> => {
         void uri;
         void version;
         void signal;
@@ -90,6 +108,10 @@ function contractHarness() {
     onCompilation: vi.fn((listener: typeof compilationListener) => {
       compilationListener = listener;
       return { dispose: compilationDispose };
+    }),
+    onDiagnosticsChanged: vi.fn((listener: typeof diagnosticsListener) => {
+      diagnosticsListener = listener;
+      return { dispose: diagnosticsDispose };
     }),
     completion: vi.fn(() => Promise.resolve([])),
     definition: vi.fn(() => []),
@@ -116,7 +138,14 @@ function contractHarness() {
     service,
     spies,
     compilationDispose,
+    diagnosticsDispose,
     fireCompilation: (event: CompilationEvent) => compilationListener?.(event),
+    fireDiagnostics: (uri: string, version = 1) =>
+      diagnosticsListener?.({
+        uri,
+        documentVersion: version,
+        status: "ready",
+      }),
     handler,
   };
 }
@@ -331,7 +360,95 @@ describe("language server repository contract", () => {
     );
     harness.handler<() => void>("onShutdown")();
     expect(harness.compilationDispose).toHaveBeenCalledOnce();
+    expect(harness.diagnosticsDispose).toHaveBeenCalledOnce();
     expect(harness.spies.dispose).toHaveBeenCalledOnce();
+  });
+
+  it("publishes live status, tags, and deterministic quick fixes", () => {
+    const harness = contractHarness();
+    const uri = "file:///Live.ili";
+    harness.spies.diagnostics.mockReturnValue([
+      {
+        severity: "warning",
+        code: "ILIC-LINT-UNUSED-IMPORT",
+        message: "Unused import",
+        range: {
+          uri,
+          start: { line: 1, character: 10, byteOffset: 20 },
+          end: { line: 1, character: 14, byteOffset: 24 },
+        },
+        relatedInformation: [],
+        notes: [],
+        treatedAsError: false,
+        source: "lint",
+        tags: ["unnecessary"],
+      },
+    ]);
+    harness.spies.codeActions.mockReturnValue([
+      {
+        title: "Remove unused import 'Base'",
+        kind: "quickfix",
+        diagnostics: ["ILIC-LINT-UNUSED-IMPORT"],
+        edit: {
+          changes: {
+            [uri]: [
+              {
+                range: {
+                  start: { line: 1, character: 8 },
+                  end: { line: 1, character: 14 },
+                },
+                newText: "",
+              },
+            ],
+          },
+        },
+      },
+    ]);
+    bindLanguageServer(harness.connection, harness.service);
+
+    harness.fireDiagnostics(uri, 3);
+    expect(harness.sendDiagnostics).toHaveBeenCalledWith({
+      uri,
+      diagnostics: [
+        expect.objectContaining({
+          code: "ILIC-LINT-UNUSED-IMPORT",
+          source: "ilic-lint",
+          tags: [1],
+        }),
+      ],
+    });
+    expect(harness.sendNotification).toHaveBeenCalledWith(
+      InterlisProtocol.liveAnalysisStatus,
+      { uri, documentVersion: 3, status: "ready" },
+    );
+
+    const actions = harness.handler<
+      (params: {
+        textDocument: { uri: string };
+        range: {
+          start: { line: number; character: number };
+          end: { line: number; character: number };
+        };
+        context: { diagnostics: Array<{ code: string }> };
+      }) => Array<{
+        title: string;
+        edit?: {
+          changes?: Record<string, Array<{ newText: string }>>;
+        };
+      }>
+    >("onCodeAction")({
+      textDocument: { uri },
+      range: {
+        start: { line: 1, character: 10 },
+        end: { line: 1, character: 14 },
+      },
+      context: {
+        diagnostics: [{ code: "ILIC-LINT-UNUSED-IMPORT" }],
+      },
+    });
+    expect(actions).toHaveLength(1);
+    expect(actions[0]?.title).toBe("Remove unused import 'Base'");
+    expect(actions[0]?.edit?.changes?.[uri]?.[0]?.newText).toBe("");
   });
 
   it("compiles on save and manual request with one root URI", async () => {
@@ -392,7 +509,7 @@ describe("language server repository contract", () => {
     expect(result).toEqual([1, 2, 3]);
   });
 
-  it("answers document symbols immediately from the live outline", () => {
+  it("answers document symbols from the current live editor snapshot", async () => {
     const harness = contractHarness();
     bindLanguageServer(harness.connection, harness.service);
     const uri = "file:///Root.ili";
@@ -414,24 +531,28 @@ describe("language server repository contract", () => {
       },
     ];
     harness.spies.symbols.mockReturnValue(symbols);
+    harness.spies.waitForDocumentSymbols.mockResolvedValue(symbols);
 
-    const result = harness.handler<
-      (params: { textDocument: { uri: string } }) => unknown
+    const result = await harness.handler<
+      (params: { textDocument: { uri: string } }) => Promise<unknown>
     >("onDocumentSymbol")({ textDocument: { uri } });
 
     expect(result).toEqual([
       expect.objectContaining({ name: "Root", detail: "MODEL" }),
     ]);
-    expect(harness.spies.symbols).toHaveBeenCalledWith(uri);
-    expect(harness.spies.waitForDocumentSymbols).not.toHaveBeenCalled();
+    expect(harness.spies.waitForDocumentSymbols).toHaveBeenCalledWith(
+      uri,
+      2,
+      undefined,
+    );
     expect(harness.spies.compileDocument).not.toHaveBeenCalled();
   });
 
-  it("does not clear the live outline when a request token is cancelled", () => {
+  it("does not clear the live outline when a request token is cancelled", async () => {
     const harness = contractHarness();
     bindLanguageServer(harness.connection, harness.service);
     const uri = "file:///Root.ili";
-    harness.spies.symbols.mockReturnValue([
+    const symbols = [
       {
         name: "Root",
         detail: "MODEL",
@@ -446,12 +567,15 @@ describe("language server repository contract", () => {
         },
         children: [],
       },
-    ]);
-    const result = harness.handler<
+    ];
+    harness.spies.symbols.mockReturnValue(symbols);
+    harness.spies.waitForDocumentSymbols.mockResolvedValue(symbols);
+    harness.spies.getDocument.mockReturnValue({ version: 2 });
+    const result = await harness.handler<
       (
         params: { textDocument: { uri: string } },
         token: { readonly isCancellationRequested: boolean },
-      ) => unknown
+      ) => Promise<unknown>
     >("onDocumentSymbol")(
       { textDocument: { uri } },
       { isCancellationRequested: true },
@@ -574,5 +698,25 @@ describe("language server repository contract", () => {
       },
     });
     expect(harness.spies.compileDocument).not.toHaveBeenCalled();
+  });
+
+  it("returns an actionable reason instead of a partial pending rename", () => {
+    const harness = contractHarness();
+    harness.spies.renameRejectionReason.mockReturnValue(
+      "Live INTERLIS analysis is still running. Wait and try again.",
+    );
+    bindLanguageServer(harness.connection, harness.service);
+
+    expect(() =>
+      harness.handler<
+        (params: {
+          textDocument: { uri: string };
+          position: { line: number; character: number };
+        }) => unknown
+      >("onPrepareRename")({
+        textDocument: { uri: "file:///Root.ili" },
+        position: { line: 1, character: 2 },
+      }),
+    ).toThrow("Live INTERLIS analysis is still running");
   });
 });

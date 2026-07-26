@@ -19,8 +19,9 @@ Aktualisieren von Document Symbols. Eine sofortige leere Antwort während des
 Tippens kann deshalb als leeres OUTLINE für diese Dokumentversion bestehen
 bleiben.
 
-Der WASM-Compiler verwendet eine gemeinsame Session und wird global
-serialisiert. Semantische Ergebnisse dürfen trotzdem nicht global behandelt
+Die vollständige WASM-Kompilation verwendet eine eigene Session und wird dort
+serialisiert. Ein zweiter Worker erzeugt unabhängig davon kompakte, versionierte
+Editor-Snapshots. Semantische Ergebnisse dürfen trotzdem nicht global behandelt
 werden: Eine Kompilation von Modell B darf den gültigen Zustand von Modell A
 nicht verdrängen.
 
@@ -39,6 +40,14 @@ Ein Save oder ein expliziter manueller Compile kompiliert die Root-URI erneut.
 Eine Änderung oder ein Save, die einen noch ausstehenden Open-Lauf überholen,
 verwerfen dessen Resultat nach denselben Regeln wie andere automatische
 Kompilationen.
+
+Nach 250 ms Tipp-Pause erzeugt der separate Editor-Worker zusätzlich einen
+kompakten `EditorSnapshot`. Er liefert den aktuellen Scope für Completion,
+OUTLINE, Hover, Definition, Referenzen, konservative Live-Diagnostics und
+sicheren Dirty-Rename. Das ist keine vollständige Kompilation: Diagramm, DOCX,
+Compiler-Output und vollständige Typprüfung bleiben save-basiert. Ergebnisse
+mit einer überholten Dokumentversion werden verworfen. Timeout oder Workerfehler
+fallen ohne Einfluss auf Save/Compile auf die save-basierte Projektion zurück.
 
 Eine eng begrenzte Ausnahme gilt beim ersten Öffnen eines Diagramms: Existiert
 für eine nichtleere, gespeicherte Root-URI noch kein semantischer Snapshot,
@@ -79,14 +88,14 @@ geänderte URI enthält. Nicht zuordenbare Source-Additions, Löschungen und
 Repository-Wechsel invalidieren vorhandene Root-Snapshots konservativ. Der
 `lastGood`-Snapshot wird dabei nicht gelöscht.
 
-| Ereignis                             | Semantischer Zustand                                                                                          | Sichtbare Projektion                                                                                               |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| Öffnen eines gespeicherten Dokuments | Ein `open`-Lauf erzeugt den initialen Root-Snapshot; `untitled:` und Repository-Dokumente bleiben ausgenommen | Compiler-Output, Problems, OUTLINE und offene Diagramme erhalten denselben atomaren Stand                          |
-| Tippen oder Rename                   | Betroffene `current`- und gespeicherte Snapshots werden `stale`; `lastGood` bleibt bestehen                   | OUTLINE wartet auf Analyse; offene betroffene Diagramme behalten SVG und Viewport und werden als veraltet markiert |
-| Save                                 | Keine zweite Invalidierung; ein gültiges Resultat ersetzt `current` und `lastGood` atomar                     | OUTLINE erhält neue Symbole; offene betroffene Diagramme werden neu gelayoutet                                     |
-| Ungültiger Save                      | Das Fehlerresultat wird `current`; `lastGood` bleibt bestehen                                                 | Das vorherige OUTLINE bleibt sichtbar; Diagramme behalten SVG und Viewport und zeigen einen Fehlerstatus           |
-| Watcher-Echo einer offenen Datei     | Nur die Workspace-Hintergrundquelle wird nachgeführt                                                          | Kein Flackern und keine erneute Invalidierung                                                                      |
-| Überholte Kompilation                | Das Resultat wird verworfen                                                                                   | Keine Notification und kein UI-Update                                                                              |
+| Ereignis                             | Semantischer Zustand                                                                                                             | Sichtbare Projektion                                                                                                                           |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Öffnen eines gespeicherten Dokuments | Ein `open`-Lauf erzeugt den initialen Root-Snapshot; `untitled:` und Repository-Dokumente bleiben ausgenommen                    | Compiler-Output, Problems, OUTLINE und offene Diagramme erhalten denselben atomaren Stand                                                      |
+| Tippen oder Rename                   | Betroffene Compiler-Snapshots werden `stale`; `lastGood` bleibt bestehen; der Editor-Worker erzeugt einen neuen Versionssnapshot | OUTLINE, konservative Problems und Navigation folgen dem Editor-Snapshot; Diagramme behalten SVG und Viewport und werden als veraltet markiert |
+| Save                                 | Keine zweite Invalidierung; ein gültiges Resultat ersetzt `current` und `lastGood` atomar                                        | OUTLINE erhält neue Symbole; offene betroffene Diagramme werden neu gelayoutet                                                                 |
+| Ungültiger Save                      | Das Fehlerresultat wird `current`; `lastGood` bleibt bestehen                                                                    | Das vorherige OUTLINE bleibt sichtbar; Diagramme behalten SVG und Viewport und zeigen einen Fehlerstatus                                       |
+| Watcher-Echo einer offenen Datei     | Nur die Workspace-Hintergrundquelle wird nachgeführt                                                                             | Kein Flackern und keine erneute Invalidierung                                                                                                  |
+| Überholte Kompilation                | Das Resultat wird verworfen                                                                                                      | Keine Notification und kein UI-Update                                                                                                          |
 
 ### Rename
 
@@ -95,14 +104,21 @@ korrespondierenden Namen in `END <Name>`. Edits werden pro URI und Range
 dedupliziert. Dadurch bleibt das gespeicherte Modell nach dem Rename syntaktisch
 und semantisch gültig und kann einen neuen OUTLINE-Snapshot erzeugen.
 
+Bei Dirty-Code verwendet Rename den gemeinsamen Editor-Scope. Er wird nur bei
+eindeutigem Ziel und aktuellen Snapshots aller betroffenen editierbaren Dateien
+ausgeführt. Deklaration, Referenzen, qualifizierte Modellpräfixe und `END`-Name
+werden segmentgenau zusammen geändert; andernfalls wird ohne Teiländerung
+abgebrochen.
+
 ### OUTLINE
 
-Der LSP-Handler für `textDocument/documentSymbol` antwortet sofort aus der
-lebenden Outline des Language Service:
+Der LSP-Handler für `textDocument/documentSymbol` antwortet aus der lebenden
+Outline des Language Service und wartet bei Bedarf auf den Snapshot exakt der
+aktuellen Dokumentversion:
 
 1. Ein gültiger semantischer Snapshot aktualisiert die sticky Baseline pro URI.
-2. Nach einer Textänderung wird aus dem aktuellen Syntaxbaum eine neue Outline
-   erzeugt und mit der Baseline zusammengeführt.
+2. Nach einer Textänderung wird aus dem kompakten Editor-Snapshot eine neue
+   Outline erzeugt und mit der Baseline zusammengeführt.
 3. Eine temporär unvollständige oder fehlerhafte Deklaration leert die Outline
    nicht; weiterhin gültige Namen und Bereiche bleiben sichtbar.
 4. Request-Cancellation liefert ebenfalls die aktuelle Projektion statt einer

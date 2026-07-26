@@ -52,6 +52,7 @@
     "typecheck": "tsc -b tsconfig.json --pretty false",
     "test": "vitest run --passWithNoTests",
     "test:extension-host": "pnpm build && pnpm build:test:extension-host && node test/extension-host/run.mjs",
+    "test:extension-host:installed": "pnpm build && pnpm build:test:extension-host && node ../../scripts/package-vsix.mjs && node test/extension-host/run-installed.mjs",
     "test:coverage": "vitest run --coverage --passWithNoTests",
     "vscode:prepublish": "pnpm build"
   },
@@ -246,6 +247,15 @@
           "type": "boolean",
           "default": true,
           "markdownDescription": "Show the compiler output when the extension activates without stealing editor focus."
+        },
+        "interlisLanguageTools.liveDiagnostics": {
+          "type": "string",
+          "enum": [
+            "off",
+            "conservative"
+          ],
+          "default": "conservative",
+          "markdownDescription": "Controls versioned diagnostics while typing. `conservative` reports only structurally complete, high-confidence editor findings; full compiler diagnostics remain save-driven."
         },
         "interlisLanguageTools.diagram.autoOpenBeside": {
           "type": "boolean",

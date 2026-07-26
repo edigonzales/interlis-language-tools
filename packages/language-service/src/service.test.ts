@@ -5,6 +5,8 @@ import type {
   CompilationRequest,
   CompilerBackend,
   Diagnostic,
+  EditorAnalysisBackend,
+  EditorSnapshot,
   SemanticSnapshot,
   SyntaxSnapshot,
 } from "./index.js";
@@ -232,7 +234,220 @@ function backend(
   };
 }
 
+function editorSnapshot(text: string, version: number): EditorSnapshot {
+  const lines = text.split("\n");
+  const offsetAt = (line: number, character: number) =>
+    lines.slice(0, line).reduce((total, value) => total + value.length + 1, 0) +
+    character;
+  const fullRange = {
+    uri: rootUri,
+    start: { line: 0, character: 0, byteOffset: 0 },
+    end: {
+      line: lines.length - 1,
+      character: lines.at(-1)?.length ?? 0,
+      byteOffset: text.length,
+    },
+  };
+  const nameRange = (line: number, character: number, name: string) => ({
+    uri: rootUri,
+    start: { line, character, byteOffset: offsetAt(line, character) },
+    end: {
+      line,
+      character: character + name.length,
+      byteOffset: offsetAt(line, character + name.length),
+    },
+  });
+  return {
+    schemaVersion: 1,
+    abiVersion: 1,
+    compilerVersion: "test-compiler",
+    kind: "editor",
+    success: true,
+    uri: rootUri,
+    documentVersion: version,
+    iliVersion: "2.4",
+    declarations: [
+      {
+        id: "model",
+        name: "Root",
+        qualifiedName: "Root",
+        kind: "model",
+        containerId: null,
+        range: fullRange,
+        selectionRange: nameRange(1, 6, "Root"),
+        endRange: nameRange(lines.length - 1, 4, "Root"),
+      },
+      ...(lines.length > 5
+        ? [
+            {
+              id: "class",
+              name: "Item",
+              qualifiedName: "Root.Item",
+              kind: "class" as const,
+              containerId: "model",
+              range: {
+                ...fullRange,
+                start: {
+                  line: 2,
+                  character: 2,
+                  byteOffset: offsetAt(2, 2),
+                },
+                end: {
+                  line: lines.length - 2,
+                  character: lines.at(-2)?.length ?? 0,
+                  byteOffset: offsetAt(
+                    lines.length - 2,
+                    lines.at(-2)?.length ?? 0,
+                  ),
+                },
+              },
+              selectionRange: nameRange(2, 8, "Item"),
+              endRange: nameRange(lines.length - 2, 8, "Item"),
+            },
+          ]
+        : []),
+    ],
+    references: [],
+    imports: [],
+    contexts: [],
+    diagnostics: [],
+  };
+}
+
+function editorBackend(): EditorAnalysisBackend & {
+  readonly analyze: ReturnType<typeof vi.fn>;
+} {
+  const sources = new Map<string, { text: string; version: number }>();
+  return {
+    putSource(uri, source, version) {
+      sources.set(uri, { text: String(source), version });
+    },
+    removeSource: vi.fn(),
+    analyze: vi.fn((uri: string) => {
+      const source = sources.get(uri)!;
+      return Promise.resolve(editorSnapshot(source.text, source.version));
+    }),
+    dispose: vi.fn(),
+  };
+}
+
 describe("save-driven LanguageService", () => {
+  it("debounces rapid edits and publishes only the final editor snapshot", async () => {
+    const editor = editorBackend();
+    const service = new LanguageService(backend(), {
+      editorAnalysis: editor,
+      liveDiagnosticsDelayMs: 0,
+    });
+    const events: number[] = [];
+    service.onDiagnosticsChanged((event) => {
+      if (event.status === "ready" && event.documentVersion !== null)
+        events.push(event.documentVersion);
+    });
+    service.openDocument(rootUri, "INTERLIS 2.4;\nMODEL Root =\nEND Root.", 1);
+    const changeDurations: number[] = [];
+    for (let version = 2; version <= 101; version += 1) {
+      const started = performance.now();
+      service.changeDocument(
+        rootUri,
+        `INTERLIS 2.4;\nMODEL Root =\n!! ${version}\nEND Root.`,
+        version,
+      );
+      changeDurations.push(performance.now() - started);
+    }
+
+    await vi.waitFor(() => expect(editor.analyze).toHaveBeenCalledOnce());
+    await vi.waitFor(() =>
+      expect(service.getEditorSnapshot(rootUri)?.value?.documentVersion).toBe(
+        101,
+      ),
+    );
+    expect(events).toEqual([101]);
+    expect(
+      (
+        service.compiler.parse as unknown as {
+          readonly mock: { readonly calls: readonly unknown[] };
+        }
+      ).mock.calls,
+    ).toHaveLength(0);
+    expect(Math.max(...changeDurations)).toBeLessThan(16);
+  });
+
+  it("falls back quietly when editor analysis exceeds its deadline", async () => {
+    const restart = vi.fn();
+    const editor: EditorAnalysisBackend = {
+      putSource: vi.fn(),
+      removeSource: vi.fn(),
+      analyze: vi.fn(() => new Promise<EditorSnapshot>(() => undefined)),
+      restart,
+      dispose: vi.fn(),
+    };
+    const errors: unknown[] = [];
+    const service = new LanguageService(backend(), {
+      editorAnalysis: editor,
+      liveDiagnosticsDelayMs: 0,
+      editorAnalysisTimeoutMs: 5,
+      onError: (error) => errors.push(error),
+    });
+    service.openDocument(rootUri, "INTERLIS 2.4;\nMOD", 1);
+    const compilation = await service.compileDocument(rootUri, "manual");
+    expect(compilation.trigger).toBe("manual");
+    expect(compilation.compilation.cancelled).toBe(false);
+
+    await vi.waitFor(() =>
+      expect(service.liveAnalysisStatus(rootUri)).toBe("unavailable"),
+    );
+    expect(restart).toHaveBeenCalledOnce();
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toBeInstanceOf(Error);
+    expect((errors[0] as Error).message).toContain("exceeded 5 ms");
+    expect(
+      (await service.completion(rootUri, { line: 1, character: 3 })).some(
+        (item) =>
+          item.label === "MODEL Name (lang) AT ... VERSION ... = ... END Name.",
+      ),
+    ).toBe(true);
+  });
+
+  it("publishes conservative diagnostics and deterministic quick fixes", async () => {
+    const editor = editorBackend();
+    const service = new LanguageService(backend(), {
+      editorAnalysis: editor,
+      liveDiagnosticsDelayMs: 0,
+    });
+    const text = `INTERLIS 2.4;
+MODEL Root =
+  CLASS Item =
+    value: TEXT
+  END Wrong;
+END Root.`;
+    service.openDocument(rootUri, text, 1);
+    service.changeDocument(rootUri, `${text}\n`, 2);
+
+    await vi.waitFor(() =>
+      expect(service.liveAnalysisStatus(rootUri)).toBe("ready"),
+    );
+    expect(service.diagnostics(rootUri).map((entry) => entry.code)).toEqual(
+      expect.arrayContaining([
+        "ILIC-LIVE-MISSING-SEMICOLON",
+        "ILIC-LIVE-END-NAME",
+      ]),
+    );
+    expect(
+      service
+        .codeActions(
+          rootUri,
+          {
+            start: { line: 3, character: 0 },
+            end: { line: 4, character: 20 },
+          },
+          [],
+        )
+        .map((action) => action.title),
+    ).toEqual(
+      expect.arrayContaining(["Insert missing ';'", "Replace with 'Item'"]),
+    );
+  });
+
   it("computes completion from a live parse without invoking the compiler", async () => {
     const compiler = backend();
     compiler.parse.mockReturnValue({
