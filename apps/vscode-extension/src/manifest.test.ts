@@ -28,7 +28,7 @@ const manifest = JSON.parse(
 describe("VS Code extension manifest", () => {
   it("keeps the permanent identity and universal entry points", () => {
     expect(manifest.publisher).toBe("edigonzales");
-    expect(manifest.main).toContain("extension-node");
+    expect(manifest.main).toBe("./dist/extension-node.cjs");
     expect(manifest.browser).toContain("extension-browser");
     expect(manifest.icon).toBe("images/ililogo.png");
     expect(manifest.contributes.languages[0]).toMatchObject({

@@ -30,7 +30,7 @@
   },
   "preview": true,
   "type": "module",
-  "main": "./dist/extension-node.js",
+  "main": "./dist/extension-node.cjs",
   "browser": "./dist/extension-browser.js",
   "activationEvents": [
     "onLanguage:interlis",

@@ -1,4 +1,11 @@
-import { access, chmod, copyFile, mkdir, rm } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  copyFile,
+  mkdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import { build } from "esbuild";
@@ -108,6 +115,11 @@ await Promise.all([
     platform: "browser",
   }),
 ]);
+
+await writeFile(
+  resolve(dist, "extension-node.cjs"),
+  `'use strict';\n\nlet extension;\nconst loadExtension = () =>\n  (extension ??= import("./extension-node.js"));\n\nexports.activate = async (context) =>\n  (await loadExtension()).activate(context);\nexports.deactivate = async () =>\n  (await loadExtension()).deactivate?.();\n`,
+);
 
 const terminateProcess = resolve(
   extension,

@@ -132,6 +132,7 @@ const flattenSymbols = (
 describe("VS Code extension bundles", () => {
   it("provides CommonJS globals only to the Node bundles", async () => {
     const [
+      extensionNodeLoader,
       extensionNode,
       serverNode,
       compilerWorkerNode,
@@ -139,6 +140,7 @@ describe("VS Code extension bundles", () => {
       serverBrowser,
       compilerWorkerBrowser,
     ] = await Promise.all([
+      readBundle("extension-node.cjs"),
       readBundle("extension-node.js"),
       readBundle("server-node.js"),
       readBundle("compiler-worker-node.js"),
@@ -146,6 +148,10 @@ describe("VS Code extension bundles", () => {
       readBundle("server-browser.js"),
       readBundle("compiler-worker-browser.js"),
     ]);
+
+    expect(extensionNodeLoader).toContain('import("./extension-node.js")');
+    expect(extensionNodeLoader).toContain("exports.activate");
+    expect(extensionNodeLoader).toContain("exports.deactivate");
 
     for (const bundle of [extensionNode, serverNode, compilerWorkerNode]) {
       expect(bundle).toContain(
