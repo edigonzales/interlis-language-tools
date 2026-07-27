@@ -53,10 +53,12 @@ workflow with an exact compiler SHA and already published compiler version.
 The VSIX publication remains a separate manual release workflow:
 
 - `publish-npm-snapshot.yml` starts after successful main CI, or through the
-  coordinated/manual recovery triggers. It checks out exact compiler and
-  language-tools SHAs, verifies the two compiler packages and publishes the
-  five language packages, then sends the completed release to the Web IDE with
-  `repository_dispatch`;
+  coordinated/manual recovery triggers. It resolves an exact compiler version
+  and source SHA, checks out that compiler commit, builds and verifies the
+  native and WASM compiler artifacts, and publishes only the five language
+  packages. The two compiler packages were already published by `ilic-fork`;
+  after the language packages are published, the workflow sends the completed
+  release to the Web IDE with `repository_dispatch`;
 - `release.yml` publishes the already verified VSIX to the VS Code Marketplace
   and Open VSX.
 
@@ -71,11 +73,13 @@ The compiler repository dispatches only after its own npm publication succeeds.
 The payload contains the full compiler SHA and exact compiler snapshot version.
 A successful main-branch CI completion starts the language-tools publish run
 with the exact `workflow_run.head_sha`; a coordinated dispatch or manual run
-uses its explicitly supplied or resolved Language-Tools SHA. Each path resolves
-the current compiler `snapshot` tag only once, verifies both compiler packages,
-and then uses the resulting immutable version. The staged manifests pin that
-exact compiler version, and `release-manifest.json` records both source
-revisions, both independent timestamps/build IDs and all published versions.
+uses its explicitly supplied or resolved Language-Tools SHA. For a workflow-run
+or manual start without explicit compiler inputs, the current npm `snapshot`
+version is resolved once and its npm `gitHead` is used as the compiler source;
+`ilic-fork/main` is only the fallback when that metadata is unavailable. The
+staged manifests pin the exact compiler version, and
+`release-manifest.json` records both source revisions, both independent
+timestamps/build IDs and all published versions.
 
 Only the npm publish job receives:
 

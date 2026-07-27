@@ -3,11 +3,13 @@
 [Projektübersicht](../README.md) · [Release-Betrieb](release.md) ·
 [Teststrategie](testing.md)
 
-Dieses Repository koordiniert den zweiten Schritt des Release-Trains. Es baut
-und prüft die beiden Compiler-Pakete aus `ilic-fork` als Eingabe, publiziert
-aber nur die fünf eigenen Language-Tools-Pakete. Die Compiler-Pakete werden
-vorher aus `ilic-fork` selbst per OIDC publiziert. Erst danach wird der
-GitHub-Pages-Build von `interlis-web-ide` gestartet.
+Dieses Repository koordiniert den zweiten Schritt des Release-Trains. Es löst
+eine exakte Compiler-Revision und -Version aus `ilic-fork` auf, checkt diese
+Revision aus und baut daraus native und WASM-Compiler-Artefakte. Die beiden
+Compiler-Pakete wurden zuvor aus `ilic-fork` selbst per OIDC publiziert und
+werden hier als versionierte Eingabe verifiziert. Dieses Repository publiziert
+nur die fünf eigenen Language-Tools-Pakete. Erst danach wird der GitHub-
+Pages-Build von `interlis-web-ide` gestartet.
 
 ```mermaid
 flowchart LR
@@ -85,9 +87,18 @@ drei Wegen beginnen:
 
 | Ereignis                                          | Compiler-Revision                                                                                                         | Language-Tools-Revision                                                          |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| erfolgreicher `workflow_run` nach Push auf `main` | `gitHead` der einmalig vom npm-`snapshot`-Tag aufgelösten Compiler-Version (sonst Compiler-`main`)                        | exakter `github.event.workflow_run.head_sha`                                     |
-| `repository_dispatch` aus `ilic-fork`             | `client_payload.compiler_sha` und `client_payload.compiler_version`                                                       | aktueller Language-Tools-SHA, zu Beginn auf einen vollständigen Commit aufgelöst |
-| manueller Start                                   | optionaler vollständiger `compiler_sha` und `compiler_version`, sonst Compiler-`main` und aktueller npm-Compiler-Snapshot | optionaler vollständiger `language_tools_sha`, sonst Language-Tools-`main`       |
+| erfolgreicher `workflow_run` nach Push auf `main` | aktuelle npm-Compiler-Snapshot-Version und deren `gitHead` (Fallback: `ilic-fork/main`)                                  | exakter `github.event.workflow_run.head_sha`                                     |
+| `repository_dispatch` aus `ilic-fork`             | die mitgelieferten `client_payload.compiler_sha` und `client_payload.compiler_version`                                   | mitgelieferter oder auf `interlis-language-tools/main` aufgelöster SHA           |
+| manueller Start                                   | optionale, zusammengehörige `compiler_sha` und `compiler_version`; sonst Snapshot-Version und deren `gitHead` (Fallback: `ilic-fork/main`) | optionaler vollständiger `language_tools_sha`, sonst `interlis-language-tools/main` |
+
+Beim manuellen Start ohne Compiler-Angaben wird zuerst die aktuelle Version
+von `@ilic/tools@snapshot` abgefragt. Anschliessend liest der Workflow den
+zugehörigen npm-`gitHead` und verwendet diesen vollständigen Commit für den
+Checkout. Nur wenn die veröffentlichte Version keinen gültigen 40-stelligen
+`gitHead` enthält, wird `ilic-fork/main` verwendet. Die Compiler-Version und
+der Compiler-Commit müssen bei manueller Vorgabe immer gemeinsam angegeben
+werden. Für die Language Tools wird ohne expliziten SHA `main` dieses
+Repositories verwendet.
 
 `resolve-refs` akzeptiert nur vollständige, 40-stellige Commit-SHAs. Seine
 Outputs werden für alle folgenden Checkouts verwendet. Damit bleibt die
@@ -97,9 +108,12 @@ weitergeschoben wird.
 Ein erfolgreicher Main-CI-Lauf kann weiterhin einen Language-only-Snapshot
 erzeugen. Der koordinierte Compiler-Weg kommt ausschliesslich über den Dispatch
 aus dem erfolgreichen `ilic-fork`-Publish und enthält bereits die
-unveränderliche Compiler-Version. Der bewegliche npm-Tag wird nur bei
-Workflow-Run/Manual zur einmaligen Auflösung verwendet; danach arbeitet der
-Lauf nur noch mit der exakten Version.
+unveränderliche Compiler-Version. Beim `workflow_run` und beim manuellen Start
+wird der bewegliche npm-Tag nur einmalig aufgelöst; danach arbeitet der Lauf
+nur noch mit der exakten Version und dem dazugehörigen Commit. Im `build`-Job
+wird der Compiler aus diesem Commit lokal gebaut und geprüft. Die bereits von
+`ilic-fork` publizierten Compiler-Pakete werden nicht erneut publiziert; hier
+werden nur die fünf Language-Tools-Pakete veröffentlicht.
 
 ## Build- und Verifikationsphase des Release-Trains
 

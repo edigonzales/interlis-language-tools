@@ -10,11 +10,11 @@ on:
   workflow_dispatch:
     inputs:
       compiler_sha:
-        description: Optional ilic-fork commit SHA (40 hex characters)
+        description: Optional ilic-fork commit SHA (40 hex); must be supplied with compiler_version
         required: false
         type: string
       compiler_version:
-        description: Optional exact published compiler snapshot version
+        description: Optional exact published compiler snapshot version; must be supplied with compiler_sha
         required: false
         type: string
       language_tools_sha:
