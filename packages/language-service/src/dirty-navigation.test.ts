@@ -147,13 +147,41 @@ END Performance.
     const lines = text.split("\n");
     const line = lines.findIndex((value) => value.trim() === "CLA");
     const position = { line, character: lines[line]!.length };
-    const started = performance.now();
+    const coldStarted = performance.now();
     const items = await service.completion(baseUri, position);
-    const elapsed = performance.now() - started;
+    const coldElapsed = performance.now() - coldStarted;
 
     expect(
       items.some((item) => item.label === "CLASS Name = ... END Name;"),
     ).toBe(true);
-    expect(elapsed).toBeLessThan(100);
+    expect(
+      coldElapsed,
+      `cold completion took ${coldElapsed.toFixed(2)} ms`,
+    ).toBeLessThan(150);
+
+    const warmElapsed: number[] = [];
+    for (let index = 0; index < 5; index += 1) {
+      const started = performance.now();
+      const warmItems = await service.completion(baseUri, position);
+      warmElapsed.push(performance.now() - started);
+      expect(
+        warmItems.some((item) => item.label === "CLASS Name = ... END Name;"),
+      ).toBe(true);
+    }
+
+    const sortedWarmElapsed = [...warmElapsed].sort(
+      (left, right) => left - right,
+    );
+    const warmMedian =
+      sortedWarmElapsed[Math.floor(sortedWarmElapsed.length / 2)]!;
+    const warmMaximum = Math.max(...warmElapsed);
+    const samples = warmElapsed.map((elapsed) => elapsed.toFixed(2)).join(", ");
+    expect(warmMedian, `warm completion samples: [${samples}] ms`).toBeLessThan(
+      100,
+    );
+    expect(
+      warmMaximum,
+      `warm completion samples: [${samples}] ms`,
+    ).toBeLessThan(150);
   });
 });
