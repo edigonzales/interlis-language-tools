@@ -1791,14 +1791,33 @@ function addMetaAttributeItems(
     );
 }
 
-export function completionItemsAt(
+export interface CompletionEvaluation {
+  readonly context: CompletionContext | null;
+  readonly items: CompletionItem[];
+}
+
+export function completionAt(
   syntax: SyntaxSnapshot,
   text: string,
   semantic: SemanticSnapshot | null,
   position: EditorPosition,
-): CompletionItem[] {
+): CompletionEvaluation {
   const context = detectCompletionContext(syntax, text, position);
-  if (!context) return [];
+  return {
+    context,
+    items: context
+      ? completionItemsForContext(syntax, text, semantic, position, context)
+      : [],
+  };
+}
+
+function completionItemsForContext(
+  syntax: SyntaxSnapshot,
+  text: string,
+  semantic: SemanticSnapshot | null,
+  position: EditorPosition,
+  context: CompletionContext,
+): CompletionItem[] {
   const result: CompletionItem[] = [];
   const language24 = syntax.iliVersion === "2.4";
 
@@ -2174,4 +2193,13 @@ export function completionItemsAt(
     seen.add(key);
     return true;
   });
+}
+
+export function completionItemsAt(
+  syntax: SyntaxSnapshot,
+  text: string,
+  semantic: SemanticSnapshot | null,
+  position: EditorPosition,
+): CompletionItem[] {
+  return completionAt(syntax, text, semantic, position).items;
 }

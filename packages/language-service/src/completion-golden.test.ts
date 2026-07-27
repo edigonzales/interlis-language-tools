@@ -8,7 +8,11 @@ import {
   completionGoldenCatalog,
   javaCompletionBaselineCommit,
 } from "./completion-golden-catalog.test-data.js";
-import { completionItemsAt, detectCompletionContext } from "./completion.js";
+import {
+  completionAt,
+  completionItemsAt,
+  detectCompletionContext,
+} from "./completion.js";
 
 const uri = "memory:///CompletionGolden.ili";
 
@@ -143,4 +147,22 @@ describe(`Java completion golden catalog ${javaCompletionBaselineCommit}`, () =>
         expect(items.map((item) => item.label)).not.toContain(label);
     },
   );
+
+  it("returns the context and items from one completion evaluation", () => {
+    const text = "MODEL M =\n  TOPIC T =\n    CLA";
+    const position = { line: 2, character: 7 };
+    const syntax = snapshot(text, "2.4");
+    const evaluation = completionAt(syntax, text, null, position);
+    const classSnippet = evaluation.items.find(
+      (item) => item.label === "CLASS Name = ... END Name;",
+    );
+
+    expect(evaluation.context?.slot).toBe("container-body-root");
+    expect(classSnippet?.textEdit?.range).toEqual(
+      evaluation.context?.replaceRange,
+    );
+    expect(completionItemsAt(syntax, text, null, position)).toEqual(
+      evaluation.items,
+    );
+  });
 });

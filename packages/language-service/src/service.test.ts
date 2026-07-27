@@ -470,6 +470,54 @@ END Root.`;
     expect(compiler.compileAndAnalyze).not.toHaveBeenCalled();
   });
 
+  it("adds repository models to dirty IMPORTS completion without duplicates", async () => {
+    const compiler = backend();
+    compiler.parse.mockReturnValue({
+      ...syntax(rootUri, ["Existing"]),
+      documentVersion: 1,
+    });
+    const listModels = vi.fn(() =>
+      Promise.resolve([
+        {
+          name: "Existing",
+          schemaLanguage: "ili2_4" as const,
+          version: "1",
+          repository: "test",
+        },
+        {
+          name: "CatalogModel",
+          schemaLanguage: "ili2_4" as const,
+          version: "1",
+          repository: "test",
+        },
+      ]),
+    );
+    const service = new LanguageService(compiler, {
+      modelRepository: {
+        listModels,
+        resolveModels: vi.fn(() => Promise.resolve([])),
+      },
+    });
+    const text = "MODEL Root =\n  IMPORTS Existing, Ca";
+    service.openDocument(rootUri, text, 1);
+
+    const importLine = text.split("\n")[1]!;
+    const position = { line: 1, character: importLine.length };
+    const items = await service.completion(rootUri, position);
+    const catalogItem = items.find((item) => item.label === "CatalogModel");
+
+    expect(catalogItem?.textEdit).toEqual({
+      range: {
+        start: { line: 1, character: importLine.length - 2 },
+        end: { line: 1, character: importLine.length },
+      },
+      newText: "CatalogModel",
+    });
+    expect(items.map((item) => item.label)).not.toContain("Existing");
+    expect(listModels).toHaveBeenCalledOnce();
+    service.dispose();
+  });
+
   it("uses last-good external symbols but the current dirty IMPORTS list", async () => {
     const externalUri = "repository:///External.ili";
     const externalSymbol: SemanticSnapshot["symbols"][number] = {

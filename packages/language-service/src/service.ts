@@ -7,7 +7,6 @@ import type {
   SyntaxSnapshot,
 } from "@ilic/compiler-wasm";
 import {
-  completionsAt,
   completionContextAt,
   documentSymbols,
   locationsForDefinition,
@@ -18,6 +17,7 @@ import {
   templateForNewline,
   toEditorRange,
 } from "./features.js";
+import { completionAt } from "./completion.js";
 import type {
   CompletionItem,
   CodeAction,
@@ -412,13 +412,14 @@ export class LanguageService {
           : null
         : this.getSyntaxSnapshot(uri)?.value);
     if (!syntax) return [];
-    const context = completionContextAt(syntax, text, position);
-    const base = completionsAt(
+    const evaluation = completionAt(
       syntax,
+      text,
       this.#completionSemanticForDocument(uri)?.value ?? null,
       position,
-      text,
     );
+    const context = evaluation.context;
+    const base = evaluation.items;
     if (syntax.iliVersion === "1.0" || context?.slot !== "import-model")
       return base;
 
