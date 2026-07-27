@@ -36,7 +36,6 @@ for (const file of [
   "extension/package.json",
   "extension/LICENSE.md",
   "extension/dist/extension-node.cjs",
-  "extension/dist/extension-node.js",
   "extension/dist/extension-browser.js",
   "extension/dist/server-node.js",
   "extension/dist/server-browser.js",

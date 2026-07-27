@@ -4,7 +4,6 @@ import {
   copyFile,
   mkdir,
   rm,
-  writeFile,
 } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
@@ -79,12 +78,20 @@ const node = {
   banner: { js: nodeRuntimeBanner },
   platform: "node",
 };
+const commonjsNode = {
+  ...node,
+  banner: {
+    js: 'const __ilicImportMetaUrl = require("node:url").pathToFileURL(__filename).href;',
+  },
+  define: { "import.meta.url": "__ilicImportMetaUrl" },
+  format: "cjs",
+};
 
 await Promise.all([
   build({
-    ...node,
+    ...commonjsNode,
     entryPoints: [resolve(extension, "src/extension-node.ts")],
-    outfile: resolve(dist, "extension-node.js"),
+    outfile: resolve(dist, "extension-node.cjs"),
   }),
   build({
     ...node,
@@ -115,11 +122,6 @@ await Promise.all([
     platform: "browser",
   }),
 ]);
-
-await writeFile(
-  resolve(dist, "extension-node.cjs"),
-  `'use strict';\n\nlet extension;\nconst loadExtension = () =>\n  (extension ??= import("./extension-node.js"));\n\nexports.activate = async (context) =>\n  (await loadExtension()).activate(context);\nexports.deactivate = async () =>\n  (await loadExtension()).deactivate?.();\n`,
-);
 
 const terminateProcess = resolve(
   extension,

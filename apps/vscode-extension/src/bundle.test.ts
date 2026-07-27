@@ -132,7 +132,6 @@ const flattenSymbols = (
 describe("VS Code extension bundles", () => {
   it("provides CommonJS globals only to the Node bundles", async () => {
     const [
-      extensionNodeLoader,
       extensionNode,
       serverNode,
       compilerWorkerNode,
@@ -141,7 +140,6 @@ describe("VS Code extension bundles", () => {
       compilerWorkerBrowser,
     ] = await Promise.all([
       readBundle("extension-node.cjs"),
-      readBundle("extension-node.js"),
       readBundle("server-node.js"),
       readBundle("compiler-worker-node.js"),
       readBundle("extension-browser.js"),
@@ -149,11 +147,10 @@ describe("VS Code extension bundles", () => {
       readBundle("compiler-worker-browser.js"),
     ]);
 
-    expect(extensionNodeLoader).toContain('import("./extension-node.js")');
-    expect(extensionNodeLoader).toContain("exports.activate");
-    expect(extensionNodeLoader).toContain("exports.deactivate");
+    expect(extensionNode).toMatch(/require\(["']vscode["']\)/u);
+    expect(extensionNode).not.toContain('import("./extension-node.js")');
 
-    for (const bundle of [extensionNode, serverNode, compilerWorkerNode]) {
+    for (const bundle of [serverNode, compilerWorkerNode]) {
       expect(bundle).toContain(
         'import { createRequire as __ilicCreateRequire } from "node:module";',
       );
@@ -190,7 +187,7 @@ describe("VS Code extension bundles", () => {
     const [wasm, license, extensionNode, extensionBrowser] = await Promise.all([
       stat(resolve(dist, "libavoid.wasm")),
       stat(resolve(dist, "libavoid-LICENSE.txt")),
-      readBundle("extension-node.js"),
+      readBundle("extension-node.cjs"),
       readBundle("extension-browser.js"),
     ]);
     expect(wasm.size).toBeGreaterThan(400_000);
