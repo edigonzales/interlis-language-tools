@@ -134,6 +134,40 @@ describe("LSP converters", () => {
     expect(diagnostic.relatedInformation).toHaveLength(1);
   });
 
+  it("preserves cross-file primary ranges and related URIs", () => {
+    const diagnostic = toDiagnostic({
+      severity: "error",
+      code: "ILIC-TRANSLATION-TYPE-PROPERTY-MISMATCH",
+      message: "Translated declaration does not match its base declaration",
+      range: {
+        uri: "memory:///translated/ModelB.ili",
+        start: { ...range.start, byteOffset: 2 },
+        end: { ...range.end, byteOffset: 5 },
+      },
+      relatedInformation: [
+        {
+          range: {
+            uri: "memory:///base/ModelA.ili",
+            start: { line: 8, character: 4, byteOffset: 80 },
+            end: { line: 8, character: 9, byteOffset: 85 },
+          },
+          message: "Corresponding base declaration",
+        },
+      ],
+      notes: [],
+      treatedAsError: false,
+    });
+
+    expect(diagnostic.range).toEqual(range);
+    expect(diagnostic.relatedInformation?.[0]?.location.uri).toBe(
+      "memory:///base/ModelA.ili",
+    );
+    expect(diagnostic.relatedInformation?.[0]?.location.range).toEqual({
+      start: { line: 8, character: 4 },
+      end: { line: 8, character: 9 },
+    });
+  });
+
   it("preserves live diagnostic provenance and editor tags", () => {
     const diagnostic = toDiagnostic({
       severity: "warning",
