@@ -87,7 +87,10 @@ export function suggestionActivation(
       completion.slot.startsWith("declaration-header") ||
       completion.slot === "extends-target"
     ) {
-      const suppress = completion.ownerKind === "model";
+      const atIdentifierBoundary =
+        completion.slot === "declaration-header-after-name" &&
+        !/\s$/u.test(completion.linePrefix);
+      const suppress = completion.ownerKind === "model" || atIdentifierBoundary;
       return {
         open: !suppress,
         reason: completion.slot === "extends-target" ? "extends" : "header",

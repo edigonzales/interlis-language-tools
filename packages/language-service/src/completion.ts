@@ -591,6 +591,29 @@ function detectHeaderContext(
       },
     );
   }
+
+  match = prefix.match(
+    new RegExp(
+      `^\\s*${declaration}\\s+(${identifier})${optionalUnitAbbreviation}$`,
+      "iu",
+    ),
+  );
+  if (match?.[1] && /^\s*(?:=\s*;?\s*)?$/u.test(suffix)) {
+    const kind = declarationKind(match[1]);
+    if (!validHeaderShape(kind, prefix)) return null;
+    return baseContext(
+      "declaration-header-after-name",
+      line,
+      "",
+      suffix,
+      range(line.line, prefix.length, prefix.length),
+      {
+        ownerKind: kind,
+        fixedEqualsSuffix: fixed,
+        subject: /\[[^\]]+\]/u.test(prefix) ? "unit-abbreviation" : undefined,
+      },
+    );
+  }
   return null;
 }
 
@@ -1303,7 +1326,7 @@ function addNamedBlockSnippet(
 ): void {
   const base = lineIndent(text, context.replaceRange.start.line);
   const child = base + indentationUnit(text, context.ownerName);
-  const suffix = headerSuffix ? " ${2:}=" : " =";
+  const suffix = headerSuffix ? "${2: }=" : " =";
   add(
     result,
     item(context, `${keyword} Name = ... END Name;`, "snippet", {
@@ -1337,7 +1360,7 @@ function addContainerSnippets(
       result,
       item(context, "VIEW TOPIC Name = ... END Name;", "snippet", {
         filterText: "VIEW TOPIC",
-        insertText: `VIEW TOPIC \${1:Name} \${2:}=\n${child}DEPENDS ON \${3:Topic}\n${child}$0\n${base}END ${endNameMirror()};`,
+        insertText: `VIEW TOPIC \${1:Name}\${2: }=\n${child}DEPENDS ON \${3:Topic}\n${child}$0\n${base}END ${endNameMirror()};`,
         snippet: true,
         priority: 30,
         asIs: true,
@@ -1850,7 +1873,9 @@ function completionItemsForContext(
       );
       addContainerSnippets(result, context, text);
       break;
-    case "declaration-header-after-name":
+    case "declaration-header-after-name": {
+      const separator = /\s$/u.test(context.linePrefix) ? "" : " ";
+      const trailingSeparator = /^\s/u.test(context.lineSuffix) ? "" : " ";
       if (
         context.ownerKind === "unit" &&
         context.subject !== "unit-abbreviation"
@@ -1858,7 +1883,7 @@ function completionItemsForContext(
         add(
           result,
           item(context, "[Name]", "snippet", {
-            insertText: "[${1:abbr}] ",
+            insertText: separator + "[${1:abbr}]" + trailingSeparator,
             snippet: true,
             priority: 5,
           }),
@@ -1867,23 +1892,27 @@ function completionItemsForContext(
         add(
           result,
           item(context, `(${modifier})`, "keyword", {
-            insertText: `(${modifier}) `,
+            insertText: `${separator}(${modifier})${trailingSeparator}`,
             priority: 5,
           }),
         );
       add(
         result,
         item(context, "EXTENDS", "keyword", {
-          insertText: "EXTENDS ",
+          insertText: `${separator}EXTENDS${trailingSeparator}`,
           priority: 5,
         }),
       );
       if (!context.fixedEqualsSuffix)
         add(
           result,
-          item(context, "=", "keyword", { insertText: "= ", priority: 5 }),
+          item(context, "=", "keyword", {
+            insertText: `${separator}=${trailingSeparator}`,
+            priority: 5,
+          }),
         );
       break;
+    }
     case "declaration-header-modifier-value":
       addKeywords(
         result,

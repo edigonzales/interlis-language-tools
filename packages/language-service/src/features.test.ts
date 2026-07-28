@@ -324,7 +324,7 @@ describe("syntax-driven feature helpers", () => {
       (item) => item.label === "CLASS Name = ... END Name;",
     );
     expect(classSnippet?.insertText).toBe(
-      "CLASS ${1:Name} ${2:}=\n      $0\n    END ${1/^([A-Za-z_][A-Za-z0-9_]*).*$/$1/};",
+      "CLASS ${1:Name}${2: }=\n      $0\n    END ${1/^([A-Za-z_][A-Za-z0-9_]*).*$/$1/};",
     );
     expect(
       items.find((item) => item.label === "DOMAIN Name = ...;")?.insertText,
@@ -339,6 +339,7 @@ describe("syntax-driven feature helpers", () => {
   });
 
   it.each([
+    ["CLASS C", "declaration-header-after-name", "EXTENDS"],
     ["CLASS C ", "declaration-header-after-name", "EXTENDS"],
     ["CLASS C (ABSTRACT) ", "declaration-header-after-modifier", "EXTENDS"],
     ["CLASS C EXTENDS Base ", "declaration-header-after-extends", "="],
@@ -359,6 +360,41 @@ describe("syntax-driven feature helpers", () => {
       expect(
         completionsAt(syntax(), null, position, text).map((item) => item.label),
       ).toContain(expectedLabel);
+  });
+
+  it("offers all class header modifiers at the direct name boundary", () => {
+    const text = "MODEL M =\n  CLASS C";
+    const position = { line: 1, character: text.split("\n")[1]!.length };
+    const context = completionContextAt(syntax(), text, position);
+    expect(context).toMatchObject({
+      slot: "declaration-header-after-name",
+      linePrefix: "  CLASS C",
+      lineSuffix: "",
+    });
+    const items = completionsAt(syntax(), null, position, text);
+    expect(items.map((item) => item.label)).toEqual(
+      expect.arrayContaining([
+        "(ABSTRACT)",
+        "(EXTENDED)",
+        "(FINAL)",
+        "EXTENDS",
+        "=",
+      ]),
+    );
+    expect(items.find((item) => item.label === "(ABSTRACT)")?.insertText).toBe(
+      " (ABSTRACT) ",
+    );
+
+    const fixedText = "MODEL M =\n  CLASS C =";
+    const fixedPosition = {
+      line: 1,
+      character: fixedText.split("\n")[1]!.indexOf(" ="),
+    };
+    const fixedItems = completionsAt(syntax(), null, fixedPosition, fixedText);
+    expect(fixedItems.map((item) => item.label)).not.toContain("=");
+    expect(
+      fixedItems.find((item) => item.label === "(ABSTRACT)")?.insertText,
+    ).toBe(" (ABSTRACT)");
   });
 
   it("does not apply staged Java header completion to association, view or graphic declarations", () => {

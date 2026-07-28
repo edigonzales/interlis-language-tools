@@ -132,6 +132,29 @@ describe("suggestionActivation", () => {
       false,
     );
   });
+
+  it("suppresses stale header suggestions at the name boundary", () => {
+    const text = "MODEL M =\n  CLASS C";
+    const namePosition = { line: 1, character: text.split("\n")[1]!.length };
+    expect(suggestionActivation(snapshot([]), namePosition, text)).toEqual({
+      open: false,
+      reason: "header",
+      suppress: true,
+    });
+
+    const suffixText = text + " ";
+    const suffixPosition = {
+      line: 1,
+      character: suffixText.split("\n")[1]!.length,
+    };
+    expect(
+      suggestionActivation(snapshot([]), suffixPosition, suffixText),
+    ).toEqual({
+      open: true,
+      reason: "header",
+      suppress: false,
+    });
+  });
 });
 
 describe("snippet navigation and guards", () => {
