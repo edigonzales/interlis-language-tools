@@ -314,7 +314,29 @@ function editorSnapshot(text: string, version: number): EditorSnapshot {
   };
 }
 
-function editorBackend(): EditorAnalysisBackend & {
+function unusedImportSnapshot(text: string, version: number): EditorSnapshot {
+  return {
+    ...editorSnapshot(text, version),
+    imports: text.includes("IMPORTS Unused;")
+      ? [
+          {
+            model: "Unused",
+            unqualified: false,
+            range: {
+              uri: rootUri,
+              start: { line: 2, character: 10, byteOffset: 37 },
+              end: { line: 2, character: 16, byteOffset: 43 },
+            },
+          },
+        ]
+      : [],
+  };
+}
+
+function editorBackend(
+  snapshotFactory: (text: string, version: number) => EditorSnapshot =
+    editorSnapshot,
+): EditorAnalysisBackend & {
   readonly analyze: ReturnType<typeof vi.fn>;
 } {
   const sources = new Map<string, { text: string; version: number }>();
@@ -325,7 +347,7 @@ function editorBackend(): EditorAnalysisBackend & {
     removeSource: vi.fn(),
     analyze: vi.fn((uri: string) => {
       const source = sources.get(uri)!;
-      return Promise.resolve(editorSnapshot(source.text, source.version));
+      return Promise.resolve(snapshotFactory(source.text, source.version));
     }),
     dispose: vi.fn(),
   };
@@ -446,6 +468,180 @@ END Root.`;
     ).toEqual(
       expect.arrayContaining(["Insert missing ';'", "Replace with 'Item'"]),
     );
+  });
+
+  it("keeps lint diagnostics and quick fixes after a successful save", async () => {
+    const text = `INTERLIS 2.4;
+MODEL Root =
+  IMPORTS Unused;
+END Root.`;
+    const editor = editorBackend(unusedImportSnapshot);
+    const compiler = backend(() =>
+      analysis([rootUri], { documentVersions: { [rootUri]: 2 } }),
+    );
+    const service = new LanguageService(compiler, {
+      editorAnalysis: editor,
+      liveDiagnosticsDelayMs: 0,
+    });
+    service.openDocument(rootUri, text, 1);
+    service.changeDocument(rootUri, `${text}\n`, 2);
+
+    await vi.waitFor(() =>
+      expect(service.diagnostics(rootUri).map((entry) => entry.code)).toEqual([
+        "ILIC-LINT-UNUSED-IMPORT",
+      ]),
+    );
+    service.markSaved(rootUri);
+    const compilation = await service.compileDocument(rootUri, "save");
+
+    expect(service.diagnostics(rootUri).map((entry) => entry.code)).toEqual([
+      "ILIC-LINT-UNUSED-IMPORT",
+    ]);
+    expect(compilation.compilation.warningCount).toBe(0);
+    expect(
+      service.codeActions(
+        rootUri,
+        {
+          start: { line: 2, character: 10 },
+          end: { line: 2, character: 16 },
+        },
+        ["ILIC-LINT-UNUSED-IMPORT"],
+      )[0]?.title,
+    ).toBe("Remove unused import 'Unused'");
+  });
+
+  it("emits the merged diagnostics after compilation listeners", async () => {
+    const text = `INTERLIS 2.4;
+MODEL Root =
+  IMPORTS Unused;
+END Root.`;
+    const events: string[] = [];
+    const service = new LanguageService(
+      backend(() =>
+        analysis([rootUri], { documentVersions: { [rootUri]: 2 } }),
+      ),
+      {
+        editorAnalysis: editorBackend(unusedImportSnapshot),
+        liveDiagnosticsDelayMs: 0,
+        onCompilation: () => events.push("compilation"),
+      },
+    );
+    service.onDiagnosticsChanged((event) => {
+      if (event.documentVersion === 2 && event.status === "ready")
+        events.push(
+          `diagnostics:${service
+            .diagnostics(rootUri)
+            .map((entry) => entry.code)
+            .join(",")}`,
+        );
+    });
+    service.openDocument(rootUri, text, 1);
+    service.changeDocument(rootUri, `${text}\n`, 2);
+    await vi.waitFor(() =>
+      expect(service.diagnostics(rootUri)).toHaveLength(1),
+    );
+    service.markSaved(rootUri);
+    events.length = 0;
+
+    await service.compileDocument(rootUri, "save");
+
+    expect(events).toEqual([
+      "compilation",
+      "diagnostics:ILIC-LINT-UNUSED-IMPORT",
+    ]);
+  });
+
+  it("merges saved lint diagnostics with compiler errors", async () => {
+    const text = `INTERLIS 2.4;
+MODEL Root =
+  IMPORTS Unused;
+END Root.`;
+    const compiler = backend(() =>
+      analysis([rootUri], {
+        diagnostics: [diagnostic("compiler-error")],
+        documentVersions: { [rootUri]: 2 },
+      }),
+    );
+    const service = new LanguageService(compiler, {
+      editorAnalysis: editorBackend(unusedImportSnapshot),
+      liveDiagnosticsDelayMs: 0,
+    });
+    service.openDocument(rootUri, text, 1);
+    service.changeDocument(rootUri, `${text}\n`, 2);
+    service.markSaved(rootUri);
+    await service.compileDocument(rootUri, "save");
+
+    expect(service.diagnostics(rootUri).map((entry) => entry.code)).toEqual(
+      expect.arrayContaining(["compiler-error", "ILIC-LINT-UNUSED-IMPORT"]),
+    );
+  });
+
+  it("recomputes and removes saved lint after the import is removed", async () => {
+    const text = `INTERLIS 2.4;
+MODEL Root =
+  IMPORTS Unused;
+END Root.`;
+    const compiler = backend((request) =>
+      analysis(request.roots, {
+        documentVersions: { [rootUri]: 2 },
+      }),
+    );
+    const service = new LanguageService(compiler, {
+      editorAnalysis: editorBackend(unusedImportSnapshot),
+      liveDiagnosticsDelayMs: 0,
+    });
+    service.openDocument(rootUri, text, 1);
+    service.changeDocument(rootUri, `${text}\n`, 2);
+    service.markSaved(rootUri);
+    await service.compileDocument(rootUri, "save");
+    expect(service.diagnostics(rootUri)).toHaveLength(1);
+
+    const withoutImport = text.replace("  IMPORTS Unused;\n", "");
+    service.changeDocument(rootUri, withoutImport, 3);
+    await vi.waitFor(() => expect(service.diagnostics(rootUri)).toEqual([]));
+  });
+
+  it("analyzes a saved document even when save beats the live debounce", async () => {
+    const text = `INTERLIS 2.4;
+MODEL Root =
+  IMPORTS Unused;
+END Root.`;
+    const compiler = backend(() =>
+      analysis([rootUri], { documentVersions: { [rootUri]: 2 } }),
+    );
+    const service = new LanguageService(compiler, {
+      editorAnalysis: editorBackend(unusedImportSnapshot),
+      liveDiagnosticsDelayMs: 60_000,
+    });
+    service.openDocument(rootUri, text, 1);
+    service.changeDocument(rootUri, `${text}\n`, 2);
+    service.markSaved(rootUri);
+    await service.compileDocument(rootUri, "save");
+
+    expect(service.diagnostics(rootUri).map((entry) => entry.code)).toEqual([
+      "ILIC-LINT-UNUSED-IMPORT",
+    ]);
+  });
+
+  it("does not persist lint diagnostics when live diagnostics are disabled", async () => {
+    const text = `INTERLIS 2.4;
+MODEL Root =
+  IMPORTS Unused;
+END Root.`;
+    const compiler = backend(() =>
+      analysis([rootUri], { documentVersions: { [rootUri]: 2 } }),
+    );
+    const service = new LanguageService(compiler, {
+      editorAnalysis: editorBackend(unusedImportSnapshot),
+      liveDiagnostics: "off",
+      liveDiagnosticsDelayMs: 0,
+    });
+    service.openDocument(rootUri, text, 1);
+    service.changeDocument(rootUri, `${text}\n`, 2);
+    service.markSaved(rootUri);
+    await service.compileDocument(rootUri, "save");
+
+    expect(service.diagnostics(rootUri)).toEqual([]);
   });
 
   it("computes completion from a live parse without invoking the compiler", async () => {

@@ -26,9 +26,12 @@ documents are excluded. Typing only updates the in-memory buffer. Save and the
 manual compile command run the root again and atomically produce compiler
 Output, Problems, and editor snapshots. Output is the compiler-owned CLI-style
 transcript, including the final error/warning summary; Problems contains the
-same diagnostics in structured form. Unsaved changes keep the last save-based
-result visible as outdated while a separate, versioned editor worker provides
-conservative live diagnostics and dirty-code navigation. The user-facing
+compiler diagnostics in structured form and, when enabled, conservative
+`ilic-lint` warnings for the current saved editor version. Those lint warnings
+are intentionally not added to the compiler transcript or its warning count.
+Unsaved changes keep the last save-based result visible as outdated while a
+separate, versioned editor worker provides conservative live diagnostics and
+dirty-code navigation. The user-facing
 behavior and safety rules are documented in
 [Live diagnostics and dirty navigation (German)](docs/live-diagnostik-und-dirty-navigation.md).
 The state, invalidation and refresh contract between

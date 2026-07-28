@@ -15,11 +15,16 @@ beschreibt die Anleitung
 | Auslöser                         | Analyse                                            | Sichtbares Ergebnis                                                       |
 | -------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------- |
 | 250 ms Tipp-Pause                | kompakter `EditorSnapshot` in einem eigenen Worker | konservative Problems, Completion, Outline, Hover und Navigation          |
-| Speichern oder **Compile Model** | vollständiger ilic-Compilerlauf                    | autoritative Problems, Compiler-Output, Semantik, Diagramm und DOCX-Daten |
+| Speichern oder **Compile Model** | vollständiger ilic-Compilerlauf                    | Compiler- und persistierte `ilic-lint`-Problems, Compiler-Output, Semantik, Diagramm und DOCX-Daten |
 
 Der Live-Worker kann Speichern oder einen manuellen Compile nicht blockieren.
 Jede Anfrage trägt die Dokumentversion. Trifft ein älteres Ergebnis nach einer
 neueren Eingabe ein, wird es verworfen.
+
+Nach dem Speichern bleiben konservative Lint-Warnungen wie ein unbenutzter
+Import für die gespeicherte Dokumentversion in Problems sichtbar. Sie werden
+zusammen mit den Compiler-Diagnostics veröffentlicht, aber nicht in den
+Compiler-Output oder dessen `warningCount` aufgenommen.
 
 Benötigt die Editoranalyse dauerhaft zu lange oder fällt ihr Worker aus,
 wechselt die Erweiterung automatisch auf die weiterhin funktionierende
