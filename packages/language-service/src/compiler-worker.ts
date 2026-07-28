@@ -75,6 +75,8 @@ export function createWorkerCompilerBackend(
   let errorSubscription: { dispose(): void } | null = null;
   let disposed = false;
   let warned = false;
+  let consecutiveFailures = 0;
+  let workerUnavailable = false;
 
   const warn = (message: string): void => {
     if (warned) return;
@@ -105,10 +107,11 @@ export function createWorkerCompilerBackend(
       });
   };
   const attach = (): boolean => {
-    if (disposed) return false;
+    if (disposed || workerUnavailable) return false;
     try {
       port = factory();
       messageSubscription = port.onMessage((message) => {
+        consecutiveFailures = 0;
         const request = pending.get(message.id);
         if (!request) return;
         pending.delete(message.id);
@@ -116,19 +119,23 @@ export function createWorkerCompilerBackend(
         else request.reject(new Error(message.error));
       });
       errorSubscription = port.onError((error) => {
+        consecutiveFailures += 1;
         const message = error instanceof Error ? error.message : String(error);
         rejectPending(`INTERLIS compiler worker failed: ${message}`);
         detach();
         if (!disposed) {
           warn(
-            "The INTERLIS compiler worker was restarted after an error; pending compilations were cancelled.",
+            "The INTERLIS compiler worker was restarted after an error; the interrupted compilation runs locally.",
           );
-          if (attach()) postReplay();
+          if (consecutiveFailures === 1) {
+            if (attach()) postReplay();
+          } else workerUnavailable = true;
         }
       });
       return true;
     } catch (error) {
       port = null;
+      workerUnavailable = true;
       warn(
         `The INTERLIS compiler worker is unavailable; full compilation runs in the language-server process (${error instanceof Error ? error.message : String(error)}).`,
       );
@@ -176,10 +183,7 @@ export function createWorkerCompilerBackend(
       return request<CompilationAnalysisResult>({
         method: "compileAndAnalyze",
         request: compilationRequest,
-      }).catch((error) => {
-        if (!port) return local.compileAndAnalyze(compilationRequest);
-        throw error;
-      });
+      }).catch(() => local.compileAndAnalyze(compilationRequest));
     },
     compile: (compilationRequest) => local.compile(compilationRequest),
     format: (uri, formatOptions) => local.format(uri, formatOptions),
@@ -187,6 +191,8 @@ export function createWorkerCompilerBackend(
       rejectPending("INTERLIS compiler worker restarted");
       detach();
       await local.restart?.();
+      consecutiveFailures = 0;
+      workerUnavailable = false;
       if (attach()) postReplay();
     },
     dispose() {
@@ -203,7 +209,10 @@ export function createWorkerCompilerBackend(
 
 export function createWorkerEditorAnalysisBackend(
   factory: CompilerWorkerFactory,
-  options: { readonly onWarning?: (message: string) => void } = {},
+  options: {
+    readonly onWarning?: (message: string) => void;
+    readonly fallback?: Pick<CompilerBackend, "editorSnapshot">;
+  } = {},
 ): EditorAnalysisBackend {
   const sources = new Map<
     string,
@@ -216,6 +225,8 @@ export function createWorkerEditorAnalysisBackend(
   let errorSubscription: { dispose(): void } | null = null;
   let disposed = false;
   let warned = false;
+  let consecutiveFailures = 0;
+  let workerUnavailable = false;
 
   const warn = (message: string): void => {
     if (warned) return;
@@ -246,10 +257,11 @@ export function createWorkerEditorAnalysisBackend(
       });
   };
   const attach = (): boolean => {
-    if (disposed) return false;
+    if (disposed || workerUnavailable) return false;
     try {
       port = factory();
       messageSubscription = port.onMessage((message) => {
+        consecutiveFailures = 0;
         const request = pending.get(message.id);
         if (!request) return;
         pending.delete(message.id);
@@ -257,6 +269,7 @@ export function createWorkerEditorAnalysisBackend(
         else request.reject(new Error(message.error));
       });
       errorSubscription = port.onError((error) => {
+        consecutiveFailures += 1;
         const message = error instanceof Error ? error.message : String(error);
         rejectPending(`INTERLIS editor worker failed: ${message}`);
         detach();
@@ -264,46 +277,55 @@ export function createWorkerEditorAnalysisBackend(
           warn(
             "Live INTERLIS analysis was restarted after an editor worker error.",
           );
-          attach();
+          if (consecutiveFailures === 1) attach();
+          else workerUnavailable = true;
         }
       });
       replay();
       return true;
     } catch (error) {
       port = null;
+      workerUnavailable = true;
       warn(
         `Live INTERLIS analysis is unavailable (${error instanceof Error ? error.message : String(error)}).`,
       );
       return false;
     }
   };
-  const notify = (
+  const notifyRunningWorker = (
     message: Extract<
       CompilerWorkerCommand,
       { method: "putSource" | "removeSource" | "dispose" }
     >,
   ): void => {
-    if (!port && !attach()) return;
     port?.postMessage({ id: ++nextId, ...message });
   };
 
-  attach();
+  const analyzeLocally = (uri: string, error: unknown): EditorSnapshot => {
+    const snapshot = options.fallback?.editorSnapshot?.(uri);
+    if (snapshot) return snapshot;
+    throw error;
+  };
 
   return {
     putSource(uri, source, version) {
       sources.set(uri, { source, version });
-      notify({ method: "putSource", uri, source, version });
+      notifyRunningWorker({ method: "putSource", uri, source, version });
     },
     removeSource(uri) {
       sources.delete(uri);
-      notify({ method: "removeSource", uri });
+      notifyRunningWorker({ method: "removeSource", uri });
     },
     analyze(uri) {
       if (!port && !attach())
-        return Promise.reject(new Error("editor worker unavailable"));
+        return Promise.resolve().then(() =>
+          analyzeLocally(uri, new Error("editor worker unavailable")),
+        );
       const current = port;
       if (!current)
-        return Promise.reject(new Error("editor worker unavailable"));
+        return Promise.resolve().then(() =>
+          analyzeLocally(uri, new Error("editor worker unavailable")),
+        );
       const id = ++nextId;
       return new Promise<EditorSnapshot>((resolve, reject) => {
         pending.set(id, {
@@ -311,18 +333,20 @@ export function createWorkerEditorAnalysisBackend(
           reject,
         });
         current.postMessage({ id, method: "editorSnapshot", uri });
-      });
+      }).catch((error) => analyzeLocally(uri, error));
     },
     restart() {
       rejectPending("INTERLIS editor worker restarted");
       detach();
+      consecutiveFailures = 0;
+      workerUnavailable = false;
       attach();
     },
     dispose() {
       if (disposed) return;
       disposed = true;
       rejectPending("INTERLIS editor worker disposed");
-      if (port) notify({ method: "dispose" });
+      if (port) notifyRunningWorker({ method: "dispose" });
       detach();
       sources.clear();
     },
@@ -332,11 +356,12 @@ export function createWorkerEditorAnalysisBackend(
 export async function runCompilerWorker(
   endpoint: WorkerEndpoint,
 ): Promise<void> {
-  const compiler = await createWasmCompilerBackend();
+  const compilerPromise = createWasmCompilerBackend();
   let queue = Promise.resolve();
   endpoint.onMessage((message) => {
     queue = queue
       .then(async () => {
+        const compiler = await compilerPromise;
         let value: unknown;
         switch (message.method) {
           case "putSource":
@@ -369,4 +394,5 @@ export async function runCompilerWorker(
         });
       });
   });
+  await compilerPromise;
 }

@@ -3,7 +3,7 @@ import type {
   LanguageService,
   TemplateEdit,
 } from "@ilic/language-service";
-import { suggestionActivation } from "@ilic/language-service";
+import { suggestionActivationFromContext } from "@ilic/language-service";
 
 export interface Disposable {
   dispose(): void;
@@ -154,10 +154,9 @@ export class MonacoLanguageAdapter implements Disposable {
     model: MonacoModel,
     value: { lineNumber: number; column: number },
   ) {
-    const syntax = this.service.getSyntaxSnapshot(model.uri.toString())?.value;
-    return syntax
-      ? suggestionActivation(syntax, position(value), model.getValue())
-      : { open: false, reason: "none" as const, suppress: false };
+    return suggestionActivationFromContext(
+      this.service.completionContext(model.uri.toString(), position(value)),
+    );
   }
 
   applyTemplateEdit(editor: MonacoEditor, edit: TemplateEdit): void {

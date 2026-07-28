@@ -56,6 +56,7 @@ export {
   resolveTemplateUrl,
   snippetKeyAction,
   suggestionActivation,
+  suggestionActivationFromContext,
 } from "./interactions.js";
 export type {
   OutputEntry,

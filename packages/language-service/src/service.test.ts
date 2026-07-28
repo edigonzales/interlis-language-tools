@@ -334,8 +334,10 @@ function unusedImportSnapshot(text: string, version: number): EditorSnapshot {
 }
 
 function editorBackend(
-  snapshotFactory: (text: string, version: number) => EditorSnapshot =
-    editorSnapshot,
+  snapshotFactory: (
+    text: string,
+    version: number,
+  ) => EditorSnapshot = editorSnapshot,
 ): EditorAnalysisBackend & {
   readonly analyze: ReturnType<typeof vi.fn>;
 } {
@@ -642,6 +644,123 @@ END Root.`;
     await service.compileDocument(rootUri, "save");
 
     expect(service.diagnostics(rootUri)).toEqual([]);
+  });
+
+  it("runs editor analysis on demand only when live diagnostics are disabled", async () => {
+    const compiler = backend();
+    const editor = editorBackend();
+    const service = new LanguageService(compiler, {
+      editorAnalysis: editor,
+      liveDiagnostics: "off",
+      liveDiagnosticsDelayMs: 0,
+    });
+    service.openDocument(rootUri, "INTERLIS 2.4;\nMOD", 1);
+    for (let version = 2; version <= 101; version += 1)
+      service.changeDocument(
+        rootUri,
+        `INTERLIS 2.4;\nMODEL Root =\n!! ${version}\nEND Root.`,
+        version,
+      );
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(editor.analyze).not.toHaveBeenCalled();
+
+    await service.completion(rootUri, { line: 2, character: 6 });
+
+    expect(editor.analyze).toHaveBeenCalledOnce();
+    expect(service.getEditorSnapshot(rootUri)?.value?.documentVersion).toBe(
+      101,
+    );
+    expect(compiler.parse).not.toHaveBeenCalled();
+    expect(compiler.analyze).not.toHaveBeenCalled();
+    expect(compiler.compileAndAnalyze).not.toHaveBeenCalled();
+    service.dispose();
+  });
+
+  it("shares an on-demand editor snapshot between completion and outline", async () => {
+    let resolveSnapshot!: (snapshot: EditorSnapshot) => void;
+    const analyze = vi.fn(
+      () =>
+        new Promise<EditorSnapshot>((resolve) => {
+          resolveSnapshot = resolve;
+        }),
+    );
+    const editor: EditorAnalysisBackend = {
+      putSource: vi.fn(),
+      removeSource: vi.fn(),
+      analyze,
+      dispose: vi.fn(),
+    };
+    const service = new LanguageService(backend(), {
+      editorAnalysis: editor,
+      liveDiagnostics: "off",
+    });
+    const text = "INTERLIS 2.4;\nMODEL Root =\nEND Root.";
+    service.openDocument(rootUri, text, 1);
+
+    const completion = service.completion(rootUri, {
+      line: 1,
+      character: 5,
+    });
+    const outline = service.waitForDocumentSymbols(rootUri, 1);
+    expect(analyze).toHaveBeenCalledOnce();
+    resolveSnapshot(editorSnapshot(text, 1));
+
+    await Promise.all([completion, outline]);
+    expect(analyze).toHaveBeenCalledOnce();
+    service.dispose();
+  });
+
+  it("derives activation contexts for 100 edits without parsing", () => {
+    const compiler = backend();
+    const service = new LanguageService(compiler);
+    const cases = [
+      {
+        text: "MODEL M =\n  CLASS C ",
+        position: { line: 1, character: 10 },
+        slot: "declaration-header-after-name",
+      },
+      {
+        text: [
+          "MODEL M =",
+          "  TOPIC T =",
+          "    CLASS C =",
+          "      value: TE",
+        ].join("\n"),
+        position: { line: 3, character: 15 },
+        slot: "attribute-type-root",
+      },
+      {
+        text: [
+          "MODEL Prior =",
+          "END Prior.",
+          "MODEL M =",
+          "  IMPORTS",
+          "    Pr",
+        ].join("\n"),
+        position: { line: 4, character: 6 },
+        slot: "import-model",
+      },
+      {
+        text: "MODEL M =\n  !!@ ili2db.\n  CLASS C =",
+        position: { line: 1, character: 13 },
+        slot: "metaattribute-root",
+      },
+    ] as const;
+    service.openDocument(rootUri, cases[0].text, 1);
+
+    for (let index = 0; index < 100; index += 1) {
+      const entry = cases[index % cases.length]!;
+      if (index > 0) service.changeDocument(rootUri, entry.text, index + 1);
+      expect(service.completionContext(rootUri, entry.position)?.slot).toBe(
+        entry.slot,
+      );
+    }
+
+    expect(compiler.parse).not.toHaveBeenCalled();
+    expect(compiler.analyze).not.toHaveBeenCalled();
+    expect(compiler.compileAndAnalyze).not.toHaveBeenCalled();
+    service.dispose();
   });
 
   it("computes completion from a live parse without invoking the compiler", async () => {

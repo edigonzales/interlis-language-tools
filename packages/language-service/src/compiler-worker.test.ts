@@ -11,6 +11,7 @@ import type {
 import {
   createWorkerCompilerBackend,
   createWorkerEditorAnalysisBackend,
+  runCompilerWorker,
 } from "./index.js";
 
 const uri = "memory:///Worker.ili";
@@ -150,6 +151,38 @@ const localBackend = (): MockCompilerBackend => ({
 });
 
 describe("worker compiler backend", () => {
+  it("registers the worker message handler before WASM initialization finishes", async () => {
+    let receive: ((message: CompilerWorkerRequest) => void) | undefined;
+    const responses: CompilerWorkerResponse[] = [];
+    const running = runCompilerWorker({
+      postMessage(message) {
+        responses.push(message);
+      },
+      onMessage(listener) {
+        receive = listener;
+      },
+    });
+    expect(receive).toBeTypeOf("function");
+    receive!({
+      id: 1,
+      method: "putSource",
+      uri,
+      source: "INTERLIS 2.4;\nMODEL Worker =\nEND Worker.",
+      version: 5,
+    });
+    receive!({ id: 2, method: "editorSnapshot", uri });
+
+    await running;
+    await vi.waitFor(() => expect(responses).toHaveLength(2));
+    expect(responses[1]).toMatchObject({
+      id: 2,
+      ok: true,
+      value: { uri, documentVersion: 5 },
+    });
+    receive!({ id: 3, method: "dispose" });
+    await vi.waitFor(() => expect(responses).toHaveLength(3));
+  });
+
   it("runs editor snapshots in an independent worker", async () => {
     const worker = new FakeWorkerPort();
     const backend = createWorkerEditorAnalysisBackend(() => worker);
@@ -208,20 +241,18 @@ describe("worker compiler backend", () => {
     await expect(pending).resolves.toEqual(analysis());
   });
 
-  it("rejects an interrupted run, recreates the worker and replays all sources", async () => {
+  it("falls back for an interrupted run, recreates the worker and replays all sources", async () => {
     const first = new FakeWorkerPort();
     const second = new FakeWorkerPort();
     const workers = [first, second];
-    const compiler = createWorkerCompilerBackend(localBackend(), () =>
-      workers.shift()!,
-    );
+    const local = localBackend();
+    const compiler = createWorkerCompilerBackend(local, () => workers.shift()!);
     compiler.putSource(uri, "MODEL Worker", 7);
     const pending = compiler.compileAndAnalyze({ roots: [uri] });
 
     first.fail(new Error("crashed"));
-    await expect(pending).rejects.toThrow(
-      "INTERLIS compiler worker failed: crashed",
-    );
+    await expect(pending).resolves.toEqual(analysis());
+    expect(local.compileAndAnalyze).toHaveBeenCalledOnce();
     expect(first.terminated).toBe(true);
     expect(second.messages).toEqual([
       expect.objectContaining({
@@ -235,6 +266,30 @@ describe("worker compiler backend", () => {
     const request = second.messages.at(-1)!;
     second.respond(request.id, analysis());
     await expect(recovered).resolves.toEqual(analysis());
+  });
+
+  it("falls back to a local editor snapshot after a worker error", async () => {
+    const first = new FakeWorkerPort();
+    const second = new FakeWorkerPort();
+    const workers = [first, second];
+    const editorSnapshot = vi.fn(() => editor(4));
+    const backend = createWorkerEditorAnalysisBackend(() => workers.shift()!, {
+      fallback: { editorSnapshot },
+    });
+    backend.putSource(uri, "MODEL Worker", 4);
+    const pending = backend.analyze(uri);
+
+    first.fail(new Error("crashed"));
+
+    await expect(pending).resolves.toEqual(editor(4));
+    expect(editorSnapshot).toHaveBeenCalledWith(uri);
+    expect(second.messages).toEqual([
+      expect.objectContaining({
+        method: "putSource",
+        uri,
+        version: 4,
+      }),
+    ]);
   });
 
   it("falls back to the local compiler when workers are unavailable", async () => {

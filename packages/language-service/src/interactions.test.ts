@@ -8,6 +8,7 @@ import {
   resolveTemplateUrl,
   snippetKeyAction,
   suggestionActivation,
+  suggestionActivationFromContext,
 } from "./interactions.js";
 
 const uri = "memory:///Model.ili";
@@ -152,6 +153,38 @@ describe("suggestionActivation", () => {
     ).toEqual({
       open: true,
       reason: "header",
+      suppress: false,
+    });
+  });
+
+  it("maps completion contexts without requiring a syntax snapshot", () => {
+    expect(
+      suggestionActivationFromContext({
+        slot: "extends-target",
+        prefix: "",
+        replaceRange: {
+          start: { line: 0, character: 0 },
+          end: { line: 0, character: 0 },
+        },
+        linePrefix: "CLASS C EXTENDS ",
+        lineSuffix: "",
+      }),
+    ).toEqual({ open: true, reason: "extends", suppress: false });
+    expect(
+      suggestionActivationFromContext({
+        slot: "container-body-root",
+        prefix: "CLASS",
+        replaceRange: {
+          start: { line: 0, character: 0 },
+          end: { line: 0, character: 5 },
+        },
+        linePrefix: "CLASS",
+        lineSuffix: "",
+      }),
+    ).toEqual({ open: true, reason: "container-body", suppress: false });
+    expect(suggestionActivationFromContext(null)).toEqual({
+      open: false,
+      reason: "none",
       suppress: false,
     });
   });

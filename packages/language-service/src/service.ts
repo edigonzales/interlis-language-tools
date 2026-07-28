@@ -104,6 +104,13 @@ export class LanguageService {
     VersionedResult<EditorSnapshot>
   >();
   readonly #liveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  readonly #onDemandEditorAnalysis = new Map<
+    string,
+    {
+      readonly version: number;
+      readonly promise: Promise<EditorSnapshot | null>;
+    }
+  >();
   readonly #liveRequests = new Map<string, number>();
   readonly #liveStatuses = new Map<string, LiveAnalysisStatus>();
   readonly #diagnosticsListeners = new Set<
@@ -207,6 +214,14 @@ export class LanguageService {
     this.#liveDiagnosticsMode = mode;
     for (const document of this.#documents.values()) {
       if (mode === "off") {
+        const timer = this.#liveTimers.get(document.uri);
+        if (timer) clearTimeout(timer);
+        this.#liveTimers.delete(document.uri);
+        this.#liveRequests.set(
+          document.uri,
+          (this.#liveRequests.get(document.uri) ?? 0) + 1,
+        );
+        this.#liveStatuses.delete(document.uri);
         this.#liveDiagnostics.delete(document.uri);
         this.#liveFixes.delete(document.uri);
         this.#savedLint.delete(document.uri);
@@ -262,6 +277,7 @@ export class LanguageService {
     if (timer) clearTimeout(timer);
     this.#liveTimers.delete(uri);
     this.#liveRequests.delete(uri);
+    this.#onDemandEditorAnalysis.delete(uri);
     this.#liveStatuses.delete(uri);
     this.#editorSnapshots.delete(uri);
     this.#liveDiagnostics.delete(uri);
@@ -509,11 +525,7 @@ export class LanguageService {
     const text = this.#effectiveSources.get(uri)?.text;
     const syntax =
       (editor ? this.#syntaxFromEditor(editor) : null) ??
-      (this.#editorAnalysis
-        ? text !== undefined && this.#liveStatuses.get(uri) === "unavailable"
-          ? this.#syntaxForText(uri, text)
-          : null
-        : this.getSyntaxSnapshot(uri)?.value);
+      (text !== undefined ? this.#syntaxForText(uri, text) : null);
     return syntax && text !== undefined
       ? completionContextAt(syntax, text, position)
       : null;
@@ -1311,6 +1323,7 @@ export class LanguageService {
       pending.resolve(this.#cancelledCompilation(pending));
     for (const timer of this.#liveTimers.values()) clearTimeout(timer);
     this.#liveTimers.clear();
+    this.#onDemandEditorAnalysis.clear();
     this.#analysisListeners.clear();
     this.#compilationListeners.clear();
     this.#diagnosticsListeners.clear();
@@ -1931,14 +1944,26 @@ export class LanguageService {
     if (this.#liveStatuses.get(uri) === "unavailable") return null;
     const effective = this.#effectiveSources.get(uri);
     if (!effective || !this.#editorAnalysis) return null;
+    const pending = this.#onDemandEditorAnalysis.get(uri);
+    if (pending?.version === effective.version) return pending.promise;
     const timer = this.#liveTimers.get(uri);
     if (timer) clearTimeout(timer);
     this.#liveTimers.delete(uri);
-    return this.#runEditorAnalysis(uri, effective.version);
+    const promise = this.#runEditorAnalysis(uri, effective.version).finally(
+      () => {
+        if (this.#onDemandEditorAnalysis.get(uri)?.promise === promise)
+          this.#onDemandEditorAnalysis.delete(uri);
+      },
+    );
+    this.#onDemandEditorAnalysis.set(uri, {
+      version: effective.version,
+      promise,
+    });
+    return promise;
   }
 
   #scheduleEditorAnalysis(uri: string, version: number): void {
-    if (!this.#editorAnalysis) return;
+    if (!this.#editorAnalysis || this.#liveDiagnosticsMode === "off") return;
     const existing = this.#liveTimers.get(uri);
     if (existing) clearTimeout(existing);
     this.#liveRequests.set(uri, (this.#liveRequests.get(uri) ?? 0) + 1);

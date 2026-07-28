@@ -5,6 +5,7 @@ import type {
 } from "@ilic/compiler-wasm";
 import { contextAt } from "./features.js";
 import { detectCompletionContext } from "./completion.js";
+import type { CompletionContext } from "./completion.js";
 import type { EditorPosition } from "./features.js";
 import type { CompilationOutputEvent } from "./types.js";
 
@@ -65,42 +66,48 @@ function tokensBefore(snapshot: SyntaxSnapshot, position: EditorPosition) {
   });
 }
 
+export function suggestionActivationFromContext(
+  completion: CompletionContext | null,
+): SuggestionActivation {
+  if (!completion) return { open: false, reason: "none", suppress: false };
+  if (
+    completion.slot === "top-level-root" ||
+    completion.slot === "container-body-root"
+  )
+    return {
+      open: completion.prefix.length > 0,
+      reason: "container-body",
+      suppress: false,
+    };
+  if (
+    completion.slot.startsWith("declaration-header") ||
+    completion.slot === "extends-target"
+  ) {
+    const atIdentifierBoundary =
+      completion.slot === "declaration-header-after-name" &&
+      !/\s$/u.test(completion.linePrefix);
+    const suppress = completion.ownerKind === "model" || atIdentifierBoundary;
+    return {
+      open: !suppress,
+      reason: completion.slot === "extends-target" ? "extends" : "header",
+      suppress,
+    };
+  }
+  if (completion.slot.startsWith("metaattribute"))
+    return { open: true, reason: "metaattribute", suppress: false };
+  return { open: true, reason: "type-expression", suppress: false };
+}
+
 /** Parser/token based replacement for the legacy client's regular-expression triggers. */
 export function suggestionActivation(
   snapshot: SyntaxSnapshot,
   position: EditorPosition,
   text?: string,
 ): SuggestionActivation {
-  if (text !== undefined) {
-    const completion = detectCompletionContext(snapshot, text, position);
-    if (!completion) return { open: false, reason: "none", suppress: false };
-    if (
-      completion.slot === "top-level-root" ||
-      completion.slot === "container-body-root"
-    )
-      return {
-        open: false,
-        reason: "container-body",
-        suppress: false,
-      };
-    if (
-      completion.slot.startsWith("declaration-header") ||
-      completion.slot === "extends-target"
-    ) {
-      const atIdentifierBoundary =
-        completion.slot === "declaration-header-after-name" &&
-        !/\s$/u.test(completion.linePrefix);
-      const suppress = completion.ownerKind === "model" || atIdentifierBoundary;
-      return {
-        open: !suppress,
-        reason: completion.slot === "extends-target" ? "extends" : "header",
-        suppress,
-      };
-    }
-    if (completion.slot.startsWith("metaattribute"))
-      return { open: true, reason: "metaattribute", suppress: false };
-    return { open: true, reason: "type-expression", suppress: false };
-  }
+  if (text !== undefined)
+    return suggestionActivationFromContext(
+      detectCompletionContext(snapshot, text, position),
+    );
   const tokens = tokensBefore(snapshot, position);
   const last = tokens.at(-1);
   const previous = tokens.at(-2);

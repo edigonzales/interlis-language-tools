@@ -11,7 +11,7 @@ function compiler(): CompilerBackend {
       version = next;
     },
     removeSource: () => true,
-    parse: (uri): SyntaxSnapshot => ({
+    parse: vi.fn((uri: string): SyntaxSnapshot => ({
       schemaVersion: 1,
       abiVersion: 1,
       compilerVersion: "test",
@@ -25,7 +25,7 @@ function compiler(): CompilerBackend {
       contexts: [],
       imports: [],
       diagnostics: [],
-    }),
+    })),
     analyze: (request) => ({
       schemaVersion: 1,
       abiVersion: 1,
@@ -149,7 +149,9 @@ describe("MonacoLanguageAdapter", () => {
       Range: ValueRange,
       Selection: ValueRange,
     } as unknown as MonacoApi;
-    const service = new LanguageService(compiler());
+    const compilerBackend = compiler();
+    const parseSpy = vi.spyOn(compilerBackend, "parse");
+    const service = new LanguageService(compilerBackend);
     vi.spyOn(service, "diagnostics").mockReturnValue([
       {
         severity: "warning",
@@ -322,6 +324,20 @@ describe("MonacoLanguageAdapter", () => {
     expect(
       adapter.suggestionActivation(model, { lineNumber: 1, column: 1 }).open,
     ).toBe(false);
+    parseSpy.mockClear();
+    for (let nextVersion = 4; nextVersion <= 103; nextVersion += 1) {
+      version = nextVersion;
+      modelText = `INTERLIS 2.4;\nMODEL M =\n  CLASS C ${" ".repeat(
+        nextVersion % 2,
+      )}`;
+      listener();
+      adapter.suggestionActivation(model, {
+        lineNumber: 3,
+        column: modelText.split("\n")[2]!.length + 1,
+      });
+    }
+    expect(parseSpy).not.toHaveBeenCalled();
+    expect(service.getDocument("memory:///M.ili")?.version).toBe(103);
 
     const editor = { executeEdits: vi.fn(() => true), setSelection: vi.fn() };
     adapter.applyTemplateEdit(editor, {
