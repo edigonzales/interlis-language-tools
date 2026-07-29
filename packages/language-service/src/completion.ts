@@ -1326,7 +1326,7 @@ function addNamedBlockSnippet(
 ): void {
   const base = lineIndent(text, context.replaceRange.start.line);
   const child = base + indentationUnit(text, context.ownerName);
-  const suffix = headerSuffix ? "${2: }=" : " =";
+  const suffix = headerSuffix ? " ${2:}=" : " =";
   add(
     result,
     item(context, `${keyword} Name = ... END Name;`, "snippet", {
@@ -1360,7 +1360,7 @@ function addContainerSnippets(
       result,
       item(context, "VIEW TOPIC Name = ... END Name;", "snippet", {
         filterText: "VIEW TOPIC",
-        insertText: `VIEW TOPIC \${1:Name}\${2: }=\n${child}DEPENDS ON \${3:Topic}\n${child}$0\n${base}END ${endNameMirror()};`,
+        insertText: `VIEW TOPIC \${1:Name} \${2:}=\n${child}DEPENDS ON \${3:Topic}\n${child}$0\n${base}END ${endNameMirror()};`,
         snippet: true,
         priority: 30,
         asIs: true,

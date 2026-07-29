@@ -324,7 +324,7 @@ describe("syntax-driven feature helpers", () => {
       (item) => item.label === "CLASS Name = ... END Name;",
     );
     expect(classSnippet?.insertText).toBe(
-      "CLASS ${1:Name}${2: }=\n      $0\n    END ${1/^([A-Za-z_][A-Za-z0-9_]*).*$/$1/};",
+      "CLASS ${1:Name} ${2:}=\n      $0\n    END ${1/^([A-Za-z_][A-Za-z0-9_]*).*$/$1/};",
     );
     expect(
       items.find((item) => item.label === "DOMAIN Name = ...;")?.insertText,
@@ -335,7 +335,9 @@ describe("syntax-driven feature helpers", () => {
     expect(
       items.find((item) => item.label === "VIEW TOPIC Name = ... END Name;")
         ?.insertText,
-    ).toContain("DEPENDS ON ${3:Topic}");
+    ).toBe(
+      "VIEW TOPIC ${1:Name} ${2:}=\n      DEPENDS ON ${3:Topic}\n      $0\n    END ${1/^([A-Za-z_][A-Za-z0-9_]*).*$/$1/};",
+    );
   });
 
   it.each([
