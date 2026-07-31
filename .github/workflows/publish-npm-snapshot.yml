@@ -105,11 +105,35 @@ jobs:
             echo "Expected an exact compiler snapshot version, received: $compiler_version" >&2
             exit 1
           fi
+
+          wait_for_published_version() {
+            local package_name="$1"
+            local expected_version="$2"
+            local max_attempts=12
+            local retry_delay=5
+            local attempt=1
+            local npm_response=""
+
+            while (( attempt <= max_attempts )); do
+              npm_response=$(npm view "$package_name@$expected_version" version 2>&1) || true
+              if [[ "$npm_response" == "$expected_version" ]]; then
+                return 0
+              fi
+
+              if (( attempt == max_attempts )); then
+                echo "$package_name@$expected_version is not available on npm after $max_attempts attempts" >&2
+                echo "Last npm response: ${npm_response:-<empty>}" >&2
+                return 1
+              fi
+
+              echo "Waiting for $package_name@$expected_version to become available on npm (attempt $attempt/$max_attempts)" >&2
+              sleep "$retry_delay"
+              attempt=$((attempt + 1))
+            done
+          }
+
           for package_name in @ilic/tools @ilic/compiler-wasm; do
-            if [[ "$(npm view "$package_name@$compiler_version" version 2>/dev/null || true)" != "$compiler_version" ]]; then
-              echo "$package_name@$compiler_version is not available on npm" >&2
-              exit 1
-            fi
+            wait_for_published_version "$package_name" "$compiler_version"
             package_git_head=$(npm view "$package_name@$compiler_version" gitHead 2>/dev/null || true)
             if [[ -n "$package_git_head" && "$package_git_head" != "$compiler_sha" ]]; then
               echo "$package_name@$compiler_version was built from $package_git_head, expected $compiler_sha" >&2
