@@ -6,6 +6,8 @@ settings:
 
 overrides:
   '@ilic/compiler-wasm': file:../ilic-fork/packages/compiler-wasm
+  '@ilic/tools>@ilic/repository-core': file:../ilic-fork/packages/repository-core
+  '@ilic/repository-core': file:../ilic-fork/packages/repository-core
   '@ilic/tools': file:../ilic-fork/packages/tools
   minimatch@5.1.9>brace-expansion: 5.0.8
 
@@ -491,6 +493,10 @@ packages:
 
   '@ilic/compiler-wasm@file:../ilic-fork/packages/compiler-wasm':
     resolution: {directory: ../ilic-fork/packages/compiler-wasm, type: directory}
+    engines: {node: '>=18'}
+
+  '@ilic/repository-core@file:../ilic-fork/packages/repository-core':
+    resolution: {directory: ../ilic-fork/packages/repository-core, type: directory}
     engines: {node: '>=18'}
 
   '@ilic/tools@file:../ilic-fork/packages/tools':
@@ -3208,7 +3214,11 @@ snapshots:
 
   '@ilic/compiler-wasm@file:../ilic-fork/packages/compiler-wasm': {}
 
-  '@ilic/tools@file:../ilic-fork/packages/tools': {}
+  '@ilic/repository-core@file:../ilic-fork/packages/repository-core': {}
+
+  '@ilic/tools@file:../ilic-fork/packages/tools':
+    dependencies:
+      '@ilic/repository-core': file:../ilic-fork/packages/repository-core
 
   '@inquirer/external-editor@1.0.3(@types/node@22.20.1)':
     dependencies:

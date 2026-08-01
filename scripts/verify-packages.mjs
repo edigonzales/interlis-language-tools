@@ -43,6 +43,7 @@ if (expectedLanguageVersion) {
 await mkdir(consumer, { recursive: true });
 
 const expectedVersions = new Map([
+  ["@ilic/repository-core", result.compilerVersion],
   ["@ilic/tools", result.compilerVersion],
   ["@ilic/compiler-wasm", result.compilerVersion],
   ["@ilic/language-service", result.snapshotVersion],
@@ -52,6 +53,7 @@ const expectedVersions = new Map([
   ["@ilic/language-server", result.snapshotVersion],
 ]);
 const expectedInternalDependencies = new Map([
+  ["@ilic/tools", { "@ilic/repository-core": result.compilerVersion }],
   ["@ilic/language-service", { "@ilic/compiler-wasm": result.compilerVersion }],
   [
     "@ilic/monaco-adapter",
@@ -80,7 +82,9 @@ for (const [name, expectedVersion] of expectedVersions) {
   assert.equal(manifest.license, "MIT");
   assert.equal(
     manifest.repository?.url,
-    name === "@ilic/tools" || name === "@ilic/compiler-wasm"
+    name === "@ilic/repository-core" ||
+    name === "@ilic/tools" ||
+    name === "@ilic/compiler-wasm"
       ? "https://github.com/edigonzales/ilic-fork.git"
       : "https://github.com/edigonzales/interlis-language-tools.git",
   );
@@ -134,7 +138,9 @@ await writeFile(
   resolve(consumer, "smoke.mjs"),
   `import assert from "node:assert/strict";
 import { createCompiler } from "@ilic/compiler-wasm";
+import { RepositoryManagerCore } from "@ilic/repository-core";
 import { BrowserCache } from "@ilic/tools/browser";
+import { RepositoryManager } from "@ilic/tools";
 import { LanguageService, MemoryWorkspaceFileSystem, createWasmCompilerBackend } from "@ilic/language-service";
 import { InterlisProtocol } from "@ilic/language-server";
 import { MonacoLanguageAdapter } from "@ilic/monaco-adapter";
@@ -142,6 +148,8 @@ import { DiagramController } from "@ilic/diagram";
 import { siblingDocxUri } from "@ilic/docx";
 
 assert.equal(typeof BrowserCache, "function");
+assert.equal(typeof RepositoryManager, "function");
+assert.equal(typeof RepositoryManagerCore, "function");
 assert.equal(typeof LanguageService, "function");
 assert.equal(typeof MemoryWorkspaceFileSystem, "function");
 assert.equal(typeof MonacoLanguageAdapter, "function");

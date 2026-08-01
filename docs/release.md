@@ -44,7 +44,7 @@ Extension publication is deliberately separate from repeatable npm snapshots.
 
 ## Pipelines
 
-`ci.yml` always builds and tests the sources, seven npm tarballs and the
+`ci.yml` always builds and tests the sources, eight npm tarballs and the
 universal VSIX. A successful main-branch CI completion starts the coordinated
 npm workflow only after CI has completed; the release workflow then repeats
 its gates from the exact CI `head_sha` and publishes only the five language
@@ -116,7 +116,7 @@ OIDC.
 
 ## npm trusted-publisher bootstrap
 
-`@ilic/tools` and `@ilic/compiler-wasm` already exist on npm. Their Trusted
+`@ilic/repository-core`, `@ilic/tools` and `@ilic/compiler-wasm` already exist on npm. Their Trusted
 Publisher must point to `edigonzales/ilic-fork`, workflow filename
 `publish-npm-snapshot.yml`. The five language packages use the workflow in this
 repository.
@@ -212,7 +212,7 @@ done
 1. A successful `ilic-fork` `main` CI run requests a release train, or a
    successful language-tools `main` push starts one directly.
 2. The release train captures both source SHAs, builds native and WASM
-   compiler artifacts, verifies all seven packages, and publishes the five
+   compiler artifacts, verifies all eight packages, and publishes the five
    language packages in dependency order. The two compiler packages were
    already published by `ilic-fork`.
 3. A repeat of the same workflow skips package versions that already exist and

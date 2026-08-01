@@ -36,7 +36,7 @@ thresholds and the missing test coverage are tracked in the
 section of the backlog; publication must become gated again once those targets
 are met consistently.
 `check` includes deterministic version/rewrite tests using a fixed UTC
-timestamp. `pack:verify` stages and installs all seven public package tarballs
+timestamp. `pack:verify` stages and installs all eight public package tarballs
 in a clean consumer, runs the WASM compiler, and rejects moving internal
 dependency specifications. `package:vsix` unpacks the extension and asserts its
 identity, license, icon, WASM binary and Node/browser client and server entry

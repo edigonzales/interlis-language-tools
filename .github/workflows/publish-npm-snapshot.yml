@@ -132,7 +132,7 @@ jobs:
             done
           }
 
-          for package_name in @ilic/tools @ilic/compiler-wasm; do
+          for package_name in @ilic/repository-core @ilic/tools @ilic/compiler-wasm; do
             wait_for_published_version "$package_name" "$compiler_version"
             package_git_head=$(npm view "$package_name@$compiler_version" gitHead 2>/dev/null || true)
             if [[ -n "$package_git_head" && "$package_git_head" != "$compiler_sha" ]]; then
@@ -322,6 +322,9 @@ jobs:
             npm publish "$tarball" --access public --tag snapshot
           }
 
+          publish_if_missing artifacts/npm/ilic-repository-core-snapshot.tgz
+          publish_if_missing artifacts/npm/ilic-tools-snapshot.tgz
+          publish_if_missing artifacts/npm/ilic-compiler-wasm-snapshot.tgz
           publish_if_missing artifacts/npm/ilic-language-service-snapshot.tgz
           publish_if_missing artifacts/npm/ilic-monaco-adapter-snapshot.tgz
           publish_if_missing artifacts/npm/ilic-diagram-snapshot.tgz

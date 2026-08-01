@@ -32,6 +32,11 @@ const LANGUAGE_PACKAGES = [
   { id: "language-server", name: "@ilic/language-server" },
 ];
 const COMPILER_PACKAGES = [
+  {
+    id: "repository-core",
+    name: "@ilic/repository-core",
+    compilerId: "repository_core",
+  },
   { id: "tools", name: "@ilic/tools", compilerId: "tools" },
   {
     id: "compiler-wasm",
@@ -173,7 +178,11 @@ export function rewriteLanguageManifest(
   const dependencies = Object.fromEntries(
     Object.entries(manifest.dependencies ?? {}).map(([name, version]) => {
       if (INTERNAL_NAMES.has(name)) return [name, snapshotVersion];
-      if (name === "@ilic/compiler-wasm" || name === "@ilic/tools")
+      if (
+        name === "@ilic/compiler-wasm" ||
+        name === "@ilic/tools" ||
+        name === "@ilic/repository-core"
+      )
         return [name, compilerVersion];
       return [name, version];
     }),

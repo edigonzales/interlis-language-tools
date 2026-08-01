@@ -147,12 +147,12 @@ SNAPSHOT_BUILD_ID=<GitHub-Run-ID>
 ```
 
 Der Stager verändert keine eingecheckten Manifeste. Er erzeugt unter
-`artifacts/npm/` sieben Tarballs mit zwei Basisversionslinien. Compiler- und
+`artifacts/npm/` acht Tarballs mit zwei Basisversionslinien. Compiler- und
 Language-Pakete behalten dabei bewusst getrennte Zeitstempel und Run-IDs:
 
 | Paketgruppe    | Pakete                                                                                                   | Version                                                 |
 | -------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| Compiler       | `@ilic/tools`, `@ilic/compiler-wasm`                                                                     | exakte publizierte `compilerVersion` aus dem Dispatch   |
+| Compiler       | `@ilic/repository-core`, `@ilic/tools`, `@ilic/compiler-wasm`                                             | exakte publizierte `compilerVersion` aus dem Dispatch   |
 | Language Tools | `@ilic/language-service`, `@ilic/monaco-adapter`, `@ilic/diagram`, `@ilic/docx`, `@ilic/language-server` | `0.1.0-SNAPSHOT.<language-timestamp>.<language-run-id>` |
 
 Alle internen Abhängigkeiten in den gepackten Manifesten zeigen auf exakte

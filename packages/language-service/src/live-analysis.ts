@@ -755,7 +755,13 @@ export function analyzeLiveDocument(
 ): LiveAnalysisResult {
   if (snapshot.iliVersion === "1.0") return { diagnostics: [], fixes: [] };
   const starts = lineStarts(text);
-  const diagnostics: Diagnostic[] = [...snapshot.diagnostics];
+  // A recovered editor snapshot is intentionally a partial parse. Its raw
+  // compiler diagnostics are often parser cascades at the first unfinished
+  // construct; the conservative live rules below provide the actionable
+  // diagnostics for that buffer instead.
+  const diagnostics: Diagnostic[] = snapshot.recovered
+    ? snapshot.diagnostics.filter((value) => value.source !== "compiler")
+    : [...snapshot.diagnostics];
   const fixes: LiveQuickFix[] = [];
 
   const ends = endDiagnostics(snapshot, text, starts);
