@@ -419,7 +419,7 @@ export class LanguageService {
     const fixes =
       document && !document.dirty
         ? this.#savedLint.get(uri)?.documentVersion === document.version
-          ? this.#savedLint.get(uri)?.fixes ?? []
+          ? (this.#savedLint.get(uri)?.fixes ?? [])
           : []
         : (this.#liveFixes.get(uri) ?? []);
     return fixes
@@ -1469,8 +1469,6 @@ export class LanguageService {
       }
       if (added === 0) break;
       if (!shouldContinue()) break;
-      await this.compiler.restart?.();
-      if (!shouldContinue()) break;
       analysis = await this.compiler.compileAndAnalyze({ roots: [rootUri] });
     }
 
@@ -1612,8 +1610,8 @@ export class LanguageService {
   #updateSavedLint(
     uri: string,
     snapshot: EditorSnapshot,
-    semantic: SemanticSnapshot | null =
-      this.#completionSemanticForDocument(uri)?.value ?? null,
+    semantic: SemanticSnapshot | null = this.#completionSemanticForDocument(uri)
+      ?.value ?? null,
   ): void {
     if (this.#liveDiagnosticsMode === "off") {
       this.#savedLint.delete(uri);
@@ -1727,7 +1725,23 @@ export class LanguageService {
     const text =
       typeof source === "string" ? source : new TextDecoder().decode(source);
     const current = this.#effectiveSources.get(uri);
-    if (current?.text === text) return false;
+    if (current?.text === text) {
+      // Workspace/repository refreshes may legitimately carry a new storage
+      // version for the same bytes; they need no semantic invalidation. A
+      // live document update, however, must reach the native session so its
+      // materialized documentVersions stay aligned with the editor.
+      if (
+        conservativeIfUnknown ||
+        preferredVersion === undefined ||
+        preferredVersion <= current.version
+      )
+        return false;
+      this.#sourceRevision = Math.max(this.#sourceRevision, preferredVersion);
+      this.#effectiveSources.set(uri, { text, version: preferredVersion });
+      this.compiler.putSource(uri, text, preferredVersion);
+      this.#editorAnalysis?.putSource(uri, text, preferredVersion);
+      return false;
+    }
     let version = preferredVersion;
     if (version === undefined || (current && version <= current.version))
       version = ++this.#sourceRevision;

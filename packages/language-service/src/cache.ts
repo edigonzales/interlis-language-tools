@@ -1,5 +1,10 @@
 import type { SemanticSnapshot } from "@ilic/compiler-wasm";
 
+/**
+ * Legacy storage-only helper kept for source compatibility. The Language
+ * Service does not consult it for compilation decisions; the native session
+ * owns semantic cache identity and invalidation.
+ */
 export class AnalysisCache {
   readonly #entries = new Map<string, SemanticSnapshot>();
 

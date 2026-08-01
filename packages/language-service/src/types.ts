@@ -4,6 +4,7 @@ import type {
   CompilationResult,
   FormatResult,
   EditorSnapshot,
+  IncrementalStats,
   SemanticSnapshot,
   SyntaxSnapshot,
 } from "@ilic/compiler-wasm";
@@ -26,6 +27,10 @@ export interface OpenDocument {
 }
 
 export interface CompilerBackend {
+  readonly capabilities?: {
+    readonly incrementalSession?: boolean;
+    readonly incrementalStats?: boolean;
+  };
   putSource(uri: string, source: string | Uint8Array, version: number): void;
   removeSource(uri: string): boolean;
   parse(uri: string): SyntaxSnapshot;
@@ -35,6 +40,8 @@ export interface CompilerBackend {
     request: CompilationRequest,
   ): CompilationAnalysisResult | Promise<CompilationAnalysisResult>;
   compile(request: CompilationRequest): CompilationResult;
+  incrementalStats?(): IncrementalStats | Promise<IncrementalStats>;
+  clearIncrementalCaches?(): void | Promise<void>;
   format(
     uri: string,
     options?: { indentSize?: number; requireValidSyntax?: boolean },

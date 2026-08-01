@@ -10,6 +10,7 @@ export async function createWasmCompilerBackend(): Promise<CompilerBackend> {
     { source: string | Uint8Array; version: number }
   >();
   return {
+    capabilities: compiler.capabilities,
     putSource(uri, source, version) {
       sources.set(uri, { source, version });
       session.putSource(uri, source, version);
@@ -23,6 +24,16 @@ export async function createWasmCompilerBackend(): Promise<CompilerBackend> {
     analyze: (request) => session.analyze(request),
     compileAndAnalyze: (request) => session.compileAndAnalyze(request),
     compile: (request) => session.compile(request),
+    incrementalStats() {
+      if (!session.incrementalStats)
+        throw new Error("native incremental statistics API is unavailable");
+      return session.incrementalStats();
+    },
+    clearIncrementalCaches() {
+      if (!session.clearIncrementalCaches)
+        throw new Error("native incremental cache API is unavailable");
+      session.clearIncrementalCaches();
+    },
     format: (uri, options) => session.format(uri, options),
     async restart() {
       session.dispose();

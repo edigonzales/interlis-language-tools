@@ -2,6 +2,7 @@ import type {
   CompilationAnalysisResult,
   CompilationRequest,
   EditorSnapshot,
+  IncrementalStats,
 } from "@ilic/compiler-wasm";
 import { createWasmCompilerBackend } from "./compiler.js";
 import type { CompilerBackend, EditorAnalysisBackend } from "./types.js";
@@ -40,6 +41,8 @@ export type CompilerWorkerRequest =
       readonly method: "editorSnapshot";
       readonly uri: string;
     }
+  | { readonly id: number; readonly method: "incrementalStats" }
+  | { readonly id: number; readonly method: "clearIncrementalCaches" }
   | { readonly id: number; readonly method: "dispose" };
 
 export type CompilerWorkerResponse =
@@ -166,6 +169,11 @@ export function createWorkerCompilerBackend(
   attach();
 
   return {
+    capabilities: {
+      ...local.capabilities,
+      incrementalSession: local.capabilities?.incrementalSession ?? false,
+      incrementalStats: local.capabilities?.incrementalStats ?? false,
+    },
     putSource(uri, source, version) {
       sources.set(uri, { source, version });
       local.putSource(uri, source, version);
@@ -187,6 +195,32 @@ export function createWorkerCompilerBackend(
     },
     compile: (compilationRequest) => local.compile(compilationRequest),
     format: (uri, formatOptions) => local.format(uri, formatOptions),
+    incrementalStats() {
+      if (!port) {
+        if (!local.incrementalStats)
+          throw new Error("native incremental statistics API is unavailable");
+        return local.incrementalStats();
+      }
+      return request<IncrementalStats>({ method: "incrementalStats" }).catch(
+        () => {
+          if (!local.incrementalStats)
+            throw new Error("native incremental statistics API is unavailable");
+          return local.incrementalStats();
+        },
+      );
+    },
+    clearIncrementalCaches() {
+      if (!port) {
+        return local.clearIncrementalCaches?.();
+      }
+      return request<unknown>({ method: "clearIncrementalCaches" })
+        .then(() => {
+          return local.clearIncrementalCaches?.();
+        })
+        .catch(() => {
+          return local.clearIncrementalCaches?.();
+        });
+    },
     async restart() {
       rejectPending("INTERLIS compiler worker restarted");
       detach();
@@ -378,6 +412,17 @@ export async function runCompilerWorker(
             if (!compiler.editorSnapshot)
               throw new Error("editor snapshots are unavailable");
             value = compiler.editorSnapshot(message.uri);
+            break;
+          case "incrementalStats":
+            if (!compiler.incrementalStats)
+              throw new Error(
+                "native incremental statistics API is unavailable",
+              );
+            value = await compiler.incrementalStats();
+            break;
+          case "clearIncrementalCaches":
+            await compiler.clearIncrementalCaches?.();
+            value = true;
             break;
           case "dispose":
             compiler.dispose();
