@@ -453,9 +453,7 @@ export class LanguageService {
     const syntax =
       (editor ? this.#syntaxFromEditor(editor) : null) ??
       (this.#editorAnalysis
-        ? this.#liveStatuses.get(uri) === "unavailable"
-          ? this.#syntaxForText(uri, text)
-          : null
+        ? this.#syntaxForText(uri, text)
         : this.getSyntaxSnapshot(uri)?.value);
     if (!syntax) return [];
     const evaluation = completionAt(

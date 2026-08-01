@@ -432,6 +432,23 @@ describe("save-driven LanguageService", () => {
     ).toBe(true);
   });
 
+  it("keeps completion available while editor analysis is catching up", async () => {
+    const editor = editorBackend((text) => editorSnapshot(text, 1));
+    const service = new LanguageService(backend(), {
+      editorAnalysis: editor,
+      liveDiagnostics: "off",
+    });
+    service.openDocument(rootUri, "MODEL M =\n  ", 1);
+    service.changeDocument(rootUri, "MODEL M =\n  \nEND M.", 2);
+
+    const labels = (
+      await service.completion(rootUri, { line: 1, character: 2 })
+    ).map((item) => item.label);
+
+    expect(labels).toContain("UNIT Name = ...;");
+    service.dispose();
+  });
+
   it("publishes conservative diagnostics and deterministic quick fixes", async () => {
     const editor = editorBackend();
     const service = new LanguageService(backend(), {
