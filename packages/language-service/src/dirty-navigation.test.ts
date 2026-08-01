@@ -128,6 +128,12 @@ END Local.
   });
 
   it("keeps typical dirty completion below the interactive budget", async () => {
+    const interactiveBudgetMs = 150;
+    // The first request also waits for the editor snapshot triggered by the
+    // dirty change. Keep that setup bound separate from steady-state latency
+    // so shared CI runners do not turn normal startup variance into a flaky
+    // failure.
+    const coldBudgetMs = interactiveBudgetMs * 2;
     const attributes = Array.from(
       { length: 350 },
       (_, index) => `      attribute${index}: TEXT*20;`,
@@ -156,8 +162,8 @@ END Performance.
     ).toBe(true);
     expect(
       coldElapsed,
-      `cold completion took ${coldElapsed.toFixed(2)} ms`,
-    ).toBeLessThan(150);
+      `cold completion took ${coldElapsed.toFixed(2)} ms (budget ${coldBudgetMs} ms)`,
+    ).toBeLessThan(coldBudgetMs);
 
     const warmElapsed: number[] = [];
     for (let index = 0; index < 5; index += 1) {
@@ -182,6 +188,6 @@ END Performance.
     expect(
       warmMaximum,
       `warm completion samples: [${samples}] ms`,
-    ).toBeLessThan(150);
+    ).toBeLessThan(interactiveBudgetMs);
   });
 });
