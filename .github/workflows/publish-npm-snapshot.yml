@@ -215,6 +215,8 @@ jobs:
       - name: Generate core coverage report (non-blocking)
         continue-on-error: true
         working-directory: interlis-language-tools
+        env:
+          SKIP_PERFORMANCE_BUDGETS: "1"
         run: pnpm --filter @ilic/language-service test:coverage
       - name: Upload core coverage report
         if: always()

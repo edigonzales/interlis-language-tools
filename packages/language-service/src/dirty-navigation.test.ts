@@ -129,6 +129,10 @@ END Local.
 
   it("keeps typical dirty completion below the interactive budget", async () => {
     const interactiveBudgetMs = 150;
+    // Coverage instrumentation and full-suite contention distort latency;
+    // normal test runs keep the performance budgets enabled.
+    const performanceBudgetsEnabled =
+      process.env.SKIP_PERFORMANCE_BUDGETS !== "1";
     // The first request also waits for the editor snapshot triggered by the
     // dirty change. Keep that setup bound separate from steady-state latency
     // so shared CI runners do not turn normal startup variance into a flaky
@@ -160,10 +164,12 @@ END Performance.
     expect(
       items.some((item) => item.label === "CLASS Name = ... END Name;"),
     ).toBe(true);
-    expect(
-      coldElapsed,
-      `cold completion took ${coldElapsed.toFixed(2)} ms (budget ${coldBudgetMs} ms)`,
-    ).toBeLessThan(coldBudgetMs);
+    if (performanceBudgetsEnabled) {
+      expect(
+        coldElapsed,
+        `cold completion took ${coldElapsed.toFixed(2)} ms (budget ${coldBudgetMs} ms)`,
+      ).toBeLessThan(coldBudgetMs);
+    }
 
     const warmElapsed: number[] = [];
     for (let index = 0; index < 5; index += 1) {
@@ -175,19 +181,24 @@ END Performance.
       ).toBe(true);
     }
 
-    const sortedWarmElapsed = [...warmElapsed].sort(
-      (left, right) => left - right,
-    );
-    const warmMedian =
-      sortedWarmElapsed[Math.floor(sortedWarmElapsed.length / 2)]!;
-    const warmMaximum = Math.max(...warmElapsed);
-    const samples = warmElapsed.map((elapsed) => elapsed.toFixed(2)).join(", ");
-    expect(warmMedian, `warm completion samples: [${samples}] ms`).toBeLessThan(
-      100,
-    );
-    expect(
-      warmMaximum,
-      `warm completion samples: [${samples}] ms`,
-    ).toBeLessThan(interactiveBudgetMs);
+    if (performanceBudgetsEnabled) {
+      const sortedWarmElapsed = [...warmElapsed].sort(
+        (left, right) => left - right,
+      );
+      const warmMedian =
+        sortedWarmElapsed[Math.floor(sortedWarmElapsed.length / 2)]!;
+      const warmMaximum = Math.max(...warmElapsed);
+      const samples = warmElapsed
+        .map((elapsed) => elapsed.toFixed(2))
+        .join(", ");
+      expect(
+        warmMedian,
+        `warm completion samples: [${samples}] ms`,
+      ).toBeLessThan(100);
+      expect(
+        warmMaximum,
+        `warm completion samples: [${samples}] ms`,
+      ).toBeLessThan(interactiveBudgetMs);
+    }
   });
 });
