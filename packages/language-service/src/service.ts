@@ -461,7 +461,8 @@ export class LanguageService {
     const evaluation = completionAt(
       syntax,
       text,
-      this.#completionSemanticForDocument(uri)?.value ?? null,
+      this.#completionSemanticForDocument(uri)?.value ??
+        this.#workspaceCompletionSemantic(syntax),
       position,
     );
     const context = evaluation.context;
@@ -1898,6 +1899,60 @@ export class LanguageService {
         return right.generation - left.generation;
       });
     return candidates[0]?.[1] ?? null;
+  }
+
+  #workspaceCompletionSemantic(
+    syntax: SyntaxSnapshot,
+  ): SemanticSnapshot | null {
+    const symbols: SemanticSnapshot["symbols"] = [];
+    const schema = this.#schemaLanguage(syntax);
+    for (const [uri, syntaxResult] of this.#syntax) {
+      if (this.#repositorySources.has(uri)) continue;
+      const candidate = syntaxResult.value;
+      if (
+        !candidate ||
+        candidate.iliVersion === "1.0" ||
+        this.#schemaLanguage(candidate) !== schema
+      )
+        continue;
+      for (let index = 0; index + 1 < candidate.tokens.length; ++index) {
+        if (candidate.tokens[index]?.kind !== "MODEL") continue;
+        const name = candidate.tokens
+          .slice(index + 1)
+          .find((token) => token.kind === "NAME");
+        if (!name) continue;
+        symbols.push({
+          id: `workspace-completion-model:${uri}:${name.text}`,
+          name: name.text,
+          qualifiedName: name.text,
+          kind: "model",
+          containerId: "",
+          range: name.range,
+          selectionRange: name.range,
+          endRange: null,
+          abstract: false,
+        });
+      }
+    }
+    if (symbols.length === 0) return null;
+    return {
+      schemaVersion: syntax.schemaVersion,
+      abiVersion: syntax.abiVersion,
+      compilerVersion: syntax.compilerVersion,
+      kind: "semantic",
+      success: true,
+      cancelled: false,
+      roots: [],
+      documentVersions: {},
+      missingModels: [],
+      symbols,
+      references: [],
+      dependencies: [],
+      diagram: { nodes: [], edges: [] },
+      documentation: { title: "", sections: [] },
+      diagnostics: [],
+      logs: [],
+    };
   }
 
   #semanticOutline(uri: string): DocumentSymbol[] {

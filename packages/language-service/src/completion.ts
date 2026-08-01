@@ -1034,6 +1034,12 @@ function logicalPrefixAt(
     candidate -= 1
   ) {
     const source = lines[candidate] ?? "";
+    // A completed statement belongs to the previous logical construct. Do
+    // not reinterpret the next line as a continuation of its type
+    // expression. This is especially important after an attribute such as
+    // `value: TEXT;`, where the next line may be a new attribute name or
+    // simply blank.
+    if (isLogicalBoundary(source)) break;
     if (logicalDeclarationStart.test(source)) {
       if (fallbackStart < 0) fallbackStart = candidate;
       if (preferredStarts.has(candidate)) {
@@ -1041,7 +1047,6 @@ function logicalPrefixAt(
         break;
       }
     }
-    if (isLogicalBoundary(source)) break;
   }
   const start = preferredStart >= 0 ? preferredStart : fallbackStart;
   if (start < 0)
@@ -1537,6 +1542,38 @@ function semanticCandidates(
   });
 }
 
+function semanticModelNamespaceCandidates(
+  context: CompletionContext,
+  syntax: SyntaxSnapshot,
+  semantic: SemanticSnapshot | null,
+): CompletionItem[] {
+  if (!semantic || context.qualifierPath) return [];
+  const imported = new Set(syntax.imports.map((name) => name.toUpperCase()));
+  const seen = new Set<string>();
+  const result: CompletionItem[] = [];
+  for (const symbol of semantic.symbols) {
+    if (normalizeKind(symbol.kind) !== "model") continue;
+    if (symbol.range?.uri === syntax.uri) continue;
+    const name = symbol.name.trim();
+    const upperName = name.toUpperCase();
+    if (
+      !name ||
+      seen.has(upperName) ||
+      (upperName !== "INTERLIS" && !imported.has(upperName))
+    )
+      continue;
+    seen.add(upperName);
+    add(
+      result,
+      item(context, name, "module", {
+        detail: `${symbol.qualifiedName} (MODEL namespace)`,
+        priority: 15,
+      }),
+    );
+  }
+  return result;
+}
+
 function addTargetCandidates(
   result: CompletionItem[],
   context: CompletionContext,
@@ -1556,6 +1593,7 @@ function addTargetCandidates(
         { detail: symbol.qualifiedName, priority: 10 },
       ),
     );
+  result.push(...semanticModelNamespaceCandidates(context, syntax, semantic));
   result.push(...semanticCandidates(context, syntax, semantic));
 }
 
@@ -2117,6 +2155,9 @@ function completionItemsForContext(
             priority: 10,
           }),
         );
+      result.push(
+        ...semanticModelNamespaceCandidates(context, syntax, semantic),
+      );
       break;
     }
     case "format-bounds-tail": {

@@ -90,6 +90,31 @@ const semantic: SemanticSnapshot = {
       endRange: null,
       abstract: false,
     },
+    {
+      id: "external-code",
+      name: "Code",
+      qualifiedName: "External.Code",
+      kind: "domain",
+      containerId: "external",
+      range: {
+        ...sourceRange(1, 2),
+        uri: "repository:///External.ili",
+      },
+      selectionRange: null,
+      endRange: null,
+      abstract: false,
+    },
+    {
+      id: "unimported",
+      name: "Unimported",
+      qualifiedName: "Unimported",
+      kind: "model",
+      containerId: "",
+      range: { ...sourceRange(0, 0), uri: "repository:///Unimported.ili" },
+      selectionRange: null,
+      endRange: null,
+      abstract: false,
+    },
   ],
   references: [],
   dependencies: [],
@@ -164,5 +189,25 @@ describe(`Java completion golden catalog ${javaCompletionBaselineCommit}`, () =>
     expect(completionItemsAt(syntax, text, null, position)).toEqual(
       evaluation.items,
     );
+  });
+
+  it.each([
+    [
+      "blank line after a completed attribute",
+      "MODEL M =\n  CLASS C =\n    value: TEXT;\n    │\n  END C;\nEND M.",
+    ],
+    [
+      "new attribute name after a completed attribute",
+      "MODEL M =\n  CLASS C =\n    value: TEXT;\n    foo│\n  END C;\nEND M.",
+    ],
+  ])("does not reuse a completed attribute context for %s", (_name, source) => {
+    const document = caret(source);
+    const syntax = snapshot(document.text, "2.4");
+    expect(
+      detectCompletionContext(syntax, document.text, document.position),
+    ).toBeNull();
+    expect(
+      completionItemsAt(syntax, document.text, semantic, document.position),
+    ).toEqual([]);
   });
 });

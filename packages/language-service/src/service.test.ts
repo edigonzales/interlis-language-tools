@@ -833,6 +833,33 @@ END Root.`;
     service.dispose();
   });
 
+  it("adds compiled workspace models to IMPORTS completion", async () => {
+    const localUri = "memory:///Local.ili";
+    const compiler = backend((request) =>
+      analysis(request.roots, {
+        syntax: [syntax(rootUri), modelSyntax(localUri, "WorkspaceModel", 1)],
+        documentVersions: { [rootUri]: 1, [localUri]: 1 },
+      }),
+    );
+    const service = new LanguageService(compiler);
+    service.putWorkspaceSource(
+      localUri,
+      "INTERLIS 2.4;\nMODEL WorkspaceModel =\nEND WorkspaceModel.",
+      1,
+    );
+    const text = "MODEL Root =\n  IMPORTS Workspace";
+    service.openDocument(rootUri, text, 1);
+    await service.compileDocument(rootUri, "save");
+
+    const importLine = text.split("\n")[1]!;
+    const items = await service.completion(rootUri, {
+      line: 1,
+      character: importLine.length,
+    });
+    expect(items.map((item) => item.label)).toContain("WorkspaceModel");
+    service.dispose();
+  });
+
   it("uses last-good external symbols but the current dirty IMPORTS list", async () => {
     const externalUri = "repository:///External.ili";
     const externalSymbol: SemanticSnapshot["symbols"][number] = {

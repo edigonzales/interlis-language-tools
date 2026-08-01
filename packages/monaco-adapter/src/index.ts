@@ -124,6 +124,7 @@ export class MonacoLanguageAdapter implements Disposable {
     options: AttachModelOptions = {},
   ): Disposable {
     const uri = model.uri.toString();
+    this.#models.get(uri)?.disposable.dispose();
     const update = () => {
       if (options.readOnly) {
         this.#publishMarkers(model);
@@ -134,19 +135,23 @@ export class MonacoLanguageAdapter implements Disposable {
         this.service.changeDocument(uri, model.getValue(), version);
       else this.service.openDocument(uri, model.getValue(), version);
     };
-    update();
-    this.#publishMarkers(model);
-    const listener = model.onDidChangeContent(update);
+    let listener: Disposable | null = null;
     const disposable = {
       dispose: () => {
-        listener.dispose();
+        listener?.dispose();
         this.#models.delete(uri);
         if (!options.readOnly && this.service.getDocument(uri))
           this.service.closeDocument(uri);
       },
     };
-    this.#models.get(uri)?.disposable.dispose();
     this.#models.set(uri, { model, disposable });
+    // Register the model before opening/changing the document. Live analysis
+    // may publish a ready diagnostic result asynchronously during this call;
+    // the event must already have a model target so warning markers cannot be
+    // lost during attachment.
+    listener = model.onDidChangeContent(update);
+    update();
+    this.#publishMarkers(model);
     return disposable;
   }
 

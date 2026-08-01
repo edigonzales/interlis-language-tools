@@ -101,6 +101,14 @@ export const completionGoldenCatalog: readonly CompletionGoldenCase[] = [
     expectedItems: [{ label: "Base", kind: "class" }],
   },
   {
+    id: "header-extends-model-namespace",
+    source: "MODEL M =\n  IMPORTS External;\n  CLASS Child EXTENDS Ex│\nEND M.",
+    iliVersion: "2.4",
+    slot: "extends-target",
+    replaceText: "Ex",
+    expectedItems: [{ label: "External", kind: "module" }],
+  },
+  {
     id: "header-after-extends",
     source:
       "MODEL M =\n  CLASS Base =\n  END Base;\n  CLASS Child EXTENDS Base │\nEND M.",
@@ -116,6 +124,25 @@ export const completionGoldenCatalog: readonly CompletionGoldenCase[] = [
     slot: "attribute-type-root",
     replaceText: "TE",
     expectedItems: [{ label: "TEXT", kind: "keyword" }],
+  },
+  {
+    id: "attribute-model-namespace",
+    source:
+      "MODEL M =\n  IMPORTS External;\n  CLASS C =\n    value: Ex│\n  END C;\nEND M.",
+    iliVersion: "2.4",
+    slot: "attribute-type-root",
+    replaceText: "Ex",
+    expectedItems: [{ label: "External", kind: "module" }],
+    absentLabels: ["Unimported"],
+  },
+  {
+    id: "qualified-model-namespace-member",
+    source:
+      "MODEL M =\n  IMPORTS External;\n  CLASS C =\n    value: External.Co│\n  END C;\nEND M.",
+    iliVersion: "2.4",
+    slot: "qualified-member",
+    replaceText: "Co",
+    expectedItems: [{ label: "Code", kind: "value" }],
   },
   {
     id: "domain-root-23",
@@ -149,6 +176,14 @@ export const completionGoldenCatalog: readonly CompletionGoldenCase[] = [
     slot: "unit-bracket-target",
     replaceText: "Me",
     expectedItems: [{ label: "Meter", kind: "value" }],
+  },
+  {
+    id: "unit-model-namespace",
+    source: "MODEL M =\n  IMPORTS External;\n  UNIT U = [Ex│\nEND M.",
+    iliVersion: "2.4",
+    slot: "unit-bracket-target",
+    replaceText: "Ex",
+    expectedItems: [{ label: "External", kind: "module" }],
   },
   {
     id: "unit-composed-target",
@@ -237,6 +272,15 @@ export const completionGoldenCatalog: readonly CompletionGoldenCase[] = [
     ],
   },
   {
+    id: "collection-model-namespace",
+    source:
+      "MODEL M =\n  IMPORTS External;\n  CLASS C =\n    values: LIST OF Ex│\n  END C;\nEND M.",
+    iliVersion: "2.4",
+    slot: "collection-target",
+    replaceText: "Ex",
+    expectedItems: [{ label: "External", kind: "module" }],
+  },
+  {
     id: "reference-post-keyword",
     source: "MODEL M =\n  CLASS C =\n    owner: REFERENCE T│\n  END C;\nEND M.",
     iliVersion: "2.4",
@@ -252,6 +296,15 @@ export const completionGoldenCatalog: readonly CompletionGoldenCase[] = [
     slot: "reference-target",
     replaceText: "Tar",
     expectedItems: [{ label: "Target", kind: "class" }],
+  },
+  {
+    id: "reference-model-namespace",
+    source:
+      "MODEL M =\n  IMPORTS External;\n  CLASS C =\n    owner: REFERENCE TO Ex│\n  END C;\nEND M.",
+    iliVersion: "2.4",
+    slot: "reference-target",
+    replaceText: "Ex",
+    expectedItems: [{ label: "External", kind: "module" }],
   },
   {
     id: "meta-type-tail",
