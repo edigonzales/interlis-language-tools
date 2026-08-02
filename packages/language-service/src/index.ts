@@ -21,6 +21,17 @@ export type {
 } from "./repository.js";
 export { WorkspaceRepositoryResolver } from "./repository.js";
 export { LanguageService } from "./service.js";
+export {
+  diagnosticFingerprint,
+  deduplicateDiagnostics,
+} from "./diagnostics/diagnostic-fingerprint.js";
+export { DiagnosticStore } from "./diagnostics/diagnostic-store.js";
+export { DiagnosticVersionGate } from "./diagnostics/diagnostic-version-gate.js";
+export type {
+  DiagnosticOrigin,
+  StoredDiagnostics,
+} from "./diagnostics/diagnostic-store.js";
+export type { DiagnosticPublicationToken } from "./diagnostics/diagnostic-version-gate.js";
 export type {
   CompletionItem,
   CodeAction,

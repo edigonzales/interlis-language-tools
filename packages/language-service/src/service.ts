@@ -57,6 +57,9 @@ import type {
   VersionedResult,
   WorkspaceSource,
 } from "./types.js";
+import { deduplicateDiagnostics } from "./diagnostics/diagnostic-fingerprint.js";
+import { DiagnosticStore } from "./diagnostics/diagnostic-store.js";
+import { DiagnosticVersionGate } from "./diagnostics/diagnostic-version-gate.js";
 
 interface StoredSource {
   readonly text: string | Uint8Array;
@@ -96,6 +99,8 @@ export class LanguageService {
   readonly #syntax = new Map<string, VersionedResult<SyntaxSnapshot>>();
   readonly #diagnostics = new Map<string, Diagnostic[]>();
   readonly #diagnosticsByRoot = new Map<string, Map<string, Diagnostic[]>>();
+  readonly #diagnosticStore = new DiagnosticStore();
+  readonly #diagnosticVersionGate = new DiagnosticVersionGate();
   readonly #liveDiagnostics = new Map<string, Diagnostic[]>();
   readonly #liveFixes = new Map<string, readonly LiveQuickFix[]>();
   readonly #savedLint = new Map<string, SavedLintResult>();
@@ -157,6 +162,7 @@ export class LanguageService {
     readonly compiler: CompilerBackend,
     options: LanguageServiceOptions = {},
   ) {
+    this.#diagnosticVersionGate.beginEpoch(this.#generation);
     if (options.onAnalysis) this.#analysisListeners.add(options.onAnalysis);
     if (options.onCompilation)
       this.#compilationListeners.add(options.onCompilation);
@@ -223,8 +229,10 @@ export class LanguageService {
         );
         this.#liveStatuses.delete(document.uri);
         this.#liveDiagnostics.delete(document.uri);
+        this.#diagnosticStore.remove(document.uri, "live");
         this.#liveFixes.delete(document.uri);
         this.#savedLint.delete(document.uri);
+        this.#diagnosticStore.remove(document.uri, "saved");
         this.#emitDiagnosticsChanged(document.uri, document.version, "off");
       } else {
         this.#scheduleEditorAnalysis(document.uri, document.version);
@@ -260,6 +268,7 @@ export class LanguageService {
         this.#updateSavedLint(uri, snapshot);
     }
     this.#liveDiagnostics.delete(uri);
+    this.#diagnosticStore.remove(uri, "live");
     this.#liveFixes.delete(uri);
     this.#emitDiagnosticsChanged(uri, document.version, "ready");
     if (!this.isReadOnlyUri(uri))
@@ -283,6 +292,7 @@ export class LanguageService {
     this.#liveDiagnostics.delete(uri);
     this.#liveFixes.delete(uri);
     this.#savedLint.delete(uri);
+    this.#diagnosticStore.remove(uri, "saved");
     this.#refreshEffectiveSource(uri);
     if (!this.#repositorySources.has(uri)) this.#readOnlyUris.delete(uri);
     this.#emitDiagnosticsChanged(uri, previous?.version ?? null, "off");
@@ -1233,6 +1243,20 @@ export class LanguageService {
       fresh &&
       requestIsCurrent() &&
       this.#semanticValueIsCurrent(analysis.semantic);
+    if (fresh) {
+      const token = {
+        uri: rootUri,
+        rootUri,
+        documentVersion: requestedDocumentVersion,
+        runId,
+        compilationEpoch,
+        generation: this.#generation,
+      };
+      // requestIsCurrent() remains the authoritative compilation freshness
+      // check. The gate records the accepted publication token so consumers
+      // that retain asynchronous projections can apply the same policy.
+      this.#diagnosticVersionGate.accept(token);
+    }
     const current = this.#documents.get(rootUri);
     for (const syntax of analysis.syntax) {
       const existing = this.#syntax.get(syntax.uri);
@@ -1302,6 +1326,7 @@ export class LanguageService {
   async cancelAnalysis(): Promise<void> {
     this.#compilationEpoch++;
     this.#generation++;
+    this.#diagnosticVersionGate.beginEpoch(this.#generation);
     for (const pending of this.#pendingCompilations.splice(0))
       pending.resolve(this.#cancelledCompilation(pending));
     await this.compiler.restart?.();
@@ -1326,6 +1351,7 @@ export class LanguageService {
     this.#analysisListeners.clear();
     this.#compilationListeners.clear();
     this.#diagnosticsListeners.clear();
+    this.#diagnosticStore.clear();
     this.#readOnlyUris.clear();
     void this.#modelRepository?.dispose?.();
     this.#editorAnalysis?.dispose();
@@ -1403,6 +1429,7 @@ export class LanguageService {
       this.#syntax.delete(uri);
       this.#editorSnapshots.delete(uri);
       this.#savedLint.delete(uri);
+      this.#diagnosticStore.remove(uri, "saved");
       this.#invalidateSource(uri, conservativeIfUnknown);
     }
   }
@@ -1561,6 +1588,7 @@ export class LanguageService {
     rootUri: string,
     diagnostics: readonly Diagnostic[],
   ): Set<string> {
+    this.#diagnosticStore.removeByRoot(rootUri);
     const affected = new Set<string>([
       rootUri,
       ...(this.#diagnosticsByRoot.get(rootUri)?.keys() ?? []),
@@ -1573,37 +1601,39 @@ export class LanguageService {
       values.push(diagnostic);
       grouped.set(uri, values);
     }
+    for (const [uri, values] of grouped) {
+      const documentVersion =
+        this.#documents.get(uri)?.version ??
+        this.#effectiveSources.get(uri)?.version ??
+        0;
+      const normalized = deduplicateDiagnostics(values);
+      grouped.set(uri, normalized);
+      this.#diagnosticStore.put({
+        uri,
+        rootUri,
+        documentVersion,
+        origin: "semantic",
+        diagnostics: normalized,
+      });
+    }
     this.#diagnosticsByRoot.set(rootUri, grouped);
     this.#diagnostics.clear();
     for (const rootDiagnostics of this.#diagnosticsByRoot.values())
       for (const [uri, values] of rootDiagnostics)
-        this.#diagnostics.set(uri, [
-          ...(this.#diagnostics.get(uri) ?? []),
-          ...values,
-        ]);
+        this.#diagnostics.set(
+          uri,
+          deduplicateDiagnostics([
+            ...(this.#diagnostics.get(uri) ?? []),
+            ...values,
+          ]),
+        );
     return affected;
   }
 
   #mergeDiagnostics(
     ...groups: readonly (readonly Diagnostic[])[]
   ): Diagnostic[] {
-    const seen = new Set<string>();
-    return groups.flatMap((group) =>
-      group.filter((diagnostic) => {
-        const range = diagnostic.range;
-        const key = [
-          diagnostic.code,
-          range?.uri ?? "",
-          range?.start.line ?? -1,
-          range?.start.character ?? -1,
-          range?.end.line ?? -1,
-          range?.end.character ?? -1,
-        ].join(":");
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      }),
-    );
+    return deduplicateDiagnostics(groups.flat());
   }
 
   #updateSavedLint(
@@ -1633,6 +1663,12 @@ export class LanguageService {
       diagnostics,
       fixes: analysis.fixes.filter((fix) => codes.has(fix.diagnosticCode)),
     });
+    this.#diagnosticStore.put({
+      uri,
+      documentVersion: snapshot.documentVersion,
+      origin: "saved",
+      diagnostics,
+    });
   }
 
   async #refreshSavedLintDiagnostics(
@@ -1653,6 +1689,7 @@ export class LanguageService {
 
   #invalidateSource(uri: string, conservativeIfUnknown = false): void {
     this.#generation++;
+    this.#diagnosticVersionGate.beginEpoch(this.#generation);
     const syntax = this.#syntax.get(uri);
     if (syntax) this.#syntax.set(uri, { ...syntax, freshness: "stale" });
     let matched = this.#invalidateSemanticMap(this.#semanticByRoot, uri);
@@ -1688,6 +1725,7 @@ export class LanguageService {
 
   #invalidateAll(): void {
     this.#generation++;
+    this.#diagnosticVersionGate.beginEpoch(this.#generation);
     for (const [uri, snapshot] of this.#syntax)
       this.#syntax.set(uri, { ...snapshot, freshness: "stale" });
     for (const map of [this.#semanticByRoot, this.#savedSemanticByRoot])
@@ -2037,8 +2075,10 @@ export class LanguageService {
     this.#liveStatuses.set(uri, "scheduled");
     this.#editorSnapshots.delete(uri);
     this.#liveDiagnostics.delete(uri);
+    this.#diagnosticStore.remove(uri, "live");
     this.#liveFixes.delete(uri);
     this.#savedLint.delete(uri);
+    this.#diagnosticStore.remove(uri, "saved");
     this.#emitDiagnosticsChanged(uri, version, "scheduled");
     const timer = setTimeout(() => {
       this.#liveTimers.delete(uri);
@@ -2082,6 +2122,12 @@ export class LanguageService {
           this.#currentEditorDeclarations(),
         );
         this.#liveDiagnostics.set(uri, [...analysis.diagnostics]);
+        this.#diagnosticStore.put({
+          uri,
+          documentVersion: version,
+          origin: "live",
+          diagnostics: analysis.diagnostics,
+        });
         this.#liveFixes.set(uri, analysis.fixes);
       } else if (document && !document.dirty)
         this.#updateSavedLint(uri, snapshot);

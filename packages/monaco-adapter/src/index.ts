@@ -422,31 +422,36 @@ export class MonacoLanguageAdapter implements Disposable {
     this.monaco.editor.setModelMarkers(
       model,
       "ilic",
-      this.service.diagnostics(model.uri.toString()).flatMap((diagnostic) =>
-        diagnostic.range
-          ? [
-              {
-                ...this.#markerRange(diagnostic.range),
-                severity: diagnostic.treatedAsError
-                  ? 8
-                  : { error: 8, warning: 4, information: 2, hint: 1 }[
-                      diagnostic.severity
-                    ],
-                code: diagnostic.code,
-                message: diagnostic.message,
-                source:
-                  diagnostic.source === "live"
-                    ? "ilic-live"
-                    : diagnostic.source === "lint"
-                      ? "ilic-lint"
-                      : "ilic",
-                tags: diagnostic.tags?.map((tag) =>
-                  tag === "unnecessary" ? 1 : 2,
-                ),
-              },
-            ]
-          : [],
-      ),
+      this.service.diagnostics(model.uri.toString()).map((diagnostic) => ({
+        ...this.#markerRange(diagnostic.range),
+        severity: diagnostic.treatedAsError
+          ? 8
+          : { error: 8, warning: 4, information: 2, hint: 1 }[
+              diagnostic.severity
+            ],
+        code: diagnostic.code,
+        message: diagnostic.message,
+        source:
+          diagnostic.source === "live"
+            ? "ilic-live"
+            : diagnostic.source === "lint"
+              ? "ilic-lint"
+              : "ilic",
+        tags: diagnostic.tags?.flatMap((tag) =>
+          tag === "unnecessary" ? [1] : tag === "deprecated" ? [2] : [],
+        ),
+        relatedInformation: diagnostic.relatedInformation.flatMap((value) =>
+          value.range
+            ? [
+                {
+                  resource: this.monaco.Uri.parse(value.range.uri),
+                  ...this.#markerRange(value.range),
+                  message: value.message,
+                },
+              ]
+            : [],
+        ),
+      })),
     );
   }
 
@@ -459,7 +464,14 @@ export class MonacoLanguageAdapter implements Disposable {
     );
   }
 
-  #markerRange(value: { start: EditorPosition; end: EditorPosition }) {
+  #markerRange(value: { start: EditorPosition; end: EditorPosition } | null) {
+    if (!value)
+      return {
+        startLineNumber: 1,
+        startColumn: 1,
+        endLineNumber: 1,
+        endColumn: 2,
+      };
     return {
       startLineNumber: value.start.line + 1,
       startColumn: value.start.character + 1,

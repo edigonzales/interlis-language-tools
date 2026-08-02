@@ -54,10 +54,12 @@ export function toDiagnostic(value: CoreDiagnostic) {
         : value.source === "lint"
           ? "ilic-lint"
           : "ilic",
-    tags: value.tags?.map((tag) =>
+    tags: value.tags?.flatMap((tag) =>
       tag === "unnecessary"
-        ? DiagnosticTag.Unnecessary
-        : DiagnosticTag.Deprecated,
+        ? [DiagnosticTag.Unnecessary]
+        : tag === "deprecated"
+          ? [DiagnosticTag.Deprecated]
+          : [],
     ),
     message: value.message,
     relatedInformation: value.relatedInformation.flatMap((information) =>
@@ -77,7 +79,10 @@ export function toDiagnostic(value: CoreDiagnostic) {
       treatedAsError: value.treatedAsError,
       notes: value.notes,
       relatedInformation: value.relatedInformation,
+      phase: value.phase,
+      fingerprint: value.fingerprint,
     },
+    codeDescription: value.helpId ? { href: value.helpId } : undefined,
   };
 }
 
