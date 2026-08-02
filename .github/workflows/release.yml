@@ -74,12 +74,13 @@ jobs:
           pattern: interlis-language-tools-vsix-*
           path: artifacts
           merge-multiple: true
-      - name: Publish to VS Code Marketplace
-        if: env.VSCE_PAT != ''
+      # Temporary: keep Microsoft Marketplace publication disabled while the
+      # verified VSIX and Open VSX publication remain available.
+      - name: Publish to VS Code Marketplace (temporarily disabled)
+        if: ${{ false }}
         run: npx --yes @vscode/vsce@3.9.2 publish --packagePath artifacts/interlis-language-tools.vsix --pat "$VSCE_PAT"
-      - name: Preserve VSIX when Marketplace credentials are absent
-        if: env.VSCE_PAT == ''
-        run: echo "VSCE_PAT is not configured; the verified VSIX remains available as an artifact."
+      - name: Preserve VSIX while Marketplace publication is disabled
+        run: echo "VS Code Marketplace publication is temporarily disabled; the verified VSIX remains available as an artifact."
 
   open-vsx:
     needs: build
