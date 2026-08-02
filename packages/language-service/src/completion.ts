@@ -1127,6 +1127,12 @@ export function detectCompletionContext(
   const logicalPrefix = logical.prefix;
   const logicalLine = logical.line;
 
+  // A completed statement is not an active completion context anymore. In
+  // particular, keeping the type-expression context after `TEXT*255;` makes
+  // the editor reopen type suggestions when an asynchronous request returns.
+  if (logical.suffix.trim().length === 0 && /;\s*$/u.test(logicalPrefix))
+    return null;
+
   match = logicalPrefix.match(/^\s*IMPORTS\b([^;]*)$/iu);
   if (match) {
     const segment = match[1] ?? "";

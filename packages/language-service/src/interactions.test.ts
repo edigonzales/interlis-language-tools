@@ -157,6 +157,21 @@ describe("suggestionActivation", () => {
     });
   });
 
+  it("suppresses suggestions after a completed attribute type", () => {
+    const text = "MODEL M =\n  CLASS C =\n    label : TEXT*255;";
+    const lines = text.split("\n");
+    const position = {
+      line: lines.length - 1,
+      character: lines.at(-1)!.length,
+    };
+
+    expect(suggestionActivation(snapshot([]), position, text)).toEqual({
+      open: false,
+      reason: "none",
+      suppress: false,
+    });
+  });
+
   it("maps completion contexts without requiring a syntax snapshot", () => {
     expect(
       suggestionActivationFromContext({
