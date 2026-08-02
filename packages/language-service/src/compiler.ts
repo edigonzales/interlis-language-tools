@@ -29,6 +29,19 @@ export async function createWasmCompilerBackend(): Promise<CompilerBackend> {
         throw new Error("native incremental statistics API is unavailable");
       return session.incrementalStats();
     },
+    incrementalTrace() {
+      if (!session.incrementalTrace)
+        throw new Error("native incremental trace API is unavailable");
+      return session.incrementalTrace();
+    },
+    incrementalCacheSnapshot() {
+      if (!session.incrementalCacheSnapshot)
+        throw new Error("native incremental cache snapshot API is unavailable");
+      return session.incrementalCacheSnapshot();
+    },
+    resetIncrementalStats() {
+      session.resetIncrementalStats?.();
+    },
     clearIncrementalCaches() {
       if (!session.clearIncrementalCaches)
         throw new Error("native incremental cache API is unavailable");

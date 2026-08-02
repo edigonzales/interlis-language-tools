@@ -30,6 +30,9 @@ export interface CompilerBackend {
   readonly capabilities?: {
     readonly incrementalSession?: boolean;
     readonly incrementalStats?: boolean;
+    readonly incrementalTrace?: boolean;
+    readonly incrementalCacheSnapshot?: boolean;
+    readonly strictEditorSeparation?: boolean;
   };
   putSource(uri: string, source: string | Uint8Array, version: number): void;
   removeSource(uri: string): boolean;
@@ -41,7 +44,11 @@ export interface CompilerBackend {
   ): CompilationAnalysisResult | Promise<CompilationAnalysisResult>;
   compile(request: CompilationRequest): CompilationResult;
   incrementalStats?(): IncrementalStats | Promise<IncrementalStats>;
+  incrementalTrace?(): Record<string, unknown> | Promise<Record<string, unknown>>;
+  incrementalCacheSnapshot?(): Record<string, unknown> | Promise<Record<string, unknown>>;
+  resetIncrementalStats?(): void | Promise<void>;
   clearIncrementalCaches?(): void | Promise<void>;
+  workerLifecycleStats?(): WorkerLifecycleStats;
   format(
     uri: string,
     options?: { indentSize?: number; requireValidSyntax?: boolean },
@@ -50,10 +57,20 @@ export interface CompilerBackend {
   dispose(): void;
 }
 
+export interface WorkerLifecycleStats {
+  readonly restarts: number;
+  readonly replayBatches: number;
+  readonly replayedSources: number;
+  readonly replayedBytes: number;
+  readonly fallbackExecutions: number;
+  readonly queueSize: number;
+}
+
 export interface EditorAnalysisBackend {
   putSource(uri: string, source: string | Uint8Array, version: number): void;
   removeSource(uri: string): void;
   analyze(uri: string): Promise<EditorSnapshot>;
+  workerLifecycleStats?(): WorkerLifecycleStats;
   restart?(): Promise<void> | void;
   dispose(): void;
 }

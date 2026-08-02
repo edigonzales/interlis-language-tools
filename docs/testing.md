@@ -63,6 +63,12 @@ qualified path segments and refusal-safe rename. LSP and Monaco adapter tests
 cover live diagnostic provenance, tags, Quick Fix edits, browser aliases and
 virtual repository URIs. The F5 example workspace provides the Desktop/Web
 Ctrl-click smoke path for `IMPORTS Units`.
+The compiler worker forwards native incremental statistics, structured traces
+and reset/cache operations without making a second parse decision. Normal
+`putSource`/`removeSource` events stay on the current worker; replay counters
+increase only after crash or explicit restart and include source count and UTF-8
+bytes. The editor worker exposes the same lifecycle counters for its recovery
+path.
 `test:repository-network` is the separate opt-in network smoke test for the two
 temporary CORS mirror catalogs; deterministic unit and release checks do not
 depend on public network availability.

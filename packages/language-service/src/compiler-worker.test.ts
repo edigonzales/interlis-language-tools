@@ -220,6 +220,12 @@ describe("worker compiler backend", () => {
       }),
     ]);
     expect(warning).toHaveBeenCalledOnce();
+    expect(backend.workerLifecycleStats?.()).toMatchObject({
+      restarts: 1,
+      replayBatches: 1,
+      replayedSources: 1,
+      replayedBytes: new TextEncoder().encode("MODEL Worker =").byteLength,
+    });
   });
 
   it("mirrors sources before async compilation while local syntax stays responsive", async () => {
@@ -266,6 +272,12 @@ describe("worker compiler backend", () => {
     const request = second.messages.at(-1)!;
     second.respond(request.id, analysis());
     await expect(recovered).resolves.toEqual(analysis());
+    expect(compiler.workerLifecycleStats?.()).toMatchObject({
+      restarts: 1,
+      replayBatches: 1,
+      replayedSources: 1,
+      fallbackExecutions: 1,
+    });
   });
 
   it("falls back to a local editor snapshot after a worker error", async () => {

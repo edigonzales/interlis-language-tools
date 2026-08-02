@@ -5,7 +5,10 @@ import type {
   IncrementalStats,
 } from "@ilic/compiler-wasm";
 import { createWasmCompilerBackend } from "./compiler.js";
-import type { CompilerBackend, EditorAnalysisBackend } from "./types.js";
+import type {
+  CompilerBackend,
+  EditorAnalysisBackend,
+} from "./types.js";
 
 export interface CompilerWorkerPort {
   postMessage(message: CompilerWorkerRequest): void;
@@ -42,6 +45,9 @@ export type CompilerWorkerRequest =
       readonly uri: string;
     }
   | { readonly id: number; readonly method: "incrementalStats" }
+  | { readonly id: number; readonly method: "incrementalTrace" }
+  | { readonly id: number; readonly method: "incrementalCacheSnapshot" }
+  | { readonly id: number; readonly method: "resetIncrementalStats" }
   | { readonly id: number; readonly method: "clearIncrementalCaches" }
   | { readonly id: number; readonly method: "dispose" };
 
@@ -80,6 +86,18 @@ export function createWorkerCompilerBackend(
   let warned = false;
   let consecutiveFailures = 0;
   let workerUnavailable = false;
+  const lifecycle = {
+    restarts: 0,
+    replayBatches: 0,
+    replayedSources: 0,
+    replayedBytes: 0,
+    fallbackExecutions: 0,
+    queueSize: 0,
+  };
+  const sourceBytes = (source: string | Uint8Array): number =>
+    typeof source === "string"
+      ? new TextEncoder().encode(source).byteLength
+      : source.byteLength;
 
   const warn = (message: string): void => {
     if (warned) return;
@@ -100,7 +118,10 @@ export function createWorkerCompilerBackend(
     if (current) void current.terminate();
   };
   const postReplay = (): void => {
-    for (const [uri, value] of sources)
+    lifecycle.replayBatches += 1;
+    for (const [uri, value] of sources) {
+      lifecycle.replayedSources += 1;
+      lifecycle.replayedBytes += sourceBytes(value.source);
       port?.postMessage({
         id: ++nextId,
         method: "putSource",
@@ -108,6 +129,7 @@ export function createWorkerCompilerBackend(
         source: value.source,
         version: value.version,
       });
+    }
   };
   const attach = (): boolean => {
     if (disposed || workerUnavailable) return false;
@@ -127,6 +149,7 @@ export function createWorkerCompilerBackend(
         rejectPending(`INTERLIS compiler worker failed: ${message}`);
         detach();
         if (!disposed) {
+          lifecycle.restarts += 1;
           warn(
             "The INTERLIS compiler worker was restarted after an error; the interrupted compilation runs locally.",
           );
@@ -158,6 +181,7 @@ export function createWorkerCompilerBackend(
         reject,
       });
       current.postMessage({ id, ...message });
+      lifecycle.queueSize = pending.size;
     });
   };
   const notify = (message: CompilerWorkerCommand): void => {
@@ -173,6 +197,9 @@ export function createWorkerCompilerBackend(
       ...local.capabilities,
       incrementalSession: local.capabilities?.incrementalSession ?? false,
       incrementalStats: local.capabilities?.incrementalStats ?? false,
+      incrementalTrace: local.capabilities?.incrementalTrace ?? false,
+      incrementalCacheSnapshot: local.capabilities?.incrementalCacheSnapshot ?? false,
+      strictEditorSeparation: local.capabilities?.strictEditorSeparation ?? false,
     },
     putSource(uri, source, version) {
       sources.set(uri, { source, version });
@@ -191,7 +218,10 @@ export function createWorkerCompilerBackend(
       return request<CompilationAnalysisResult>({
         method: "compileAndAnalyze",
         request: compilationRequest,
-      }).catch(() => local.compileAndAnalyze(compilationRequest));
+      }).catch(() => {
+        lifecycle.fallbackExecutions += 1;
+        return local.compileAndAnalyze(compilationRequest);
+      });
     },
     compile: (compilationRequest) => local.compile(compilationRequest),
     format: (uri, formatOptions) => local.format(uri, formatOptions),
@@ -203,11 +233,40 @@ export function createWorkerCompilerBackend(
       }
       return request<IncrementalStats>({ method: "incrementalStats" }).catch(
         () => {
+          lifecycle.fallbackExecutions += 1;
           if (!local.incrementalStats)
             throw new Error("native incremental statistics API is unavailable");
           return local.incrementalStats();
         },
       );
+    },
+    incrementalTrace() {
+      if (!port) {
+        if (!local.incrementalTrace)
+          throw new Error("native incremental trace API is unavailable");
+        return local.incrementalTrace();
+      }
+      return request<Record<string, unknown>>({ method: "incrementalTrace" }).catch(() => {
+        lifecycle.fallbackExecutions += 1;
+        if (!local.incrementalTrace)
+          throw new Error("native incremental trace API is unavailable");
+        return local.incrementalTrace();
+      });
+    },
+    incrementalCacheSnapshot() {
+      if (!port) {
+        if (!local.incrementalCacheSnapshot)
+          throw new Error("native incremental cache snapshot API is unavailable");
+        return local.incrementalCacheSnapshot();
+      }
+      return request<Record<string, unknown>>({ method: "incrementalCacheSnapshot" });
+    },
+    resetIncrementalStats() {
+      if (!port) return Promise.resolve(local.resetIncrementalStats?.()).then(() => undefined);
+      return request<unknown>({ method: "resetIncrementalStats" }).then(() => undefined).catch(() => {
+        lifecycle.fallbackExecutions += 1;
+        return Promise.resolve(local.resetIncrementalStats?.()).then(() => undefined);
+      });
     },
     clearIncrementalCaches() {
       if (!port) {
@@ -222,12 +281,16 @@ export function createWorkerCompilerBackend(
         });
     },
     async restart() {
+      lifecycle.restarts += 1;
       rejectPending("INTERLIS compiler worker restarted");
       detach();
       await local.restart?.();
       consecutiveFailures = 0;
       workerUnavailable = false;
       if (attach()) postReplay();
+    },
+    workerLifecycleStats() {
+      return { ...lifecycle, queueSize: pending.size };
     },
     dispose() {
       if (disposed) return;
@@ -261,6 +324,18 @@ export function createWorkerEditorAnalysisBackend(
   let warned = false;
   let consecutiveFailures = 0;
   let workerUnavailable = false;
+  const lifecycle = {
+    restarts: 0,
+    replayBatches: 0,
+    replayedSources: 0,
+    replayedBytes: 0,
+    fallbackExecutions: 0,
+    queueSize: 0,
+  };
+  const sourceBytes = (source: string | Uint8Array): number =>
+    typeof source === "string"
+      ? new TextEncoder().encode(source).byteLength
+      : source.byteLength;
 
   const warn = (message: string): void => {
     if (warned) return;
@@ -280,8 +355,14 @@ export function createWorkerEditorAnalysisBackend(
     port = null;
     if (current) void current.terminate();
   };
-  const replay = (): void => {
-    for (const [uri, value] of sources)
+  const replay = (countLifecycle = true): void => {
+    if (sources.size === 0) return;
+    if (countLifecycle) lifecycle.replayBatches += 1;
+    for (const [uri, value] of sources) {
+      if (countLifecycle) {
+        lifecycle.replayedSources += 1;
+        lifecycle.replayedBytes += sourceBytes(value.source);
+      }
       port?.postMessage({
         id: ++nextId,
         method: "putSource",
@@ -289,8 +370,9 @@ export function createWorkerEditorAnalysisBackend(
         source: value.source,
         version: value.version,
       });
+    }
   };
-  const attach = (): boolean => {
+  const attach = (countLifecycle = true): boolean => {
     if (disposed || workerUnavailable) return false;
     try {
       port = factory();
@@ -308,14 +390,15 @@ export function createWorkerEditorAnalysisBackend(
         rejectPending(`INTERLIS editor worker failed: ${message}`);
         detach();
         if (!disposed) {
+          lifecycle.restarts += 1;
           warn(
             "Live INTERLIS analysis was restarted after an editor worker error.",
           );
-          if (consecutiveFailures === 1) attach();
+          if (consecutiveFailures === 1) attach(true);
           else workerUnavailable = true;
         }
       });
-      replay();
+      replay(countLifecycle);
       return true;
     } catch (error) {
       port = null;
@@ -336,6 +419,7 @@ export function createWorkerEditorAnalysisBackend(
   };
 
   const analyzeLocally = (uri: string, error: unknown): EditorSnapshot => {
+    lifecycle.fallbackExecutions += 1;
     const snapshot = options.fallback?.editorSnapshot?.(uri);
     if (snapshot) return snapshot;
     throw error;
@@ -351,7 +435,7 @@ export function createWorkerEditorAnalysisBackend(
       notifyRunningWorker({ method: "removeSource", uri });
     },
     analyze(uri) {
-      if (!port && !attach())
+      if (!port && !attach(false))
         return Promise.resolve().then(() =>
           analyzeLocally(uri, new Error("editor worker unavailable")),
         );
@@ -370,11 +454,15 @@ export function createWorkerEditorAnalysisBackend(
       }).catch((error) => analyzeLocally(uri, error));
     },
     restart() {
+      lifecycle.restarts += 1;
       rejectPending("INTERLIS editor worker restarted");
       detach();
       consecutiveFailures = 0;
       workerUnavailable = false;
-      attach();
+      attach(true);
+    },
+    workerLifecycleStats() {
+      return { ...lifecycle, queueSize: pending.size };
     },
     dispose() {
       if (disposed) return;
@@ -419,6 +507,20 @@ export async function runCompilerWorker(
                 "native incremental statistics API is unavailable",
               );
             value = await compiler.incrementalStats();
+            break;
+          case "incrementalTrace":
+            if (!compiler.incrementalTrace)
+              throw new Error("native incremental trace API is unavailable");
+            value = await compiler.incrementalTrace();
+            break;
+          case "incrementalCacheSnapshot":
+            if (!compiler.incrementalCacheSnapshot)
+              throw new Error("native incremental cache snapshot API is unavailable");
+            value = await compiler.incrementalCacheSnapshot();
+            break;
+          case "resetIncrementalStats":
+            await compiler.resetIncrementalStats?.();
+            value = true;
             break;
           case "clearIncrementalCaches":
             await compiler.clearIncrementalCaches?.();
