@@ -1,6 +1,9 @@
 export { AnalysisCache } from "./cache.js";
 export { createWasmCompilerBackend } from "./compiler.js";
 export {
+  CompilerWorkerBackend,
+  CompilerWorkerHost,
+  EditorWorkerBackend,
   createWorkerCompilerBackend,
   createWorkerEditorAnalysisBackend,
   runCompilerWorker,
@@ -21,12 +24,32 @@ export type {
 } from "./repository.js";
 export { WorkspaceRepositoryResolver } from "./repository.js";
 export { LanguageService } from "./service.js";
+export { SourceRegistry } from "./source/source-registry.js";
+export type { EffectiveSource, SourceChange } from "./source/source-registry.js";
+export { SyntaxSnapshotStore } from "./syntax/syntax-snapshot-store.js";
+export { EditorSnapshotStore } from "./editor/editor-snapshot-store.js";
+export { EditorAnalysisController } from "./editor/editor-analysis-controller.js";
+export { SemanticSnapshotStore } from "./semantic/semantic-snapshot-store.js";
+export type { SemanticAcceptance } from "./semantic/semantic-snapshot-store.js";
+export { CompilationScheduler } from "./compilation/compilation-scheduler.js";
+export type { ScheduledCompilation } from "./compilation/compilation-scheduler.js";
+export { RepositoryModelController } from "./repository/repository-model-controller.js";
+export { LanguageServiceEventHub } from "./events/language-service-event-hub.js";
+export { WorkerLifecycleTracker } from "./workers/worker-lifecycle-tracker.js";
+export type { WorkerLifecycleStats } from "./workers/worker-lifecycle-tracker.js";
+export { WorkerRpcClient } from "./workers/worker-rpc-client.js";
+export { WorkerSourceMirror } from "./workers/worker-source-mirror.js";
+export type { MirroredSource } from "./workers/worker-source-mirror.js";
 export {
   diagnosticFingerprint,
   deduplicateDiagnostics,
 } from "./diagnostics/diagnostic-fingerprint.js";
 export { DiagnosticStore } from "./diagnostics/diagnostic-store.js";
 export { DiagnosticVersionGate } from "./diagnostics/diagnostic-version-gate.js";
+export { DiagnosticCoordinator } from "./diagnostics/diagnostic-coordinator.js";
+export { DependencyIndex } from "./semantic/dependency-index.js";
+export { CompilationRunCoordinator } from "./compilation/compilation-run-coordinator.js";
+export { LanguageFeatureCoordinator } from "./features/language-feature-coordinator.js";
 export type {
   DiagnosticOrigin,
   StoredDiagnostics,
