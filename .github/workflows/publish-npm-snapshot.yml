@@ -84,7 +84,8 @@ jobs:
             if [[ "$resolved_compiler_sha" =~ ^[0-9a-f]{40}$ ]]; then
               compiler_sha="$resolved_compiler_sha"
             else
-              compiler_sha=$(main_sha edigonzales/ilic-fork)
+              echo "@ilic/tools@$compiler_version has no full gitHead; compiler_sha must be supplied explicitly" >&2
+              exit 1
             fi
           fi
           if [[ -z "$language_tools_sha" ]]; then
@@ -101,8 +102,8 @@ jobs:
               exit 1
             fi
           done
-          if [[ ! "$compiler_version" =~ ^0\.9\.9-SNAPSHOT\.[0-9]{14}(\.[0-9]+)?$ ]]; then
-            echo "Expected an exact compiler snapshot version, received: $compiler_version" >&2
+          if [[ ! "$compiler_version" =~ ^0\.9\.10$ && ! "$compiler_version" =~ ^0\.9\.(9|10)-SNAPSHOT\.[0-9]{14}(\.[0-9]+)?$ ]]; then
+            echo "Expected compiler 0.9.10 or an accepted exact compiler snapshot, received: $compiler_version" >&2
             exit 1
           fi
 
@@ -135,8 +136,8 @@ jobs:
           for package_name in @ilic/repository-core @ilic/tools @ilic/compiler-wasm; do
             wait_for_published_version "$package_name" "$compiler_version"
             package_git_head=$(npm view "$package_name@$compiler_version" gitHead 2>/dev/null || true)
-            if [[ -n "$package_git_head" && "$package_git_head" != "$compiler_sha" ]]; then
-              echo "$package_name@$compiler_version was built from $package_git_head, expected $compiler_sha" >&2
+            if [[ "$package_git_head" != "$compiler_sha" ]]; then
+              echo "$package_name@$compiler_version was built from ${package_git_head:-<missing>}, expected $compiler_sha" >&2
               exit 1
             fi
           done
@@ -202,6 +203,8 @@ jobs:
       - name: Build exact compiler WASM
         shell: bash
         working-directory: ilic-fork
+        env:
+          ILIC_WASM_VERSION: ${{ needs.resolve-refs.outputs.compiler_version }}
         run: |
           set -euo pipefail
           source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
@@ -240,6 +243,7 @@ jobs:
           SNAPSHOT_TIMESTAMP: ${{ steps.stage_timestamp.outputs.timestamp }}
           SNAPSHOT_BUILD_ID: ${{ github.run_id }}
           COMPILER_VERSION: ${{ needs.resolve-refs.outputs.compiler_version }}
+          COMPILER_SHA: ${{ needs.resolve-refs.outputs.compiler_sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -284,7 +288,9 @@ jobs:
 
   publish:
     name: Publish coordinated npm packages
-    needs: build
+    needs:
+      - resolve-refs
+      - build
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -293,6 +299,10 @@ jobs:
     outputs:
       published: ${{ steps.manifest.outputs.published }}
     steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.resolve-refs.outputs.language_tools_sha }}
+          persist-credentials: false
       - uses: actions/download-artifact@v7
         with:
           name: interlis-release-${{ github.run_id }}
@@ -310,28 +320,58 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ needs.resolve-refs.outputs.language_tools_sha }}"
 
           publish_if_missing() {
             local tarball="$1"
+            local expected_git_head="$2"
             local package_name
             local package_version
+            local existing_git_head
             package_name=$(tar -xOf "$tarball" package/package.json | node -e 'let d=""; process.stdin.on("data", c => d += c).on("end", () => console.log(JSON.parse(d).name))')
             package_version=$(tar -xOf "$tarball" package/package.json | node -e 'let d=""; process.stdin.on("data", c => d += c).on("end", () => console.log(JSON.parse(d).version))')
             if npm view "$package_name@$package_version" version >/dev/null 2>&1; then
-              echo "Already published: $package_name@$package_version"
+              existing_git_head=$(npm view "$package_name@$package_version" gitHead 2>/dev/null || true)
+              if [[ "$existing_git_head" != "$expected_git_head" ]]; then
+                echo "$package_name@$package_version has gitHead ${existing_git_head:-<missing>}, expected $expected_git_head" >&2
+                exit 1
+              fi
+              echo "Already published from the expected commit: $package_name@$package_version"
               return
             fi
             npm publish "$tarball" --access public --tag snapshot
           }
 
-          publish_if_missing artifacts/npm/ilic-repository-core-snapshot.tgz
-          publish_if_missing artifacts/npm/ilic-tools-snapshot.tgz
-          publish_if_missing artifacts/npm/ilic-compiler-wasm-snapshot.tgz
-          publish_if_missing artifacts/npm/ilic-language-service-snapshot.tgz
-          publish_if_missing artifacts/npm/ilic-monaco-adapter-snapshot.tgz
-          publish_if_missing artifacts/npm/ilic-diagram-snapshot.tgz
-          publish_if_missing artifacts/npm/ilic-docx-snapshot.tgz
-          publish_if_missing artifacts/npm/ilic-language-server-snapshot.tgz
+          require_existing() {
+            local tarball="$1"
+            local expected_git_head="$2"
+            local package_name
+            local package_version
+            local existing_git_head
+            package_name=$(tar -xOf "$tarball" package/package.json | node -e 'let d=""; process.stdin.on("data", c => d += c).on("end", () => console.log(JSON.parse(d).name))')
+            package_version=$(tar -xOf "$tarball" package/package.json | node -e 'let d=""; process.stdin.on("data", c => d += c).on("end", () => console.log(JSON.parse(d).version))')
+            if ! npm view "$package_name@$package_version" version >/dev/null 2>&1; then
+              echo "$package_name@$package_version must be published by the compiler release before language tools" >&2
+              exit 1
+            fi
+            existing_git_head=$(npm view "$package_name@$package_version" gitHead 2>/dev/null || true)
+            if [[ "$existing_git_head" != "$expected_git_head" ]]; then
+              echo "$package_name@$package_version has gitHead ${existing_git_head:-<missing>}, expected $expected_git_head" >&2
+              exit 1
+            fi
+            echo "Verified upstream compiler package: $package_name@$package_version"
+          }
+
+          compiler_sha="${{ needs.resolve-refs.outputs.compiler_sha }}"
+          language_tools_sha="${{ needs.resolve-refs.outputs.language_tools_sha }}"
+          require_existing artifacts/npm/ilic-repository-core-snapshot.tgz "$compiler_sha"
+          require_existing artifacts/npm/ilic-tools-snapshot.tgz "$compiler_sha"
+          require_existing artifacts/npm/ilic-compiler-wasm-snapshot.tgz "$compiler_sha"
+          publish_if_missing artifacts/npm/ilic-language-service-snapshot.tgz "$language_tools_sha"
+          publish_if_missing artifacts/npm/ilic-monaco-adapter-snapshot.tgz "$language_tools_sha"
+          publish_if_missing artifacts/npm/ilic-diagram-snapshot.tgz "$language_tools_sha"
+          publish_if_missing artifacts/npm/ilic-docx-snapshot.tgz "$language_tools_sha"
+          publish_if_missing artifacts/npm/ilic-language-server-snapshot.tgz "$language_tools_sha"
       - name: Validate publication manifest
         id: manifest
         shell: bash

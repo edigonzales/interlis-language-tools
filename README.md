@@ -2,8 +2,9 @@
 
 Java-free INTERLIS 2.3/2.4 language tooling for VS Code Desktop, VS Code Web,
 Theia and browser-based Monaco IDEs. The public packages start on the
-`0.1.0-SNAPSHOT.<UTC timestamp>` line and use the versioned snapshot API in
-`@ilic/compiler-wasm@0.9.9-SNAPSHOT.<UTC timestamp>`.
+`0.1.0-SNAPSHOT.<UTC timestamp>` line and consume either stable
+`@ilic/compiler-wasm@0.9.10` or an exact
+`0.9.10-SNAPSHOT.<UTC timestamp>[.<build-id>]`.
 
 ## Architecture
 
@@ -86,6 +87,12 @@ corepack pnpm pack:verify
 corepack pnpm package:vsix
 ```
 
+`pack:verify` defaults to the stable compiler `0.9.10`; release trains set
+`COMPILER_VERSION` explicitly. For a snapshot, set it to an exact
+`0.9.10-SNAPSHOT...` and rebuild ilic with the same
+`ILIC_WASM_VERSION`. Workspace overrides keep
+all compiler packages local; registry dist-tags are never release truth.
+
 For day-to-day extension development, open the `interlis-language-tools`
 repository root in VS Code, select either `INTERLIS Extension (Desktop)` or
 `INTERLIS Extension (Web)` in **Run and Debug**, and press F5. The pre-launch
@@ -115,8 +122,9 @@ corepack pnpm install --force --update-checksums
 corepack pnpm dev
 ```
 
-`pack:verify` installs all five language-tool packages plus `@ilic/tools` and
-`@ilic/compiler-wasm` in a clean consumer. Published manifests pin every
+`pack:verify` installs all five language-tool packages plus
+`@ilic/repository-core`, `@ilic/tools` and `@ilic/compiler-wasm` in a clean
+consumer. Published manifests pin every
 internal dependency to one immutable timestamped version. Tarballs and VSIX
 files are written below `artifacts/` and are never committed.
 

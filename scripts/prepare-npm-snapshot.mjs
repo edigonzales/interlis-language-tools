@@ -23,7 +23,11 @@ import {
 import { pathToFileURL } from "node:url";
 
 const BASE_VERSION = "0.1.0";
-const COMPILER_BASE_VERSION = "0.9.9";
+export const COMPILER_BASE_VERSION = "0.9.10";
+export const TEMPORARILY_ACCEPTED_SNAPSHOT_BASES = new Set([
+  "0.9.9",
+  COMPILER_BASE_VERSION,
+]);
 const LANGUAGE_PACKAGES = [
   { id: "language-service", name: "@ilic/language-service" },
   { id: "monaco-adapter", name: "@ilic/monaco-adapter" },
@@ -103,15 +107,109 @@ export function compilerSnapshotVersion(timestamp, buildId) {
   return snapshotVersion(COMPILER_BASE_VERSION, timestamp, buildId);
 }
 
-export function parseCompilerSnapshotVersion(version) {
-  const match = version.match(/^0\.9\.9-SNAPSHOT\.(\d{14})(?:\.(\d+))?$/);
-  if (!match) {
+export function parseCompilerVersion(version) {
+  if (typeof version !== "string") {
     throw new Error(
-      `Compiler version must match 0.9.9-SNAPSHOT.YYYYMMDDHHmmss[.buildId], received ${version}`,
+      `Compiler version must be X.Y.Z or X.Y.Z-SNAPSHOT.YYYYMMDDHHmmss[.buildId], received ${String(version)}`,
     );
   }
-  validateTimestamp(match[1]);
-  return { timestamp: match[1], buildId: match[2] };
+  const stable = version.match(/^(\d+\.\d+\.\d+)$/);
+  if (stable) {
+    return { kind: "stable", baseVersion: stable[1], version };
+  }
+  const snapshot = version.match(
+    /^(\d+\.\d+\.\d+)-SNAPSHOT\.(\d{14})(?:\.(\d+))?$/,
+  );
+  if (!snapshot) {
+    throw new Error(
+      `Compiler version must be X.Y.Z or X.Y.Z-SNAPSHOT.YYYYMMDDHHmmss[.buildId], received ${version}`,
+    );
+  }
+  validateTimestamp(snapshot[2]);
+  return {
+    kind: "snapshot",
+    baseVersion: snapshot[1],
+    timestamp: snapshot[2],
+    buildId: snapshot[3],
+    version,
+  };
+}
+
+export function parseCompilerSnapshotVersion(version) {
+  const parsed = parseCompilerVersion(version);
+  if (parsed.kind !== "snapshot") {
+    throw new Error(
+      `Compiler version must be a snapshot, received ${version}`,
+    );
+  }
+  return { timestamp: parsed.timestamp, buildId: parsed.buildId };
+}
+
+export function validateCompilerVersionForSource(
+  compilerVersion,
+  checkedOutCompilerBaseVersion,
+) {
+  const parsed =
+    typeof compilerVersion === "string"
+      ? parseCompilerVersion(compilerVersion)
+      : compilerVersion;
+  if (parsed.kind === "stable" && parsed.baseVersion !== COMPILER_BASE_VERSION) {
+    throw new Error(
+      `Stable compiler version must be ${COMPILER_BASE_VERSION}, received ${parsed.version}`,
+    );
+  }
+  if (
+    parsed.kind === "snapshot" &&
+    !TEMPORARILY_ACCEPTED_SNAPSHOT_BASES.has(parsed.baseVersion)
+  ) {
+    throw new Error(
+      `Unsupported compiler snapshot base ${parsed.baseVersion}; expected ${[...TEMPORARILY_ACCEPTED_SNAPSHOT_BASES].join(" or ")}`,
+    );
+  }
+  if (parsed.baseVersion !== checkedOutCompilerBaseVersion) {
+    throw new Error(
+      `Compiler version ${parsed.version} has base ${parsed.baseVersion}, but the checked-out ilic source has base ${checkedOutCompilerBaseVersion}`,
+    );
+  }
+  return parsed;
+}
+
+export async function readCompilerBaseVersion(compilerProjectRoot) {
+  const cmakeText = await readFile(
+    resolve(compilerProjectRoot, "CMakeLists.txt"),
+    "utf8",
+  );
+  const matches = [
+    ...cmakeText.matchAll(
+      /project\s*\(\s*ilic\s+VERSION\s+(\d+\.\d+\.\d+)(?=\s|\))/gi,
+    ),
+  ];
+  if (matches.length !== 1) {
+    throw new Error(
+      `Expected exactly one project(ilic VERSION X.Y.Z ...) declaration in ${resolve(compilerProjectRoot, "CMakeLists.txt")}, found ${matches.length}`,
+    );
+  }
+  return matches[0][1];
+}
+
+export function validateFullSha(value, fieldName = "compiler SHA") {
+  if (!/^[0-9a-f]{40}$/.test(value ?? "")) {
+    throw new Error(`${fieldName} must be a full 40-character lowercase SHA`);
+  }
+  return value;
+}
+
+function readGitHead(repositoryRoot) {
+  const result = spawnSync("git", ["-C", repositoryRoot, "rev-parse", "HEAD"], {
+    encoding: "utf8",
+    stdio: "pipe",
+  });
+  if (result.status !== 0) {
+    throw new Error(
+      `Could not read compiler checkout SHA from ${repositoryRoot}: ${result.stderr.trim()}`,
+    );
+  }
+  return validateFullSha(result.stdout.trim(), "Checked-out compiler SHA");
 }
 
 function isSameOrParent(parent, child) {
@@ -212,7 +310,8 @@ export async function prepareNpmSnapshot({
   outputRoot = resolve(projectRoot, "artifacts/npm"),
   timestamp = formatUtcTimestamp(),
   buildId,
-  compilerVersion = compilerSnapshotVersion(timestamp, buildId),
+  compilerVersion = COMPILER_BASE_VERSION,
+  compilerSha,
 } = {}) {
   projectRoot = resolve(projectRoot);
   compilerProjectRoot = resolve(compilerProjectRoot);
@@ -221,7 +320,22 @@ export async function prepareNpmSnapshot({
   const normalizedBuildId = validateBuildId(buildId);
   validateOutputRoot(projectRoot, outputRoot);
   const snapshotVersion = languageSnapshotVersion(timestamp, normalizedBuildId);
-  const compilerSnapshot = parseCompilerSnapshotVersion(compilerVersion);
+  const checkedOutCompilerBaseVersion =
+    await readCompilerBaseVersion(compilerProjectRoot);
+  const parsedCompilerVersion = validateCompilerVersionForSource(
+    compilerVersion,
+    checkedOutCompilerBaseVersion,
+  );
+  let normalizedCompilerSha = null;
+  if (compilerSha !== undefined) {
+    normalizedCompilerSha = validateFullSha(compilerSha);
+    const checkedOutCompilerSha = readGitHead(compilerProjectRoot);
+    if (normalizedCompilerSha !== checkedOutCompilerSha) {
+      throw new Error(
+        `Compiler payload SHA ${normalizedCompilerSha} does not match checked-out compiler SHA ${checkedOutCompilerSha}`,
+      );
+    }
+  }
 
   const workspaceManifest = await readJson(
     resolve(projectRoot, "package.json"),
@@ -235,20 +349,33 @@ export async function prepareNpmSnapshot({
   await rm(outputRoot, { recursive: true, force: true });
   await mkdir(outputRoot, { recursive: true });
 
+  const compilerScript =
+    parsedCompilerVersion.kind === "stable"
+      ? "prepare-npm-release.mjs"
+      : "prepare-npm-snapshot.mjs";
   const compilerModule = await import(
-    pathToFileURL(
-      resolve(compilerProjectRoot, "scripts/prepare-npm-snapshot.mjs"),
-    ).href
+    pathToFileURL(resolve(compilerProjectRoot, "scripts", compilerScript)).href
   );
-  const compiler = await compilerModule.prepareNpmSnapshot({
-    projectRoot: compilerProjectRoot,
-    outputRoot: resolve(outputRoot, "staging/compiler"),
-    timestamp: compilerSnapshot.timestamp,
-    buildId: compilerSnapshot.buildId,
-  });
-  if (compiler.snapshotVersion !== compilerVersion) {
+  const compiler =
+    parsedCompilerVersion.kind === "stable"
+      ? await compilerModule.prepareNpmRelease({
+          projectRoot: compilerProjectRoot,
+          outputRoot: resolve(outputRoot, "staging/compiler"),
+          expectedVersion: compilerVersion,
+        })
+      : await compilerModule.prepareNpmSnapshot({
+          projectRoot: compilerProjectRoot,
+          outputRoot: resolve(outputRoot, "staging/compiler"),
+          timestamp: parsedCompilerVersion.timestamp,
+          buildId: parsedCompilerVersion.buildId,
+        });
+  const stagedCompilerVersion =
+    parsedCompilerVersion.kind === "stable"
+      ? compiler.releaseVersion
+      : compiler.snapshotVersion;
+  if (stagedCompilerVersion !== compilerVersion) {
     throw new Error(
-      `Staged compiler version ${compiler.snapshotVersion} does not match ${compilerVersion}`,
+      `Staged compiler version ${stagedCompilerVersion} does not match ${compilerVersion}`,
     );
   }
 
@@ -311,8 +438,17 @@ export async function prepareNpmSnapshot({
     buildId: normalizedBuildId ?? null,
     snapshotVersion,
     compilerVersion,
-    compilerTimestamp: compilerSnapshot.timestamp,
-    compilerBuildId: compilerSnapshot.buildId ?? null,
+    compilerVersionKind: parsedCompilerVersion.kind,
+    compilerBaseVersion: parsedCompilerVersion.baseVersion,
+    compilerSha: normalizedCompilerSha,
+    compilerTimestamp:
+      parsedCompilerVersion.kind === "snapshot"
+        ? parsedCompilerVersion.timestamp
+        : null,
+    compilerBuildId:
+      parsedCompilerVersion.kind === "snapshot"
+        ? (parsedCompilerVersion.buildId ?? null)
+        : null,
     outputRoot,
     packages: packageResults,
   };
@@ -325,8 +461,11 @@ export async function prepareNpmSnapshot({
         buildId: result.buildId,
         snapshotVersion,
         compilerVersion,
-        compilerTimestamp: compilerSnapshot.timestamp,
-        compilerBuildId: compilerSnapshot.buildId ?? null,
+        compilerVersionKind: result.compilerVersionKind,
+        compilerBaseVersion: result.compilerBaseVersion,
+        compilerSha: result.compilerSha,
+        compilerTimestamp: result.compilerTimestamp,
+        compilerBuildId: result.compilerBuildId,
         packages: Object.fromEntries(
           Object.entries(packageResults).map(([name, value]) => [
             name,
@@ -355,6 +494,7 @@ function parseArguments(argv) {
         "--timestamp",
         "--build-id",
         "--compiler-version",
+        "--compiler-sha",
         "--github-output",
       ].includes(argument)
     ) {
@@ -368,6 +508,7 @@ function parseArguments(argv) {
       else if (argument === "--build-id") options.buildId = value;
       else if (argument === "--compiler-version")
         options.compilerVersion = value;
+      else if (argument === "--compiler-sha") options.compilerSha = value;
       else githubOutput = value;
     } else {
       throw new Error(`Unknown argument ${argument}`);

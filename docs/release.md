@@ -9,14 +9,15 @@ covers the operational version, bootstrap, dist-tag and recovery policy.
 
 The coordinated development versions are:
 
-- `@ilic/compiler-wasm` and `@ilic/tools`: the exact compiler version supplied
-  by `ilic-fork`, `0.9.9-SNAPSHOT.YYYYMMDDHHmmss.<compiler-build-id>`;
+- `@ilic/repository-core`, `@ilic/compiler-wasm` and `@ilic/tools`: the exact
+  compiler version supplied by `ilic-fork`, either stable `0.9.10` or
+  `0.9.10-SNAPSHOT.YYYYMMDDHHmmss.<compiler-build-id>`;
 - the five language-tool packages: a separately generated version
   `0.1.0-SNAPSHOT.YYYYMMDDHHmmss.<language-build-id>`;
 - VS Code/Open VSX extension: `0.1.0`, packaged as a pre-release;
 - browser IDE: an independently versioned private deployment package.
 
-The source manifests contain only the base versions `0.9.9` and `0.1.0`.
+The source manifests contain only the base versions `0.9.10` and `0.1.0`.
 Staging writes timestamped versions into disposable directories below
 `artifacts/`; it never edits a tracked manifest. npm snapshots are published
 through the dist-tag `snapshot` and installed explicitly through that channel:
@@ -56,7 +57,7 @@ The VSIX publication remains a separate manual release workflow:
   coordinated/manual recovery triggers. It resolves an exact compiler version
   and source SHA, checks out that compiler commit, builds and verifies the
   native and WASM compiler artifacts, and publishes only the five language
-  packages. The two compiler packages were already published by `ilic-fork`;
+  packages. The three compiler packages were already published by `ilic-fork`;
   after the language packages are published, the workflow sends the completed
   release to the Web IDE with `repository_dispatch`;
 - `release.yml` publishes the already verified VSIX to the VS Code Marketplace
@@ -70,7 +71,7 @@ blocking gate is tracked in the [coverage backlog](../BACKLOG.md#coverage-gate-a
 and will be restored after the targets are met consistently.
 
 The compiler repository dispatches only after its own npm publication succeeds.
-The payload contains the full compiler SHA and exact compiler snapshot version.
+The payload contains the full compiler SHA and exact stable or snapshot compiler version.
 A successful main-branch CI completion starts the language-tools publish run
 with the exact `workflow_run.head_sha`; a coordinated dispatch or manual run
 uses its explicitly supplied or resolved Language-Tools SHA. For a workflow-run
@@ -80,6 +81,15 @@ version is resolved once and its npm `gitHead` is used as the compiler source;
 staged manifests pin the exact compiler version, and
 `release-manifest.json` records both source revisions, both independent
 timestamps/build IDs and all published versions.
+
+The stager validates `compilerSha` against the checked-out ilic `HEAD`. Stable
+input invokes ilic's stable stager; snapshot input invokes its snapshot stager.
+The resulting manifest records the exact compiler version kind and SHA. Local
+`file:`/workspace overrides remain development-only and are rewritten to exact
+versions in every packed manifest. Compatibility with a legacy
+`0.9.9-SNAPSHOT...` input is temporary for transition builds only; stable
+`0.9.9` is rejected and the compatibility branch should be removed after the
+first successful `0.9.10` snapshot, stable and Pages deployments.
 
 Only the npm publish job receives:
 
@@ -213,7 +223,7 @@ done
    successful language-tools `main` push starts one directly.
 2. The release train captures both source SHAs, builds native and WASM
    compiler artifacts, verifies all eight packages, and publishes the five
-   language packages in dependency order. The two compiler packages were
+   language packages in dependency order. The three compiler packages were
    already published by `ilic-fork`.
 3. A repeat of the same workflow skips package versions that already exist and
    can finish a partially completed publication.

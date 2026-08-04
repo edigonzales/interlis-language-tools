@@ -10,6 +10,7 @@ const consumer = resolve(artifacts, "consumer");
 const timestamp = process.env.SNAPSHOT_TIMESTAMP || "20260101000000";
 const buildId = process.env.SNAPSHOT_BUILD_ID || undefined;
 const compilerVersion = process.env.COMPILER_VERSION || undefined;
+const compilerSha = process.env.COMPILER_SHA || undefined;
 const expectedLanguageVersion = process.env.LANGUAGE_TOOLS_VERSION || undefined;
 
 function run(command, args, cwd = root) {
@@ -36,6 +37,7 @@ const result = await prepareNpmSnapshot({
   timestamp,
   ...(buildId ? { buildId } : {}),
   ...(compilerVersion ? { compilerVersion } : {}),
+  ...(compilerSha ? { compilerSha } : {}),
 });
 if (expectedLanguageVersion) {
   assert.equal(result.snapshotVersion, expectedLanguageVersion);
@@ -104,10 +106,10 @@ for (const [name, expectedVersion] of expectedVersions) {
     manifest.dependencies ?? {},
   )) {
     if (expectedVersions.has(dependency)) {
-      assert.match(
+      assert.equal(
         version,
-        /^\d+\.\d+\.\d+-SNAPSHOT\.\d{14}(?:\.\d+)?$/,
-        `${name} contains moving internal dependency ${dependency}@${version}`,
+        expectedVersions.get(dependency),
+        `${name} contains non-exact internal dependency ${dependency}@${version}`,
       );
     }
   }
@@ -118,6 +120,12 @@ const snapshotManifest = JSON.parse(
 );
 assert.equal(snapshotManifest.snapshotVersion, result.snapshotVersion);
 assert.equal(snapshotManifest.compilerVersion, result.compilerVersion);
+assert.equal(
+  snapshotManifest.compilerVersionKind,
+  result.compilerVersionKind,
+);
+assert.equal(snapshotManifest.compilerBaseVersion, result.compilerBaseVersion);
+assert.equal(snapshotManifest.compilerSha, result.compilerSha);
 assert.equal(snapshotManifest.buildId, result.buildId ?? null);
 assert.equal(snapshotManifest.compilerTimestamp, result.compilerTimestamp);
 assert.equal(snapshotManifest.compilerBuildId, result.compilerBuildId ?? null);
@@ -158,9 +166,13 @@ assert.equal(InterlisProtocol.compile, "interlis/compile");
 assert.equal(siblingDocxUri("memory:///Model.ili"), "memory:///Model.docx");
 
 const compiler = await createCompiler();
+assert.equal(compiler.compilerVersion, process.env.ILIC_EXPECTED_VERSION);
+assert.equal(compiler.abiVersion, 1);
 const session = compiler.createSession();
 session.putSource("memory:///Pack.ili", 'INTERLIS 2.4;\\nMODEL Pack AT "https://example.invalid" VERSION "1" =\\nEND Pack.\\n', 1);
 assert.equal(session.parse("memory:///Pack.ili").documentVersion, 1);
+const compilation = session.compile(["memory:///Pack.ili"]);
+assert.equal(compilation.compilerVersion, process.env.ILIC_EXPECTED_VERSION);
 session.dispose();
 
 const backend = await createWasmCompilerBackend();
@@ -180,7 +192,17 @@ run(
   ],
   consumer,
 );
-run(process.execPath, ["smoke.mjs"], consumer);
+const smoke = spawnSync(process.execPath, ["smoke.mjs"], {
+  cwd: consumer,
+  encoding: "utf8",
+  stdio: "pipe",
+  env: { ...process.env, ILIC_EXPECTED_VERSION: result.compilerVersion },
+});
+if (smoke.status !== 0) {
+  throw new Error(
+    `node smoke.mjs failed\n${smoke.stdout}\n${smoke.stderr}`,
+  );
+}
 
 process.stdout.write(
   `Verified timestamped npm consumers: ${[...expectedVersions]

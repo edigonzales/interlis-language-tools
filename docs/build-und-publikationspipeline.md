@@ -5,7 +5,7 @@
 
 Dieses Repository koordiniert den zweiten Schritt des Release-Trains. Es löst
 eine exakte Compiler-Revision und -Version aus `ilic-fork` auf, checkt diese
-Revision aus und baut daraus native und WASM-Compiler-Artefakte. Die beiden
+Revision aus und baut daraus native und WASM-Compiler-Artefakte. Die drei
 Compiler-Pakete wurden zuvor aus `ilic-fork` selbst per OIDC publiziert und
 werden hier als versionierte Eingabe verifiziert. Dieses Repository publiziert
 nur die fünf eigenen Language-Tools-Pakete. Erst danach wird der GitHub-
@@ -65,7 +65,7 @@ Die Gates laufen in dieser Reihenfolge:
    deterministischen Snapshot-Tests ausführen;
 4. die Coverage von `@ilic/language-service` erzeugen und 14 Tage als Artefakt
    hochladen;
-5. mit `pnpm pack:verify` alle sieben npm-Tarballs stagen, in einem leeren
+5. mit `pnpm pack:verify` alle acht npm-Tarballs stagen, in einem leeren
    Consumer installieren und ihre öffentlichen Entry-Points ausführen;
 6. mit `pnpm package:vsix` die universelle Extension bauen und ihren Inhalt
    prüfen;
@@ -133,6 +133,9 @@ ctest --test-dir build/release-train --output-on-failure
 Danach wird mit der im Compiler-Repository gepinnten Emscripten-Version der
 WASM-Compiler neu gebaut. Der Release-Train verwendet somit weder ein bewegtes
 npm-Tag noch ein Binärartefakt aus einem anderen Workflow.
+`COMPILER_VERSION` darf stabil `0.9.10` oder ein exakter
+`0.9.10-SNAPSHOT...` sein; der WASM-Build erhält dieselbe Identität über
+`ILIC_WASM_VERSION`.
 
 ### Language Tools und Supply-Chain-Gates
 
@@ -156,7 +159,7 @@ Language-Pakete behalten dabei bewusst getrennte Zeitstempel und Run-IDs:
 | Language Tools | `@ilic/language-service`, `@ilic/monaco-adapter`, `@ilic/diagram`, `@ilic/docx`, `@ilic/language-server` | `0.1.0-SNAPSHOT.<language-timestamp>.<language-run-id>` |
 
 Alle internen Abhängigkeiten in den gepackten Manifesten zeigen auf exakte
-Snapshot-Versionen. `workspace:*`, `file:`, Dist-Tags und Versionsbereiche für
+Versionen. `workspace:*`, `file:`, Dist-Tags und Versionsbereiche für
 interne `@ilic/*`-Pakete werden abgelehnt. `pack:verify` installiert alle
 Tarballs zusammen in einem sauberen Consumer und führt den echten
 WASM-Compiler sowie die öffentlichen APIs aus.
@@ -203,7 +206,7 @@ Ereignis `release-train-published` an `interlis-web-ide`. Der Payload enthält:
 {
   "compiler_sha": "<SHA>",
   "language_tools_sha": "<SHA>",
-  "compiler_version": "0.9.9-SNAPSHOT....",
+  "compiler_version": "0.9.10",
   "language_tools_version": "0.1.0-SNAPSHOT....",
   "compiler_timestamp": "YYYYMMDDHHmmss",
   "compiler_build_id": "<Compiler-Run-ID>",
@@ -218,8 +221,10 @@ Der Dispatch enthält bewusst höchstens zehn Eigenschaften, weil GitHub für
 Alias-Felder `timestamp` und `build_id` werden nicht zusätzlich übertragen;
 `language_timestamp` und `language_build_id` sind die eindeutigen Felder für
 den Language-Tools-Build. Der Dispatch erfolgt nach der Publikation der fünf
-Language-Pakete; die beiden
-Compiler-Pakete wurden zuvor aus `ilic-fork` publiziert. Fehlt das Secret
+Language-Pakete; die drei Compiler-Pakete wurden zuvor aus `ilic-fork`
+publiziert. Bei einem stabilen Compiler sind `compiler_timestamp` und
+`compiler_build_id` leer; bei einem Snapshot müssen sie exakt mit der
+Versionszeichenfolge übereinstimmen. Fehlt das Secret
 `RELEASE_DISPATCH_TOKEN` oder scheitert der API-Aufruf, können die Pakete daher
 bereits vollständig publiziert sein. Ein erneuter Lauf mit derselben
 Workflow-Run-ID überspringt vorhandene Versionen und kann die Übergabe erneut
