@@ -53,14 +53,14 @@ packages. A successful compiler publication can also dispatch the coordinated
 workflow with an exact compiler SHA and already published compiler version.
 The VSIX publication remains a separate manual release workflow:
 
-- `publish-npm-snapshot.yml` starts after successful main CI, or through the
+- `publish-language-tools.yml` starts after successful main CI, or through the
   coordinated/manual recovery triggers. It resolves an exact compiler version
   and source SHA, checks out that compiler commit, builds and verifies the
   native and WASM compiler artifacts, and publishes only the five language
   packages. The three compiler packages were already published by `ilic-fork`;
   after the language packages are published, the workflow sends the completed
   release to the Web IDE with `repository_dispatch`;
-- `release.yml` publishes the already verified VSIX to the VS Code Marketplace
+- `publish-vscode-extension.yml` publishes the already verified VSIX to the VS Code Marketplace
   and Open VSX.
 
 The language-service coverage report runs in both CI and the release train and
@@ -126,10 +126,10 @@ OIDC.
 
 ## npm trusted-publisher bootstrap
 
-`@ilic/repository-core`, `@ilic/tools` and `@ilic/compiler-wasm` already exist on npm. Their Trusted
-Publisher must point to `edigonzales/ilic-fork`, workflow filename
-`publish-npm-snapshot.yml`. The five language packages use the workflow in this
-repository.
+`@ilic/repository-core`, `@ilic/tools` and `@ilic/compiler-wasm` are published
+by `edigonzales/ilic-fork` through `publish-npm.yml`. Their Trusted Publisher
+must therefore point to that repository and workflow. The five language
+packages use the workflow in this repository.
 
 For a new package or a one-time bootstrap, generate or download the verified
 tarballs, authenticate locally with 2FA, and publish the five language packages
@@ -151,7 +151,7 @@ For every new package, set `Package → Settings → Trusted Publisher` to:
 | Provider                    | GitHub Actions             |
 | GitHub user or organization | `edigonzales`              |
 | Repository                  | `interlis-language-tools`  |
-| Workflow filename           | `publish-npm-snapshot.yml` |
+| Workflow filename           | `publish-language-tools.yml` |
 | Environment                 | empty                      |
 | Allowed action              | `npm publish`              |
 
@@ -164,7 +164,7 @@ and remove any old `NPM_TOKEN` repository secret.
 Trusted publishing authorizes `npm publish` or `npm stage publish`, but not
 `npm dist-tag add`. The npm publication itself remains token-free; the separate
 `RELEASE_DISPATCH_TOKEN` is used only for the Web-IDE dispatch. After every
-successful `Publish npm snapshot` run, validate
+successful `Publish language-tools snapshots` run, validate
 all five versions before changing any tag, then move `latest` locally with 2FA:
 
 ```sh
