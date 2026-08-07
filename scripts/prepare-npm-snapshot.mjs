@@ -311,7 +311,7 @@ export async function prepareNpmSnapshot({
   outputRoot = resolve(projectRoot, "artifacts/npm"),
   timestamp = formatUtcTimestamp(),
   buildId,
-  compilerVersion = COMPILER_BASE_VERSION,
+  compilerVersion,
   compilerSha,
 } = {}) {
   projectRoot = resolve(projectRoot);
@@ -319,6 +319,9 @@ export async function prepareNpmSnapshot({
   outputRoot = resolve(outputRoot);
   validateTimestamp(timestamp);
   const normalizedBuildId = validateBuildId(buildId);
+  // This function packages a snapshot by default. Stable compiler staging is
+  // still supported, but callers must opt into it with an explicit version.
+  compilerVersion ??= compilerSnapshotVersion(timestamp, normalizedBuildId);
   validateOutputRoot(projectRoot, outputRoot);
   const snapshotVersion = languageSnapshotVersion(timestamp, normalizedBuildId);
   const checkedOutCompilerBaseVersion =

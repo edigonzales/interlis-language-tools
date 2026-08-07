@@ -37,6 +37,27 @@ jobs:
           node-version: "22"
           cache: pnpm
           cache-dependency-path: interlis-language-tools/pnpm-lock.yaml
+      - name: Resolve compiler snapshot identity
+        working-directory: ilic-fork
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_version=$(sed -nE 's/.*project\(ilic VERSION ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' CMakeLists.txt)
+          qualifier=$(sed -nE 's/.*set\(ILIC_VERSION_QUALIFIER "([^"]*)".*/\1/p' CMakeLists.txt)
+          if [[ -z "$base_version" || "$qualifier" != "SNAPSHOT" ]]; then
+            echo "CI package verification requires an ilic SNAPSHOT source; found ${base_version:-unknown}-${qualifier:-none}" >&2
+            exit 1
+          fi
+          snapshot_timestamp=20260101000000
+          compiler_version="${base_version}-SNAPSHOT.${snapshot_timestamp}"
+          compiler_sha=$(git rev-parse HEAD)
+          {
+            echo "SNAPSHOT_TIMESTAMP=$snapshot_timestamp"
+            echo "COMPILER_VERSION=$compiler_version"
+            echo "COMPILER_SHA=$compiler_sha"
+            echo "ILIC_WASM_VERSION=$compiler_version"
+          } >> "$GITHUB_ENV"
+          printf 'Compiler snapshot: %s\nCompiler SHA: %s\n' "$compiler_version" "$compiler_sha"
       - name: Build pinned compiler WASM
         shell: bash
         working-directory: ilic-fork

@@ -76,6 +76,10 @@ build script automatically installs and activates the pinned Emscripten SDK when
 it is not already available:
 
 ```sh
+export SNAPSHOT_TIMESTAMP=20260101000000
+export COMPILER_VERSION=0.10.0-SNAPSHOT.${SNAPSHOT_TIMESTAMP}
+export ILIC_WASM_VERSION=${COMPILER_VERSION}
+
 cd ../ilic-fork
 ./scripts/build-wasm.sh
 
@@ -87,11 +91,12 @@ corepack pnpm pack:verify
 corepack pnpm package:vsix
 ```
 
-`pack:verify` defaults to the stable compiler `0.10.0`; release trains set
-`COMPILER_VERSION` explicitly. For a snapshot, set it to an exact
-`0.10.0-SNAPSHOT...` and rebuild ilic with the same
-`ILIC_WASM_VERSION`. Workspace overrides keep
-all compiler packages local; registry dist-tags are never release truth.
+`pack:verify` defaults to the deterministic compiler snapshot
+`0.10.0-SNAPSHOT.20260101000000`. Stable compiler staging is supported only
+when `COMPILER_VERSION` is supplied explicitly. For another snapshot, set
+`SNAPSHOT_TIMESTAMP`, `COMPILER_VERSION`, and `ILIC_WASM_VERSION` to the same
+identity before rebuilding ilic. Workspace overrides keep all compiler
+packages local; registry dist-tags are never release truth.
 
 For day-to-day extension development, open the `interlis-language-tools`
 repository root in VS Code, select either `INTERLIS Extension (Desktop)` or
