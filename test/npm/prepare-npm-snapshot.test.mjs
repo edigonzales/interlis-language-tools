@@ -18,7 +18,7 @@ test("creates deterministic compiler and language snapshot versions", () => {
   assert.equal(formatUtcTimestamp(new Date("2026-07-19T19:00:00Z")), timestamp);
   assert.equal(
     compilerSnapshotVersion(timestamp),
-    `0.9.10-SNAPSHOT.${timestamp}`,
+    `0.10.0-SNAPSHOT.${timestamp}`,
   );
   assert.equal(
     languageSnapshotVersion(timestamp),
@@ -29,7 +29,7 @@ test("creates deterministic compiler and language snapshot versions", () => {
 test("adds the same numeric build ID to compiler and language versions", () => {
   assert.equal(
     compilerSnapshotVersion(timestamp, "12345"),
-    `0.9.10-SNAPSHOT.${timestamp}.12345`,
+    `0.10.0-SNAPSHOT.${timestamp}.12345`,
   );
   assert.equal(
     languageSnapshotVersion(timestamp, "12345"),
@@ -49,32 +49,32 @@ test("keeps compiler and language build IDs independent", () => {
 });
 
 test("parses stable and current compiler snapshot versions explicitly", () => {
-  assert.deepEqual(parseCompilerVersion("0.9.10"), {
+  assert.deepEqual(parseCompilerVersion("0.10.0"), {
     kind: "stable",
-    baseVersion: "0.9.10",
-    version: "0.9.10",
+    baseVersion: "0.10.0",
+    version: "0.10.0",
   });
   assert.deepEqual(
-    parseCompilerVersion("0.9.10-SNAPSHOT.20260719190000.123"),
+    parseCompilerVersion("0.10.0-SNAPSHOT.20260719190000.123"),
     {
       kind: "snapshot",
-      baseVersion: "0.9.10",
+      baseVersion: "0.10.0",
       timestamp,
       buildId: "123",
-      version: "0.9.10-SNAPSHOT.20260719190000.123",
+      version: "0.10.0-SNAPSHOT.20260719190000.123",
     },
   );
 });
 
 test("validates compiler versions against the checked-out source base", () => {
   assert.equal(
-    validateCompilerVersionForSource("0.9.10", "0.9.10").kind,
+    validateCompilerVersionForSource("0.10.0", "0.10.0").kind,
     "stable",
   );
   assert.equal(
     validateCompilerVersionForSource(
-      "0.9.10-SNAPSHOT.20260719190000",
-      "0.9.10",
+      "0.10.0-SNAPSHOT.20260719190000",
+      "0.10.0",
     ).kind,
     "snapshot",
   );
@@ -86,8 +86,8 @@ test("validates compiler versions against the checked-out source base", () => {
     "0.9.9",
   );
   assert.throws(
-    () => validateCompilerVersionForSource("0.9.9", "0.9.9"),
-    /stable compiler version must be 0\.9\.10/i,
+    () => validateCompilerVersionForSource("0.9.10", "0.9.10"),
+    /stable compiler version must be 0\.10\.0/i,
   );
   assert.throws(
     () =>
@@ -101,9 +101,9 @@ test("validates compiler versions against the checked-out source base", () => {
 
 test("rejects malformed compiler versions, timestamps, and SHAs", () => {
   for (const value of [
-    "v0.9.10",
-    "0.9.10-SNAPSHOT.invalid",
-    "0.9.10-SNAPSHOT.20260230120000",
+    "v0.10.0",
+    "0.10.0-SNAPSHOT.invalid",
+    "0.10.0-SNAPSHOT.20260230120000",
   ]) {
     assert.throws(() => parseCompilerVersion(value), /compiler version|timestamp/i);
   }
@@ -128,8 +128,8 @@ test("pins compiler and workspace dependencies in staged manifests", () => {
       name: "@ilic/language-server",
       version: "0.1.0",
       dependencies: {
-        "@ilic/tools": "0.9.10",
-        "@ilic/repository-core": "0.9.10",
+        "@ilic/tools": "0.10.0",
+        "@ilic/repository-core": "0.10.0",
         "@ilic/docx": "workspace:*",
         "@ilic/language-service": "workspace:*",
         "vscode-languageserver": "^9.0.1",
@@ -151,7 +151,7 @@ test("pins compiler and workspace dependencies in staged manifests", () => {
       name: "@ilic/language-service",
       version: "0.1.0",
       dependencies: {
-        "@ilic/compiler-wasm": "0.9.10",
+        "@ilic/compiler-wasm": "0.10.0",
       },
     },
     { snapshotVersion, compilerVersion },

@@ -37,7 +37,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@ilic/compiler-wasm": "0.9.10"
+    "@ilic/compiler-wasm": "0.10.0"
   },
   "publishConfig": {
     "access": "public",

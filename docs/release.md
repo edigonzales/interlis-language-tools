@@ -10,14 +10,14 @@ covers the operational version, bootstrap, dist-tag and recovery policy.
 The coordinated development versions are:
 
 - `@ilic/repository-core`, `@ilic/compiler-wasm` and `@ilic/tools`: the exact
-  compiler version supplied by `ilic-fork`, either stable `0.9.10` or
-  `0.9.10-SNAPSHOT.YYYYMMDDHHmmss.<compiler-build-id>`;
+  compiler version supplied by `ilic-fork`, either stable `0.10.0` or
+  `0.10.0-SNAPSHOT.YYYYMMDDHHmmss.<compiler-build-id>`;
 - the five language-tool packages: a separately generated version
   `0.1.0-SNAPSHOT.YYYYMMDDHHmmss.<language-build-id>`;
 - VS Code/Open VSX extension: `0.1.0`, packaged as a pre-release;
 - browser IDE: an independently versioned private deployment package.
 
-The source manifests contain only the base versions `0.9.10` and `0.1.0`.
+The source manifests contain only the base versions `0.10.0` and `0.1.0`.
 Staging writes timestamped versions into disposable directories below
 `artifacts/`; it never edits a tracked manifest. npm snapshots are published
 through the dist-tag `snapshot` and installed explicitly through that channel:
@@ -87,9 +87,10 @@ input invokes ilic's stable stager; snapshot input invokes its snapshot stager.
 The resulting manifest records the exact compiler version kind and SHA. Local
 `file:`/workspace overrides remain development-only and are rewritten to exact
 versions in every packed manifest. Compatibility with a legacy
-`0.9.9-SNAPSHOT...` input is temporary for transition builds only; stable
-`0.9.9` is rejected and the compatibility branch should be removed after the
-first successful `0.9.10` snapshot, stable and Pages deployments.
+Legacy `0.9.9-SNAPSHOT...` and `0.9.10-SNAPSHOT...` inputs remain temporarily
+accepted for transition builds; stable `0.9.9` and `0.9.10` are rejected. The
+compatibility entries can be removed after the first successful `0.10.0`
+snapshot, stable and Pages deployments.
 
 Only the npm publish job receives:
 

@@ -133,8 +133,8 @@ ctest --test-dir build/release-train --output-on-failure
 Danach wird mit der im Compiler-Repository gepinnten Emscripten-Version der
 WASM-Compiler neu gebaut. Der Release-Train verwendet somit weder ein bewegtes
 npm-Tag noch ein Binärartefakt aus einem anderen Workflow.
-`COMPILER_VERSION` darf stabil `0.9.10` oder ein exakter
-`0.9.10-SNAPSHOT...` sein; der WASM-Build erhält dieselbe Identität über
+`COMPILER_VERSION` darf stabil `0.10.0` oder ein exakter
+`0.10.0-SNAPSHOT...` sein; der WASM-Build erhält dieselbe Identität über
 `ILIC_WASM_VERSION`.
 
 ### Language Tools und Supply-Chain-Gates
@@ -206,7 +206,7 @@ Ereignis `release-train-published` an `interlis-web-ide`. Der Payload enthält:
 {
   "compiler_sha": "<SHA>",
   "language_tools_sha": "<SHA>",
-  "compiler_version": "0.9.10",
+  "compiler_version": "0.10.0",
   "language_tools_version": "0.1.0-SNAPSHOT....",
   "compiler_timestamp": "YYYYMMDDHHmmss",
   "compiler_build_id": "<Compiler-Run-ID>",
