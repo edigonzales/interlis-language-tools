@@ -1,6 +1,10 @@
 name: Publish VS Code extension
 
 on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       pre_release:
@@ -14,14 +18,22 @@ permissions:
 
 jobs:
   build:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
-      VSIX_PRE_RELEASE: ${{ inputs.pre_release && '1' || '0' }}
+      VSIX_PRE_RELEASE: ${{ (github.event_name == 'workflow_run' || inputs.pre_release) && '1' || '0' }}
+      CI_RUN_ID: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || github.run_id }}
+      CI_RUN_CREATED_AT: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.created_at || '' }}
     steps:
       - name: Checkout language tools
         uses: actions/checkout@v6
         with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
           path: interlis-language-tools
           persist-credentials: false
       - name: Checkout compiler packages
@@ -49,6 +61,20 @@ jobs:
           "$RUNNER_TEMP/emsdk/emsdk" activate "$emscripten_version"
           source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
           ./scripts/build-wasm.sh
+      - name: Select VSIX version
+        working-directory: interlis-language-tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_version=$(node -p "require('./apps/vscode-extension/package.json').version")
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_run" ]]; then
+            timestamp=$(date -u -d "$CI_RUN_CREATED_AT" +%Y%m%d%H%M%S)
+            version="${source_version}-SNAPSHOT.${timestamp}.${CI_RUN_ID}"
+          else
+            version="$source_version"
+          fi
+          echo "VSIX_VERSION=$version" >> "$GITHUB_ENV"
+          echo "Packaging VSIX version $version"
       - name: Build and verify extension
         working-directory: interlis-language-tools
         run: |
@@ -59,7 +85,7 @@ jobs:
           pnpm security:check
       - uses: actions/upload-artifact@v6
         with:
-          name: interlis-language-tools-vsix-${{ github.sha }}
+          name: interlis-language-tools-vsix-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
           path: interlis-language-tools/artifacts/interlis-language-tools.vsix
           if-no-files-found: error
 
@@ -93,9 +119,8 @@ jobs:
           pattern: interlis-language-tools-vsix-*
           path: artifacts
           merge-multiple: true
+      - name: Require Open VSX credentials
+        shell: bash
+        run: test -n "$OVSX_PAT"
       - name: Publish to Open VSX
-        if: env.OVSX_PAT != ''
-        run: npx --yes ovsx@1.0.2 publish artifacts/interlis-language-tools.vsix --pat "$OVSX_PAT"
-      - name: Preserve VSIX when Open VSX credentials are absent
-        if: env.OVSX_PAT == ''
-        run: echo "OVSX_PAT is not configured; the verified VSIX remains available as an artifact."
+        run: npx --yes ovsx@1.0.2 publish artifacts/interlis-language-tools.vsix --pat "$OVSX_PAT" --skip-duplicate

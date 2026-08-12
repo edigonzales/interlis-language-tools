@@ -14,7 +14,8 @@ The coordinated development versions are:
   `0.10.0-SNAPSHOT.YYYYMMDDHHmmss.<compiler-build-id>`;
 - the five language-tool packages: a separately generated version
   `0.1.1-SNAPSHOT.YYYYMMDDHHmmss.<language-build-id>`;
-- VS Code/Open VSX extension: `0.1.1`, packaged as a pre-release;
+- VS Code extension source: `0.1.1`, packaged as a pre-release;
+- automatic Open-VSX builds: `0.1.1-SNAPSHOT.YYYYMMDDHHmmss.<github-run-id>`;
 - browser IDE: an independently versioned private deployment package.
 
 The source manifests contain only the base versions `0.10.0` and `0.1.1`.
@@ -41,7 +42,14 @@ an internal package fails verification.
 
 VS Code Marketplace manifests cannot use a SemVer pre-release suffix. The
 normal extension version is therefore marked with `vsce package --pre-release`.
-Extension publication is deliberately separate from repeatable npm snapshots.
+Open VSX receives a unique SemVer pre-release suffix in the generated VSIX;
+the source manifest remains at the base version and npm snapshot versions are
+unrelated. Open VSX has no npm-style dist-tag, and an already published
+namespace/extension/version combination cannot be replaced. Repeated workflow
+runs therefore use `ovsx --skip-duplicate`.
+The current automatic line is based on the pre-release `0.1.1`; after a stable
+`0.1.1` release, the next automatic line must use the next base version, for
+example `0.1.2-SNAPSHOT...`, so that it remains newer than the stable release.
 
 ## Pipelines
 
@@ -51,7 +59,8 @@ npm workflow only after CI has completed; the release workflow then repeats
 its gates from the exact CI `head_sha` and publishes only the five language
 packages. A successful compiler publication can also dispatch the coordinated
 workflow with an exact compiler SHA and already published compiler version.
-The VSIX publication remains a separate manual release workflow:
+The VSIX publication runs automatically after successful main-branch CI and
+can still be started manually for an intentional stable/pre-release release:
 
 - `publish-language-tools.yml` starts after successful main CI, or through the
   coordinated/manual recovery triggers. It resolves an exact compiler version
@@ -60,8 +69,11 @@ The VSIX publication remains a separate manual release workflow:
   packages. The three compiler packages were already published by `ilic-fork`;
   after the language packages are published, the workflow sends the completed
   release to the Web IDE with `repository_dispatch`;
-- `publish-vscode-extension.yml` publishes the already verified VSIX to the VS Code Marketplace
-  and Open VSX.
+- `publish-vscode-extension.yml` checks out the exact successful CI commit,
+  rebuilds and verifies the VSIX, assigns automatic builds a unique
+  `0.1.1-SNAPSHOT...` version, and publishes it to Open VSX. Its manual mode
+  remains available for intentional releases to the VS Code Marketplace and
+  Open VSX.
 
 The language-service coverage report runs in both CI and the release train and
 is retained as a workflow artifact for inspection. Its configured thresholds
@@ -147,14 +159,14 @@ npm publish artifacts/npm/ilic-language-server-snapshot.tgz --access public --ta
 
 For every new package, set `Package → Settings → Trusted Publisher` to:
 
-| Field                       | Value                      |
-| --------------------------- | -------------------------- |
-| Provider                    | GitHub Actions             |
-| GitHub user or organization | `edigonzales`              |
-| Repository                  | `interlis-language-tools`  |
+| Field                       | Value                        |
+| --------------------------- | ---------------------------- |
+| Provider                    | GitHub Actions               |
+| GitHub user or organization | `edigonzales`                |
+| Repository                  | `interlis-language-tools`    |
 | Workflow filename           | `publish-language-tools.yml` |
-| Environment                 | empty                      |
-| Allowed action              | `npm publish`              |
+| Environment                 | empty                        |
+| Allowed action              | `npm publish`                |
 
 After one successful OIDC publication, set publishing access to **Require
 two-factor authentication and disallow tokens**, revoke obsolete npm tokens
@@ -230,8 +242,9 @@ done
    can finish a partially completed publication.
 4. The workflow dispatches the exact source pair to the Web IDE Pages build.
 5. Synchronize `latest` to the new `snapshot` locally with 2FA.
-6. Run `Publish VS Code extension` only when the extension manifest version has
-   not already been published.
+6. Automatic main-branch CI publishes a unique Open-VSX pre-release. Run
+   `Publish VS Code extension` manually only for an intentional stable release
+   or a recovery run.
 7. Build the Web IDE from the same verified local tarballs or a committed
    lockfile resolving the identical registry versions.
 8. Record Marketplace, Open VSX, VS Code Web and Theia smoke results in the

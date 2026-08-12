@@ -137,8 +137,9 @@ files are written below `artifacts/` and are never committed.
 
 CI always produces verified npm tarballs and a universal VSIX. npm publication
 uses GitHub OIDC trusted publishing and has no repository secret. Marketplace
-publication uses only `VSCE_PAT` and `OVSX_PAT`; a missing secret skips only its
-external publish step. See the detailed
+publication uses only `VSCE_PAT` and `OVSX_PAT`. The Open-VSX job runs after a
+successful `main` CI workflow and fails visibly when `OVSX_PAT` is missing. See
+the detailed
 [build and publication pipeline](docs/build-und-publikationspipeline.md),
 [release process](docs/release.md),
 [test strategy](docs/testing.md), [capability matrix](docs/capability-matrix.md)

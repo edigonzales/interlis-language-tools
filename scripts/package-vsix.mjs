@@ -7,6 +7,7 @@ const root = resolve(import.meta.dirname, "..");
 const extension = resolve(root, "apps/vscode-extension");
 const artifacts = resolve(root, "artifacts");
 const target = resolve(artifacts, "interlis-language-tools.vsix");
+const requestedVersion = process.env.VSIX_VERSION?.trim() || undefined;
 const binary = resolve(
   root,
   "node_modules/.bin",
@@ -15,6 +16,8 @@ const binary = resolve(
 
 await mkdir(artifacts, { recursive: true });
 const packageArguments = ["package"];
+if (requestedVersion)
+  packageArguments.push(requestedVersion, "--no-update-package-json");
 if (process.env.VSIX_PRE_RELEASE !== "0")
   packageArguments.push("--pre-release");
 packageArguments.push("--no-dependencies", "--out", target);
@@ -25,6 +28,11 @@ const result = spawnSync(binary, packageArguments, {
 });
 if (result.status !== 0)
   throw new Error(`VSIX packaging failed\n${result.stdout}\n${result.stderr}`);
+
+const sourceManifestPath = resolve(extension, "package.json");
+const sourceManifest = JSON.parse(await readFile(sourceManifestPath, "utf8"));
+assert.equal(sourceManifest.version, "0.1.1");
+const expectedVersion = requestedVersion ?? sourceManifest.version;
 
 const listing = spawnSync("unzip", ["-Z1", target], {
   encoding: "utf8",
@@ -49,6 +57,19 @@ for (const file of [
 ])
   assert.ok(files.has(file), `VSIX is missing ${file}`);
 
+const packagedManifestResult = spawnSync(
+  "unzip",
+  ["-p", target, "extension/package.json"],
+  {
+    encoding: "utf8",
+    stdio: "pipe",
+  },
+);
+if (packagedManifestResult.status !== 0)
+  throw new Error(packagedManifestResult.stderr);
+const packagedManifest = JSON.parse(packagedManifestResult.stdout);
+assert.equal(packagedManifest.version, expectedVersion);
+
 const vsixManifest = spawnSync(
   "unzip",
   ["-p", target, "extension.vsixmanifest"],
@@ -58,18 +79,22 @@ const vsixManifest = spawnSync(
   },
 );
 if (vsixManifest.status !== 0) throw new Error(vsixManifest.stderr);
+assert.ok(
+  vsixManifest.stdout.includes(`Version="${expectedVersion}"`),
+  `VSIX manifest does not contain version ${expectedVersion}`,
+);
 if (process.env.VSIX_PRE_RELEASE !== "0")
   assert.match(
     vsixManifest.stdout,
     /Microsoft\.VisualStudio\.Code\.PreRelease" Value="true"/u,
   );
 
-const manifest = JSON.parse(
-  await readFile(resolve(extension, "package.json"), "utf8"),
-);
 assert.equal(
-  `${manifest.publisher}.${manifest.name}`,
+  `${sourceManifest.publisher}.${sourceManifest.name}`,
   "edigonzales.interlis-language-tools",
 );
-assert.equal(manifest.version, "0.1.1");
+const unchangedSourceManifest = JSON.parse(
+  await readFile(sourceManifestPath, "utf8"),
+);
+assert.deepEqual(unchangedSourceManifest, sourceManifest);
 process.stdout.write(`${target}\n`);

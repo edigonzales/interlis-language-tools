@@ -26,16 +26,17 @@ flowchart LR
 
 ## Workflows und Verantwortung
 
-| Workflow                                                                                      | Trigger                                                                                                                      | Verantwortung                                                                                     |
-| --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)                                     | Push auf `main` oder `codex/**` (ausser reine Markdown-Änderungen), Pull Request (ausser reine Markdown-Änderungen), manuell | Workspace, npm-Tarballs und universelle VSIX prüfen; installierbare Artefakte 14 Tage aufbewahren |
-| [`.github/workflows/publish-language-tools.yml`](../.github/workflows/publish-language-tools.yml) | erfolgreiche CI nach Push auf `main`, `release-train-requested`, manuell                                                     | Exakte Quellstände bauen, fünf Language-Pakete publizieren und Web IDE dispatchen                 |
-| [`.github/workflows/publish-vscode-extension.yml`](../.github/workflows/publish-vscode-extension.yml)                           | nur manuell                                                                                                                  | VSIX bauen und unabhängig zu VS Code Marketplace und Open VSX publizieren                         |
+| Workflow                                                                                              | Trigger                                                                                                                      | Verantwortung                                                                                                                |
+| ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)                                             | Push auf `main` oder `codex/**` (ausser reine Markdown-Änderungen), Pull Request (ausser reine Markdown-Änderungen), manuell | Workspace, npm-Tarballs und universelle VSIX prüfen; installierbare Artefakte 14 Tage aufbewahren                            |
+| [`.github/workflows/publish-language-tools.yml`](../.github/workflows/publish-language-tools.yml)     | erfolgreiche CI nach Push auf `main`, `release-train-requested`, manuell                                                     | Exakte Quellstände bauen, fünf Language-Pakete publizieren und Web IDE dispatchen                                            |
+| [`.github/workflows/publish-vscode-extension.yml`](../.github/workflows/publish-vscode-extension.yml) | erfolgreiche CI nach Push auf `main`, manuell                                                                                | Geprüfte VSIX mit eindeutiger Pre-Release-Version zu Open VSX publizieren; manuelle Marketplace-/Stable-Releases ermöglichen |
 
 CI, npm-Snapshots und Extension-Veröffentlichung sind getrennte Abläufe. Ein
-grüner CI-Artefakt wird nicht ungeprüft weitergereicht: Der Release-Train baut
-die ausgewählten Quellen selbst neu. Die Extension-Publikation ist ebenfalls
-kein Nebeneffekt eines npm-Snapshots.
+grüner CI-Lauf auf `main` startet danach den Extension-Publish-Workflow; dieser
+baut die exakte CI-Revision selbst neu und veröffentlicht nur nach erneuten
+Gates. Pull Requests, Feature-Branches und reine Markdown-Commits publizieren
+nichts.
 
 Ein Push auf `main` startet zuerst nur `CI`. Erst ein erfolgreich
 abgeschlossener `workflow_run` dieser CI startet die npm-Publikation. Der
@@ -85,10 +86,10 @@ Der Publish-Workflow serialisiert alle Läufe in der Concurrency-Gruppe
 `release-train`; ein neuer Lauf bricht einen laufenden nicht ab. Er kann auf
 drei Wegen beginnen:
 
-| Ereignis                                          | Compiler-Revision                                                                                                         | Language-Tools-Revision                                                          |
-| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| erfolgreicher `workflow_run` nach Push auf `main` | aktuelle npm-Compiler-Snapshot-Version und deren `gitHead` (Fallback: `ilic-fork/main`)                                  | exakter `github.event.workflow_run.head_sha`                                     |
-| `repository_dispatch` aus `ilic-fork`             | die mitgelieferten `client_payload.compiler_sha` und `client_payload.compiler_version`                                   | mitgelieferter oder auf `interlis-language-tools/main` aufgelöster SHA           |
+| Ereignis                                          | Compiler-Revision                                                                                                                          | Language-Tools-Revision                                                             |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| erfolgreicher `workflow_run` nach Push auf `main` | aktuelle npm-Compiler-Snapshot-Version und deren `gitHead` (Fallback: `ilic-fork/main`)                                                    | exakter `github.event.workflow_run.head_sha`                                        |
+| `repository_dispatch` aus `ilic-fork`             | die mitgelieferten `client_payload.compiler_sha` und `client_payload.compiler_version`                                                     | mitgelieferter oder auf `interlis-language-tools/main` aufgelöster SHA              |
 | manueller Start                                   | optionale, zusammengehörige `compiler_sha` und `compiler_version`; sonst Snapshot-Version und deren `gitHead` (Fallback: `ilic-fork/main`) | optionaler vollständiger `language_tools_sha`, sonst `interlis-language-tools/main` |
 
 Beim manuellen Start ohne Compiler-Angaben wird zuerst die aktuelle Version
@@ -155,7 +156,7 @@ Language-Pakete behalten dabei bewusst getrennte Zeitstempel und Run-IDs:
 
 | Paketgruppe    | Pakete                                                                                                   | Version                                                 |
 | -------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| Compiler       | `@ilic/repository-core`, `@ilic/tools`, `@ilic/compiler-wasm`                                             | exakte publizierte `compilerVersion` aus dem Dispatch   |
+| Compiler       | `@ilic/repository-core`, `@ilic/tools`, `@ilic/compiler-wasm`                                            | exakte publizierte `compilerVersion` aus dem Dispatch   |
 | Language Tools | `@ilic/language-service`, `@ilic/monaco-adapter`, `@ilic/diagram`, `@ilic/docx`, `@ilic/language-server` | `0.1.1-SNAPSHOT.<language-timestamp>.<language-run-id>` |
 
 Alle internen Abhängigkeiten in den gepackten Manifesten zeigen auf exakte
@@ -236,20 +237,30 @@ dokumentiert.
 
 ## VS-Code-Extension separat publizieren
 
-`Publish VS Code extension` wird manuell gestartet. Die Eingabe `pre_release`
-steuert, ob `vsce package` die VSIX als Marketplace-Pre-Release markiert.
+`Publish VS Code extension` startet nach einem erfolgreichen Main-CI-Lauf
+automatisch oder kann manuell gestartet werden. Bei einem automatischen Lauf
+wird die exakte `workflow_run.head_sha` ausgecheckt und die VSIX-Version nur im
+Artefakt als
+`0.1.1-SNAPSHOT.YYYYMMDDHHmmss.<github-run-id>` gesetzt. Die eingecheckte
+Version bleibt `0.1.1`. Zeitstempel und Run-ID stammen aus dem auslösenden
+CI-Lauf, damit ein Workflow-Rerun dieselbe Version wiederverwendet. Die
+Eingabe `pre_release` steuert im manuellen Lauf, ob `vsce package` die VSIX als
+Marketplace-Pre-Release markiert.
 Der Build-Job baut Compiler-WASM und Workspace neu, führt `pnpm check`,
 VSIX-Inhaltsprüfung, Lizenzprüfung und Security-Audit aus und lädt die geprüfte
 `interlis-language-tools.vsix` hoch.
 
 Danach laufen zwei unabhängige Jobs:
 
-- mit `VSCE_PAT` Publikation in den VS Code Marketplace;
-- mit `OVSX_PAT` Publikation in Open VSX.
+- mit `VSCE_PAT` Publikation in den VS Code Marketplace (derzeit weiterhin
+  bewusst deaktiviert);
+- mit `OVSX_PAT` Publikation in Open VSX. Der automatische Open-VSX-Job
+  verwendet `--skip-duplicate`, damit eine Wiederholung desselben Laufs keine
+  bereits vorhandene Version überschreibt oder fehlschlägt.
 
-Fehlt eines der Secrets, wird nur dessen externer Publish übersprungen; die
-VSIX und der jeweils andere Zielkanal bleiben erhalten. Ein Marketplace- oder
-Open-VSX-Release ändert keine npm-Version und löst keinen Web-IDE-Deploy aus.
+Fehlt `OVSX_PAT`, schlägt der Open-VSX-Job sichtbar fehl; der vorgelagerte
+CI-Lauf und das VSIX-Artefakt bleiben erhalten. Ein Open-VSX-Release ändert
+keine npm-Version und löst keinen Web-IDE-Deploy aus.
 
 ## Berechtigungen und Secrets
 
@@ -260,6 +271,9 @@ Open-VSX-Release ändert keine npm-Version und löst keinen Web-IDE-Deploy aus.
 | `RELEASE_DISPATCH_TOKEN` | npm-Publish-Job     | `repository_dispatch` an `interlis-web-ide` |
 | `VSCE_PAT`               | Marketplace-Job     | VSIX zu VS Code Marketplace publizieren     |
 | `OVSX_PAT`               | Open-VSX-Job        | VSIX zu Open VSX publizieren                |
+
+Für automatische Open-VSX-Veröffentlichungen muss `OVSX_PAT` als Repository-
+Secret gesetzt sein. Das Secret wird nicht für CI oder npm verwendet.
 
 Der Compiler-Dispatch in dieses Repository wird mit dem gleichnamigen Secret
 im `ilic-fork`-Repository authentisiert. GitHub Pages benötigt kein Secret aus
