@@ -2,7 +2,7 @@
   "name": "interlis-language-tools",
   "displayName": "INTERLIS Language Tools",
   "description": "Java-free INTERLIS language intelligence and synchronized diagrams.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "edigonzales",
   "license": "MIT",
   "icon": "images/ililogo.png",

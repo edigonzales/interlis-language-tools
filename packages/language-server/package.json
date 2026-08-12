@@ -1,6 +1,6 @@
 {
   "name": "@ilic/language-server",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Node.js and browser-worker LSP adapters for INTERLIS.",
   "license": "MIT",
   "author": "edigonzales",

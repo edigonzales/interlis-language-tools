@@ -13,11 +13,11 @@ The coordinated development versions are:
   compiler version supplied by `ilic-fork`, either stable `0.10.0` or
   `0.10.0-SNAPSHOT.YYYYMMDDHHmmss.<compiler-build-id>`;
 - the five language-tool packages: a separately generated version
-  `0.1.0-SNAPSHOT.YYYYMMDDHHmmss.<language-build-id>`;
-- VS Code/Open VSX extension: `0.1.0`, packaged as a pre-release;
+  `0.1.1-SNAPSHOT.YYYYMMDDHHmmss.<language-build-id>`;
+- VS Code/Open VSX extension: `0.1.1`, packaged as a pre-release;
 - browser IDE: an independently versioned private deployment package.
 
-The source manifests contain only the base versions `0.10.0` and `0.1.0`.
+The source manifests contain only the base versions `0.10.0` and `0.1.1`.
 Staging writes timestamped versions into disposable directories below
 `artifacts/`; it never edits a tracked manifest. npm snapshots are published
 through the dist-tag `snapshot` and installed explicitly through that channel:

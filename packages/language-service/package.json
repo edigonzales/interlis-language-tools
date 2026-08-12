@@ -1,6 +1,6 @@
 {
   "name": "@ilic/language-service",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Shared INTERLIS language intelligence for LSP and Monaco clients.",
   "license": "MIT",
   "author": "edigonzales",

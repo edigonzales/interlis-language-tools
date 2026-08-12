@@ -2,7 +2,7 @@
 
 Java-free INTERLIS 2.3/2.4 language tooling for VS Code Desktop, VS Code Web,
 Theia and browser-based Monaco IDEs. The public packages start on the
-`0.1.0-SNAPSHOT.<UTC timestamp>` line and consume either stable
+`0.1.1-SNAPSHOT.<UTC timestamp>` line and consume either stable
 `@ilic/compiler-wasm@0.10.0` or an exact
 `0.10.0-SNAPSHOT.<UTC timestamp>[.<build-id>]`.
 

@@ -22,7 +22,7 @@ test("creates deterministic compiler and language snapshot versions", () => {
   );
   assert.equal(
     languageSnapshotVersion(timestamp),
-    `0.1.0-SNAPSHOT.${timestamp}`,
+    `0.1.1-SNAPSHOT.${timestamp}`,
   );
 });
 
@@ -33,7 +33,7 @@ test("adds the same numeric build ID to compiler and language versions", () => {
   );
   assert.equal(
     languageSnapshotVersion(timestamp, "12345"),
-    `0.1.0-SNAPSHOT.${timestamp}.12345`,
+    `0.1.1-SNAPSHOT.${timestamp}.12345`,
   );
 });
 
@@ -126,7 +126,7 @@ test("pins compiler and workspace dependencies in staged manifests", () => {
   const rewritten = rewriteLanguageManifest(
     {
       name: "@ilic/language-server",
-      version: "0.1.0",
+      version: "0.1.1",
       dependencies: {
         "@ilic/tools": "0.10.0",
         "@ilic/repository-core": "0.10.0",
@@ -149,7 +149,7 @@ test("pins compiler and workspace dependencies in staged manifests", () => {
   const service = rewriteLanguageManifest(
     {
       name: "@ilic/language-service",
-      version: "0.1.0",
+      version: "0.1.1",
       dependencies: {
         "@ilic/compiler-wasm": "0.10.0",
       },

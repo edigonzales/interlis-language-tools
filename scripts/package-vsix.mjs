@@ -71,5 +71,5 @@ assert.equal(
   `${manifest.publisher}.${manifest.name}`,
   "edigonzales.interlis-language-tools",
 );
-assert.equal(manifest.version, "0.1.0");
+assert.equal(manifest.version, "0.1.1");
 process.stdout.write(`${target}\n`);

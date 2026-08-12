@@ -156,7 +156,7 @@ Language-Pakete behalten dabei bewusst getrennte Zeitstempel und Run-IDs:
 | Paketgruppe    | Pakete                                                                                                   | Version                                                 |
 | -------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
 | Compiler       | `@ilic/repository-core`, `@ilic/tools`, `@ilic/compiler-wasm`                                             | exakte publizierte `compilerVersion` aus dem Dispatch   |
-| Language Tools | `@ilic/language-service`, `@ilic/monaco-adapter`, `@ilic/diagram`, `@ilic/docx`, `@ilic/language-server` | `0.1.0-SNAPSHOT.<language-timestamp>.<language-run-id>` |
+| Language Tools | `@ilic/language-service`, `@ilic/monaco-adapter`, `@ilic/diagram`, `@ilic/docx`, `@ilic/language-server` | `0.1.1-SNAPSHOT.<language-timestamp>.<language-run-id>` |
 
 Alle internen Abhängigkeiten in den gepackten Manifesten zeigen auf exakte
 Versionen. `workspace:*`, `file:`, Dist-Tags und Versionsbereiche für
@@ -207,7 +207,7 @@ Ereignis `release-train-published` an `interlis-web-ide`. Der Payload enthält:
   "compiler_sha": "<SHA>",
   "language_tools_sha": "<SHA>",
   "compiler_version": "0.10.0",
-  "language_tools_version": "0.1.0-SNAPSHOT....",
+  "language_tools_version": "0.1.1-SNAPSHOT....",
   "compiler_timestamp": "YYYYMMDDHHmmss",
   "compiler_build_id": "<Compiler-Run-ID>",
   "language_timestamp": "YYYYMMDDHHmmss",
