@@ -237,10 +237,11 @@ async function suggestWidgetContract(editor: vscode.TextEditor): Promise<void> {
     "MODEL M =\n  TOPIC T =\n    ASSO│\n  END T;\nEND M.",
   );
   await vscode.commands.executeCommand("editor.action.triggerSuggest");
-  await new Promise((resolve) => setTimeout(resolve, 150));
-  await vscode.commands.executeCommand("acceptSelectedSuggestion");
   await waitFor(
-    () => editor.document.getText(),
+    async () => {
+      await vscode.commands.executeCommand("acceptSelectedSuggestion");
+      return editor.document.getText();
+    },
     (text) => text.includes("ASSOCIATION"),
     "visible suggestion acceptance",
   );
