@@ -124,7 +124,8 @@ function html(state: ViewState, svg: string, initial: Viewport | null): string {
     document.getElementById('export-visible').onclick=()=>{sendViewport();vscode.postMessage({type:'exportVisible',value:currentViewport()})};
     viewport.ondblclick=(event)=>{const node=event.target.closest('[data-symbol-id]');if(node)vscode.postMessage({type:'navigate',id:node.dataset.symbolId});};
     viewport.addEventListener('scroll',sendViewport);
-    viewport.addEventListener('wheel',(event)=>{event.preventDefault();if(event.deltaY===0)return;const bounds=viewport.getBoundingClientRect();setZoom(zoom*(event.deltaY<0?ZOOM_FACTOR:1/ZOOM_FACTOR),event.clientX-bounds.left,event.clientY-bounds.top)},{passive:false});
+    const isContinuousWheel=(event)=>event.deltaMode===0&&(event.deltaX!==0||Math.abs(event.deltaY)<40);
+    viewport.addEventListener('wheel',(event)=>{const isPinchZoom=event.ctrlKey||event.metaKey;if(!isPinchZoom&&isContinuousWheel(event))return;event.preventDefault();if(event.deltaY===0)return;const bounds=viewport.getBoundingClientRect();setZoom(zoom*(event.deltaY<0?ZOOM_FACTOR:1/ZOOM_FACTOR),event.clientX-bounds.left,event.clientY-bounds.top)},{passive:false});
     let panPointer=-1; let panStartX=0; let panStartY=0; let panScrollX=0; let panScrollY=0;
     viewport.addEventListener('pointerdown',(event)=>{if(event.button!==1)return;event.preventDefault();panPointer=event.pointerId;panStartX=event.clientX;panStartY=event.clientY;panScrollX=viewport.scrollLeft;panScrollY=viewport.scrollTop;viewport.classList.add('is-panning');viewport.setPointerCapture?.(event.pointerId)});
     viewport.addEventListener('pointermove',(event)=>{if(event.pointerId!==panPointer)return;event.preventDefault();viewport.scrollLeft=panScrollX-(event.clientX-panStartX);viewport.scrollTop=panScrollY-(event.clientY-panStartY)});

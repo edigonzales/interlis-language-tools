@@ -1409,11 +1409,21 @@ describe("VS Code startup diagram", () => {
     expect(rendered).toContain("MIN_ZOOM=0.25");
     expect(rendered).toContain("event.button!==1");
     expect(rendered).toContain(
+      "event.deltaMode===0&&(event.deltaX!==0||Math.abs(event.deltaY)<40)",
+    );
+    expect(rendered).toContain("event.ctrlKey||event.metaKey");
+    expect(rendered).toContain(
+      "if(!isPinchZoom&&isContinuousWheel(event))return",
+    );
+    expect(rendered).toContain(
       "scrollX:(viewport.scrollLeft-diagramOffsetX)/zoom",
     );
     expect(rendered).toContain("diagram.style.left=diagramOffsetX+'px'");
     expect(rendered).toContain(
       "viewport.scrollLeft=0;viewport.scrollTop=0;sendViewport()",
+    );
+    expect(rendered).not.toContain(
+      "viewport.addEventListener('wheel',(event)=>{event.preventDefault();",
     );
     expect(rendered).toContain("event.preventDefault()");
     expect(rendered).not.toBe("");

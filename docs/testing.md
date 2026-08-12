@@ -112,6 +112,10 @@ wird in jedem Extension Host separat durch den LanguageClient synchronisiert.
    Diagramm die Abhängigkeit neu kompiliert und anschliessend aktualisiert.
 6. Im neuen Fenster Knotennavigation, **Refresh / Auto-layout**, Zoom/Pan und
    SVG-Export prüfen.
+7. Auf macOS im Diagramm mit zwei Fingern auf dem Trackpad horizontal und
+   vertikal pannen. Pinch-to-Zoom muss an der Cursorposition zoomen; mit einer
+   Maus bleibt die mittlere Maustaste zum Pannen und das Scrollrad zum Zoomen
+   verfügbar.
 
 ## Required release evidence
 
