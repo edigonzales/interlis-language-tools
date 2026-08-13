@@ -64,7 +64,7 @@ export async function activate(
     serverOptions,
     clientOptions,
   );
-  const output = vscode.window.createOutputChannel("INTERLIS Compiler");
+  const output = vscode.window.createOutputChannel("INTERLIS Compiler", "Log");
   const debug = vscode.window.createOutputChannel("INTERLIS Debug", {
     log: true,
   });

@@ -113,6 +113,21 @@ async function type(text: string): Promise<void> {
   await vscode.commands.executeCommand("type", { text });
 }
 
+async function compilerOutputEditor(): Promise<vscode.TextEditor> {
+  const editor = await waitFor(
+    () =>
+      vscode.window.visibleTextEditors.find(
+        (editor) =>
+          editor.document.uri.scheme === "output" &&
+          editor.document.languageId === "Log",
+      ),
+    (editor): editor is vscode.TextEditor => editor !== undefined,
+    "INTERLIS compiler output editor",
+  );
+  assert.ok(editor);
+  return editor;
+}
+
 async function nextPlaceholder(): Promise<void> {
   await vscode.commands.executeCommand(
     "interlisLanguageTools.snippet.nextPlaceholder",
@@ -435,6 +450,28 @@ export async function run(): Promise<void> {
     content: "",
   });
   const editor = await vscode.window.showTextDocument(document);
+
+  await vscode.commands.executeCommand("interlisLanguageTools.compile");
+  const outputEditor = await compilerOutputEditor();
+  assert.equal(outputEditor.document.languageId, "Log");
+  const outputConfiguration = () =>
+    vscode.workspace.getConfiguration("editor", {
+      uri: outputEditor.document.uri,
+      languageId: outputEditor.document.languageId,
+    });
+  assert.equal(outputConfiguration().get("wordWrap"), "off");
+
+  await outputConfiguration().update(
+    "wordWrap",
+    "on",
+    vscode.ConfigurationTarget.Workspace,
+    true,
+  );
+  await waitFor(
+    () => outputConfiguration().get("wordWrap"),
+    (value) => value === "on",
+    "[Log] word-wrap override",
+  );
 
   await classSnippetContract(editor);
   await modelSnippetContract(editor);
