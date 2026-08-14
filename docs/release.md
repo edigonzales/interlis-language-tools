@@ -13,12 +13,12 @@ The coordinated development versions are:
   compiler version supplied by `ilic-fork`, either stable `0.10.0` or
   `0.10.0-SNAPSHOT.YYYYMMDDHHmmss.<compiler-build-id>`;
 - the five language-tool packages: a separately generated version
-  `0.1.1-SNAPSHOT.YYYYMMDDHHmmss.<language-build-id>`;
-- VS Code extension source: `0.1.1`, packaged as a pre-release;
-- automatic Open-VSX builds: `0.1.1-SNAPSHOT.YYYYMMDDHHmmss.<github-run-id>`;
+  `0.1.2-SNAPSHOT.YYYYMMDDHHmmss.<language-build-id>`;
+- VS Code extension source: `0.1.2`, packaged as a pre-release;
+- automatic Open-VSX builds: `0.1.2-SNAPSHOT.YYYYMMDDHHmmss.<github-run-id>`;
 - browser IDE: an independently versioned private deployment package.
 
-The source manifests contain only the base versions `0.10.0` and `0.1.1`.
+The source manifests contain only the base versions `0.10.0` and `0.1.2`.
 Staging writes timestamped versions into disposable directories below
 `artifacts/`; it never edits a tracked manifest. npm snapshots are published
 through the dist-tag `snapshot` and installed explicitly through that channel:
@@ -47,9 +47,9 @@ the source manifest remains at the base version and npm snapshot versions are
 unrelated. Open VSX has no npm-style dist-tag, and an already published
 namespace/extension/version combination cannot be replaced. Repeated workflow
 runs therefore use `ovsx --skip-duplicate`.
-The current automatic line is based on the pre-release `0.1.1`; after a stable
-`0.1.1` release, the next automatic line must use the next base version, for
-example `0.1.2-SNAPSHOT...`, so that it remains newer than the stable release.
+The current automatic line is based on the pre-release `0.1.2`; after a stable
+`0.1.2` release, the next automatic line must use the next base version, for
+example `0.1.3-SNAPSHOT...`, so that it remains newer than the stable release.
 
 ## Pipelines
 
@@ -71,7 +71,7 @@ can still be started manually for an intentional stable/pre-release release:
   release to the Web IDE with `repository_dispatch`;
 - `publish-vscode-extension.yml` checks out the exact successful CI commit,
   rebuilds and verifies the VSIX, assigns automatic builds a unique
-  `0.1.1-SNAPSHOT...` version, and publishes it to Open VSX. Its manual mode
+  `0.1.2-SNAPSHOT...` version, and publishes it to Open VSX. Its manual mode
   remains available for intentional releases to the VS Code Marketplace and
   Open VSX.
 

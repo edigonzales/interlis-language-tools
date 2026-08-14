@@ -157,7 +157,7 @@ Language-Pakete behalten dabei bewusst getrennte Zeitstempel und Run-IDs:
 | Paketgruppe    | Pakete                                                                                                   | Version                                                 |
 | -------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
 | Compiler       | `@ilic/repository-core`, `@ilic/tools`, `@ilic/compiler-wasm`                                            | exakte publizierte `compilerVersion` aus dem Dispatch   |
-| Language Tools | `@ilic/language-service`, `@ilic/monaco-adapter`, `@ilic/diagram`, `@ilic/docx`, `@ilic/language-server` | `0.1.1-SNAPSHOT.<language-timestamp>.<language-run-id>` |
+| Language Tools | `@ilic/language-service`, `@ilic/monaco-adapter`, `@ilic/diagram`, `@ilic/docx`, `@ilic/language-server` | `0.1.2-SNAPSHOT.<language-timestamp>.<language-run-id>` |
 
 Alle internen Abhängigkeiten in den gepackten Manifesten zeigen auf exakte
 Versionen. `workspace:*`, `file:`, Dist-Tags und Versionsbereiche für
@@ -208,7 +208,7 @@ Ereignis `release-train-published` an `interlis-web-ide`. Der Payload enthält:
   "compiler_sha": "<SHA>",
   "language_tools_sha": "<SHA>",
   "compiler_version": "0.10.0",
-  "language_tools_version": "0.1.1-SNAPSHOT....",
+  "language_tools_version": "0.1.2-SNAPSHOT....",
   "compiler_timestamp": "YYYYMMDDHHmmss",
   "compiler_build_id": "<Compiler-Run-ID>",
   "language_timestamp": "YYYYMMDDHHmmss",
@@ -241,8 +241,8 @@ dokumentiert.
 automatisch oder kann manuell gestartet werden. Bei einem automatischen Lauf
 wird die exakte `workflow_run.head_sha` ausgecheckt und die VSIX-Version nur im
 Artefakt als
-`0.1.1-SNAPSHOT.YYYYMMDDHHmmss.<github-run-id>` gesetzt. Die eingecheckte
-Version bleibt `0.1.1`. Zeitstempel und Run-ID stammen aus dem auslösenden
+`0.1.2-SNAPSHOT.YYYYMMDDHHmmss.<github-run-id>` gesetzt. Die eingecheckte
+Version bleibt `0.1.2`. Zeitstempel und Run-ID stammen aus dem auslösenden
 CI-Lauf, damit ein Workflow-Rerun dieselbe Version wiederverwendet. Die
 Eingabe `pre_release` steuert im manuellen Lauf, ob `vsce package` die VSIX als
 Marketplace-Pre-Release markiert.
