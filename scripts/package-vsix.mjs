@@ -31,7 +31,7 @@ if (result.status !== 0)
 
 const sourceManifestPath = resolve(extension, "package.json");
 const sourceManifest = JSON.parse(await readFile(sourceManifestPath, "utf8"));
-assert.equal(sourceManifest.version, "0.1.1");
+assert.equal(sourceManifest.version, "0.1.2");
 const expectedVersion = requestedVersion ?? sourceManifest.version;
 
 const listing = spawnSync("unzip", ["-Z1", target], {
