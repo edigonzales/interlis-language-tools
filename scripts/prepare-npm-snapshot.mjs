@@ -22,7 +22,7 @@ import {
 } from "node:path";
 import { pathToFileURL } from "node:url";
 
-const BASE_VERSION = "0.1.1";
+const BASE_VERSION = "0.1.2";
 export const COMPILER_BASE_VERSION = "0.10.0";
 export const TEMPORARILY_ACCEPTED_SNAPSHOT_BASES = new Set([
   "0.9.9",
