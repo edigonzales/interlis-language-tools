@@ -125,9 +125,6 @@ Quellen anschliessend an die WASM-Compiler-Session.
 cd ../interlis-language-tools
 corepack pnpm check
 corepack pnpm --filter @ilic/language-service test:coverage
-SNAPSHOT_TIMESTAMP=20260101000000 \
-COMPILER_VERSION=0.10.0-SNAPSHOT.20260101000000 \
-ILIC_WASM_VERSION=0.10.0-SNAPSHOT.20260101000000 \
 corepack pnpm pack:verify
 corepack pnpm package:vsix
 ```

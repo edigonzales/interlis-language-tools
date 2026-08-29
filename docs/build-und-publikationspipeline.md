@@ -3,357 +3,92 @@
 [Projektübersicht](../README.md) · [Release-Betrieb](release.md) ·
 [Teststrategie](testing.md)
 
-Dieses Repository koordiniert den zweiten Schritt des Release-Trains. Es löst
-eine exakte Compiler-Revision und -Version aus `ilic-fork` auf, checkt diese
-Revision aus und baut daraus native und WASM-Compiler-Artefakte. Die drei
-Compiler-Pakete wurden zuvor aus `ilic-fork` selbst per OIDC publiziert und
-werden hier als versionierte Eingabe verifiziert. Dieses Repository publiziert
-nur die fünf eigenen Language-Tools-Pakete. Erst danach wird der GitHub-
-Pages-Build von `interlis-web-ide` gestartet.
-
-```mermaid
-flowchart LR
-  Compiler["ilic-fork\nCompiler-SHA geprüft"]
-  Resolve["SHAs auflösen\nund festhalten"]
-  Verify["Native + WASM +\nLanguage Tools prüfen"]
-  Npm["5 Language-Pakete\nper OIDC publizieren"]
-  WebIde["interlis-web-ide\nPages-Build"]
-
-  Compiler -->|"release-train-requested"| Resolve
-  Resolve --> Verify --> Npm
-  Npm -->|"release-train-published"| WebIde
-```
-
-## Workflows und Verantwortung
-
-| Workflow                                                                                              | Trigger                                                                                                                      | Verantwortung                                                                                                                |
-| ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)                                             | Push auf `main` oder `codex/**` (ausser reine Markdown-Änderungen), Pull Request (ausser reine Markdown-Änderungen), manuell | Workspace, npm-Tarballs und universelle VSIX prüfen; installierbare Artefakte 14 Tage aufbewahren                            |
-| [`.github/workflows/publish-language-tools.yml`](../.github/workflows/publish-language-tools.yml)     | erfolgreiche CI nach Push auf `main`, `release-train-requested`, manuell                                                     | Exakte Quellstände bauen, fünf Language-Pakete publizieren und Web IDE dispatchen                                            |
-| [`.github/workflows/publish-vscode-extension.yml`](../.github/workflows/publish-vscode-extension.yml) | erfolgreiche CI nach Push auf `main`, manuell                                                                                | Geprüfte VSIX mit eindeutiger Pre-Release-Version zu Open VSX publizieren; manuelle Marketplace-/Stable-Releases ermöglichen |
-
-CI, npm-Snapshots und Extension-Veröffentlichung sind getrennte Abläufe. Ein
-grüner CI-Lauf auf `main` startet danach den Extension-Publish-Workflow; dieser
-baut die exakte CI-Revision selbst neu und veröffentlicht nur nach erneuten
-Gates. Pull Requests, Feature-Branches und reine Markdown-Commits publizieren
-nichts.
-
-Ein Push auf `main` startet zuerst nur `CI`. Erst ein erfolgreich
-abgeschlossener `workflow_run` dieser CI startet die npm-Publikation. Der
-Publish-Workflow wiederholt seine release-identischen Gates bewusst aus dem
-exakten CI-`head_sha`; CI-Artefakte werden nicht als Publikationsquelle
-verwendet. Reine Markdown-Änderungen starten wegen `paths-ignore` weder CI noch
-den nachgelagerten Publish-Lauf.
-
-Alle push- und pull-request-basierten CI-Trigger ignorieren mit
-`paths-ignore: "**/*.md"` reine Markdown-Änderungen. Gemischte Commits mit
-Code- oder Konfigurationsänderungen starten weiterhin die vollständige Prüfung.
-Der koordinierte Release-Dispatch und manuelle Läufe bleiben unabhängig von
-diesem Filter.
-
-## CI: Workspace und auslieferbare Artefakte
-
-Der Job `verify` läuft mit Node 22 und pnpm 11.14.0 auf Ubuntu. Er checkt den
-aktuellen Language-Tools-Commit und den Default-Branch von `ilic-fork` als
-Geschwisterverzeichnisse aus.
-
-Die Gates laufen in dieser Reihenfolge:
-
-1. die in `ilic-fork/.emscripten-version` festgelegte Emscripten-Version
-   installieren und Compiler-WASM bauen;
-2. `pnpm install --frozen-lockfile` ausführen;
-3. mit `pnpm check` alle Pakete bauen, linten, typprüfen und testen sowie die
-   deterministischen Snapshot-Tests ausführen;
-4. die Coverage von `@ilic/language-service` erzeugen und 14 Tage als Artefakt
-   hochladen;
-5. mit `pnpm pack:verify` alle acht npm-Tarballs stagen, in einem leeren
-   Consumer installieren und ihre öffentlichen Entry-Points ausführen;
-6. mit `pnpm package:vsix` die universelle Extension bauen und ihren Inhalt
-   prüfen;
-7. Produktionslizenzen und Abhängigkeiten mit `pnpm licenses:check` und
-   `pnpm security:check` prüfen;
-8. VSIX und npm-Tarballs als `interlis-language-tools-<SHA>` für 14 Tage
-   hochladen.
-
-Der Coverage-Schritt ist aktuell `continue-on-error`: Der Bericht wird immer
-erzeugt, ein Unterschreiten der Zielwerte blockiert CI und Publikation aber
-noch nicht. Alle anderen genannten Gates sind blockierend. Details zu Umfang
-und Schwellenwerten stehen in der [Teststrategie](testing.md).
-
-## Koordinierten Release-Train starten
-
-Der Publish-Workflow serialisiert alle Läufe in der Concurrency-Gruppe
-`release-train`; ein neuer Lauf bricht einen laufenden nicht ab. Er kann auf
-drei Wegen beginnen:
-
-| Ereignis                                          | Compiler-Revision                                                                                                                          | Language-Tools-Revision                                                             |
-| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
-| erfolgreicher `workflow_run` nach Push auf `main` | aktuelle npm-Compiler-Snapshot-Version und deren `gitHead` (Fallback: `ilic-fork/main`)                                                    | exakter `github.event.workflow_run.head_sha`                                        |
-| `repository_dispatch` aus `ilic-fork`             | die mitgelieferten `client_payload.compiler_sha` und `client_payload.compiler_version`                                                     | mitgelieferter oder auf `interlis-language-tools/main` aufgelöster SHA              |
-| manueller Start                                   | optionale, zusammengehörige `compiler_sha` und `compiler_version`; sonst Snapshot-Version und deren `gitHead` (Fallback: `ilic-fork/main`) | optionaler vollständiger `language_tools_sha`, sonst `interlis-language-tools/main` |
-
-Beim manuellen Start ohne Compiler-Angaben wird zuerst die aktuelle Version
-von `@ilic/tools@snapshot` abgefragt. Anschliessend liest der Workflow den
-zugehörigen npm-`gitHead` und verwendet diesen vollständigen Commit für den
-Checkout. Nur wenn die veröffentlichte Version keinen gültigen 40-stelligen
-`gitHead` enthält, wird `ilic-fork/main` verwendet. Die Compiler-Version und
-der Compiler-Commit müssen bei manueller Vorgabe immer gemeinsam angegeben
-werden. Für die Language Tools wird ohne expliziten SHA `main` dieses
-Repositories verwendet.
-
-`resolve-refs` akzeptiert nur vollständige, 40-stellige Commit-SHAs. Seine
-Outputs werden für alle folgenden Checkouts verwendet. Damit bleibt die
-Quellpaarung innerhalb eines Laufs stabil, auch wenn danach ein Branch
-weitergeschoben wird.
-
-Ein erfolgreicher Main-CI-Lauf kann weiterhin einen Language-only-Snapshot
-erzeugen. Der koordinierte Compiler-Weg kommt ausschliesslich über den Dispatch
-aus dem erfolgreichen `ilic-fork`-Publish und enthält bereits die
-unveränderliche Compiler-Version. Beim `workflow_run` und beim manuellen Start
-wird der bewegliche npm-Tag nur einmalig aufgelöst; danach arbeitet der Lauf
-nur noch mit der exakten Version und dem dazugehörigen Commit. Im `build`-Job
-wird der Compiler aus diesem Commit lokal gebaut und geprüft. Die bereits von
-`ilic-fork` publizierten Compiler-Pakete werden nicht erneut publiziert; hier
-werden nur die fünf Language-Tools-Pakete veröffentlicht.
-
-## Build- und Verifikationsphase des Release-Trains
-
-Der `build`-Job läuft auf Ubuntu und verwendet genau die aufgelösten SHAs.
-
-### Compiler
-
-Zuerst installiert der Job `libcurl`, `libxml2` und Ninja. Er konfiguriert
-einen nativen Release-Build, baut ihn und führt CTest aus:
-
-```sh
-cmake -S . -B build/release-train -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build/release-train --parallel
-ctest --test-dir build/release-train --output-on-failure
-```
-
-Danach wird mit der im Compiler-Repository gepinnten Emscripten-Version der
-WASM-Compiler neu gebaut. Der Release-Train verwendet somit weder ein bewegtes
-npm-Tag noch ein Binärartefakt aus einem anderen Workflow.
-`COMPILER_VERSION` darf stabil `0.10.0` oder ein exakter
-`0.10.0-SNAPSHOT...` sein; der WASM-Build erhält dieselbe Identität über
-`ILIC_WASM_VERSION`.
-
-### Language Tools und Supply-Chain-Gates
-
-Mit Node 24 und pnpm 11.14.0 folgen ein eingefrorener Lockfile-Install,
-`pnpm check`, der nicht blockierende Coverage-Bericht sowie Lizenz- und
-Vulnerability-Prüfung. Erst wenn diese Schritte erfolgreich sind, wird ein
-UTC-Zeitstempel gewählt und `pnpm pack:verify` mit folgenden Werten gestartet:
+## Einfaches Modell
 
 ```text
-SNAPSHOT_TIMESTAMP=YYYYMMDDHHmmss
-SNAPSHOT_BUILD_ID=<GitHub-Run-ID>
+release/dependencies.lock.json
+       │ exakte Compiler-Version + voller ilic-SHA
+       ▼
+ilic aus genau diesem Commit bauen und testen
+       │
+       ▼
+Language Tools bauen und testen
+       │
+       ▼
+5 Tarballs mit gemeinsamer Version + interlis-release.json
+       │
+       ├─ normale CI: nur geprüfte Artefakte
+       ├─ manueller Lauf: npm-Tag snapshot
+       └─ neuer vX.Y.Z-Tag: npm-Tag latest
 ```
 
-Der Stager verändert keine eingecheckten Manifeste. Er erzeugt unter
-`artifacts/npm/` acht Tarballs mit zwei Basisversionslinien. Compiler- und
-Language-Pakete behalten dabei bewusst getrennte Zeitstempel und Run-IDs:
+Der wesentliche Vertrag ist im Downstream-Commit enthalten. Ein beweglicher
+npm-Tag oder der aktuelle Stand von `ilic/main` bestimmt keine Abhängigkeit
+mehr. Ein neuer Compiler verlangt zuerst eine Änderung von
+`release/dependencies.lock.json` und damit einen neuen Language-Tools-Commit.
 
-| Paketgruppe    | Pakete                                                                                                   | Version                                                 |
-| -------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| Compiler       | `@ilic/repository-core`, `@ilic/tools`, `@ilic/compiler-wasm`                                            | exakte publizierte `compilerVersion` aus dem Dispatch   |
-| Language Tools | `@ilic/language-service`, `@ilic/monaco-adapter`, `@ilic/diagram`, `@ilic/docx`, `@ilic/language-server` | `0.1.2-SNAPSHOT.<language-timestamp>.<language-run-id>` |
+## Workflows
 
-Alle internen Abhängigkeiten in den gepackten Manifesten zeigen auf exakte
-Versionen. `workspace:*`, `file:`, Dist-Tags und Versionsbereiche für
-interne `@ilic/*`-Pakete werden abgelehnt. `pack:verify` installiert alle
-Tarballs zusammen in einem sauberen Consumer und führt den echten
-WASM-Compiler sowie die öffentlichen APIs aus.
+| Workflow                       | Auslöser                                   | Wirkung                                                                                                  |
+| ------------------------------ | ------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| `ci.yml`                       | Push, Pull Request, manuell                | Lock prüfen, exakt gelockten Compiler-WASM bauen, Workspace/VSIX/fünf Tarballs testen; keine Publikation |
+| `publish-language-tools.yml`   | manueller Snapshot oder neuer `vX.Y.Z`-Tag | Compiler nativ und als WASM prüfen, fünf Tarballs publizieren                                            |
+| `publish-vscode-extension.yml` | manueller Snapshot oder neuer `vX.Y.Z`-Tag | dieselbe Compiler-Kombination als VSIX bauen und zu Open VSX publizieren                                 |
 
-### Manifeste und Buildartefakt
+Es gibt keinen `workflow_run` nach jedem grünen Main-Build und keinen
+Compiler-Dispatch, der automatisch fünf neue Downstream-Versionen erzeugt.
 
-`snapshot-manifest.json` enthält Versionen, Zeitstempel, Build-ID und die
-Paketliste. Der Workflow erweitert es zu `release-manifest.json` um:
+## Reproduzierbare Identitäten
 
-- `compilerSha`;
-- `languageToolsSha`;
-- `releaseRunId`.
+Ein Snapshot aus Commit `abcdef012345...` und Basis `0.1.2` heisst in npm und
+Open VSX immer:
 
-Tarballs und beide Manifeste werden als
-`interlis-release-<GitHub-Run-ID>` 14 Tage gespeichert. Dieses Artefakt ist die
-verbindliche Spur zwischen Quellständen, erzeugten Dateien und Publikation.
-
-## npm-Publikation
-
-Der getrennte `publish`-Job lädt ausschliesslich das zuvor verifizierte
-Release-Artefakt herunter. Er verwendet Node 24 und die festgelegte
-npm-Version 11.18.0. Nur dieser Job erhält `id-token: write`; npm
-authentisiert ihn über Trusted Publishing und veröffentlicht Provenance. Ein
-`NPM_TOKEN` oder `NODE_AUTH_TOKEN` ist nicht erforderlich.
-
-Publiziert wird mit `--access public --tag snapshot` in Abhängigkeitsreihenfolge
-nur für die fünf Language-Tools-Pakete:
-
-1. `@ilic/language-service`;
-2. `@ilic/monaco-adapter`;
-3. `@ilic/diagram`;
-4. `@ilic/docx`;
-5. `@ilic/language-server`.
-
-Vor jedem Publish fragt der Workflow die exakte Paketversion bei npm ab. Ist
-sie bereits vorhanden, wird sie übersprungen. Das macht die Wiederholung eines
-teilweise erfolgreichen Laufs möglich, ohne eine unveränderliche npm-Version
-zu überschreiben.
-
-Nach der Paketpublikation validiert der Job das Release-Manifest und sendet das
-Ereignis `release-train-published` an `interlis-web-ide`. Der Payload enthält:
-
-```json
-{
-  "compiler_sha": "<SHA>",
-  "language_tools_sha": "<SHA>",
-  "compiler_version": "0.10.0",
-  "language_tools_version": "0.1.2-SNAPSHOT....",
-  "compiler_timestamp": "YYYYMMDDHHmmss",
-  "compiler_build_id": "<Compiler-Run-ID>",
-  "language_timestamp": "YYYYMMDDHHmmss",
-  "language_build_id": "<Language-Run-ID>",
-  "release_run_id": "<Run-ID>"
-}
+```text
+0.1.2-snapshot.gabcdef012345
 ```
 
-Der Dispatch enthält bewusst höchstens zehn Eigenschaften, weil GitHub für
-`repository_dispatch.client_payload` dieses Limit erzwingt. Die früheren
-Alias-Felder `timestamp` und `build_id` werden nicht zusätzlich übertragen;
-`language_timestamp` und `language_build_id` sind die eindeutigen Felder für
-den Language-Tools-Build. Der Dispatch erfolgt nach der Publikation der fünf
-Language-Pakete; die drei Compiler-Pakete wurden zuvor aus `ilic-fork`
-publiziert. Bei einem stabilen Compiler sind `compiler_timestamp` und
-`compiler_build_id` leer; bei einem Snapshot müssen sie exakt mit der
-Versionszeichenfolge übereinstimmen. Fehlt das Secret
-`RELEASE_DISPATCH_TOKEN` oder scheitert der API-Aufruf, können die Pakete daher
-bereits vollständig publiziert sein. Ein erneuter Lauf mit derselben
-Workflow-Run-ID überspringt vorhandene Versionen und kann die Übergabe erneut
-versuchen; ein komplett neuer Lauf erzeugt einen neuen Zeitstempel.
+Datum und GitHub-Run-ID gehören in die Provenance, nicht in die Version. Alle
+fünf Language-Tools-Pakete verwenden dieselbe Version. Ihre Abhängigkeiten auf
+`@ilic/compiler-wasm` und `@ilic/tools` sind die exakten unveränderlichen
+Versionen aus dem Lock.
 
-Der nachgelagerte Build ist im
-[Web-IDE-Repository](https://github.com/edigonzales/interlis-web-ide/blob/main/docs/build-und-publikationspipeline.md)
-dokumentiert.
+Jeder Tarball enthält:
 
-## VS-Code-Extension separat publizieren
+- `package.json` mit vollständigem `gitHead`;
+- `interlis-release.json` mit vollem Language-Tools-SHA;
+- genaue Compiler-Versionen und vollständigen ilic-SHAs;
+- Run-ID, Zeitpunkt und Node-Toolchain.
 
-`Publish VS Code extension` startet nach einem erfolgreichen Main-CI-Lauf
-automatisch oder kann manuell gestartet werden. Bei einem automatischen Lauf
-wird die exakte `workflow_run.head_sha` ausgecheckt und die VSIX-Version nur im
-Artefakt als
-`0.1.2-SNAPSHOT.YYYYMMDDHHmmss.<github-run-id>` gesetzt. Die eingecheckte
-Version bleibt `0.1.2`. Zeitstempel und Run-ID stammen aus dem auslösenden
-CI-Lauf, damit ein Workflow-Rerun dieselbe Version wiederverwendet. Die
-Eingabe `pre_release` steuert im manuellen Lauf, ob `vsce package` die VSIX als
-Marketplace-Pre-Release markiert.
-Der Build-Job baut Compiler-WASM und Workspace neu, führt `pnpm check`,
-VSIX-Inhaltsprüfung, Lizenzprüfung und Security-Audit aus und lädt die geprüfte
-`interlis-language-tools.vsix` hoch.
+## Cache- und Source-Rolle
 
-Danach laufen zwei unabhängige Jobs:
+Für JavaScript-Pakete ist npm der Cache bereits veröffentlichter
+Abhängigkeiten. Trotzdem baut die Produzentenprüfung den gelockten ilic-Commit
+erneut nativ und als WASM. Damit beschleunigt der veröffentlichte Compiler die
+Installation eines Tarball-Consumers, ersetzt aber nicht die Source-Prüfung vor
+einer Language-Tools-Publikation.
 
-- mit `VSCE_PAT` Publikation in den VS Code Marketplace (derzeit weiterhin
-  bewusst deaktiviert);
-- mit `OVSX_PAT` Publikation in Open VSX. Der automatische Open-VSX-Job
-  verwendet `--skip-duplicate`, damit eine Wiederholung desselben Laufs keine
-  bereits vorhandene Version überschreibt oder fehlschlägt.
+## Berechtigungen
 
-Fehlt `OVSX_PAT`, schlägt der Open-VSX-Job sichtbar fehl; der vorgelagerte
-CI-Lauf und das VSIX-Artefakt bleiben erhalten. Ein Open-VSX-Release ändert
-keine npm-Version und löst keinen Web-IDE-Deploy aus.
+| Berechtigung oder Secret | Zweck                                                       |
+| ------------------------ | ----------------------------------------------------------- |
+| `contents: read`         | beide Quellen exakt auschecken                              |
+| `id-token: write`        | nur im npm-Publish-Job für Trusted Publishing               |
+| `RELEASE_DISPATCH_TOKEN` | optionale Übergabe der publizierten Version an das Web IDE  |
+| `OVSX_PAT`               | manuelle oder taggebundene Open-VSX-Publikation             |
+| `VSCE_PAT`               | reserviert; Marketplace-Publikation ist derzeit deaktiviert |
 
-## Berechtigungen und Secrets
+Es gibt kein npm-Token im Repository. Fehlt der optionale Web-IDE-Token, bleiben
+die korrekt publizierten npm-Pakete erfolgreich; nur die nachgelagerte Übergabe
+entfällt.
 
-| Berechtigung oder Secret | Verwendungsort      | Zweck                                       |
-| ------------------------ | ------------------- | ------------------------------------------- |
-| `contents: read`         | alle Jobs           | Quellen auschecken                          |
-| `id-token: write`        | nur npm-Publish-Job | kurzlebige npm-OIDC-Authentisierung         |
-| `RELEASE_DISPATCH_TOKEN` | npm-Publish-Job     | `repository_dispatch` an `interlis-web-ide` |
-| `VSCE_PAT`               | Marketplace-Job     | VSIX zu VS Code Marketplace publizieren     |
-| `OVSX_PAT`               | Open-VSX-Job        | VSIX zu Open VSX publizieren                |
+## Recovery
 
-Für automatische Open-VSX-Veröffentlichungen muss `OVSX_PAT` als Repository-
-Secret gesetzt sein. Das Secret wird nicht für CI oder npm verwendet.
-
-Der Compiler-Dispatch in dieses Repository wird mit dem gleichnamigen Secret
-im `ilic-fork`-Repository authentisiert. GitHub Pages benötigt kein Secret aus
-diesem Repository.
-
-`RELEASE_DISPATCH_TOKEN` ist ein GitHub-API-Token für den
-Cross-Repository-Dispatch, kein npm-Token. Das Secret dieses Repositories wird
-unter `Settings → Secrets and variables → Actions` gespeichert und darf nur
-`edigonzales/interlis-web-ide` dispatchen. Für ein empfohlenes Fine-grained
-Token wird ausschließlich dieses Ziel-Repository mit
-`Contents: Read and write` ausgewählt. Das Gegenstück im Compiler-Repository
-heißt ebenfalls `RELEASE_DISPATCH_TOKEN`, darf aber nur den Dispatch an dieses
-Repository auslösen. npm Trusted Publishing verwendet weiterhin OIDC und
-benötigt dieses Secret nicht.
-
-## Pinning und lokale Abweichungen
-
-Beim koordinierten Dispatch ist der Compiler bereits gepinnt: `compiler_sha`
-ist ein vollständiger Commit und `compiler_version` eine unveränderliche npm-
-Version aus der erfolgreichen `ilic-fork`-Publikation. Das Skript liest aus
-dieser Version auch den Compiler-Zeitstempel und die Compiler-Run-ID. Die
-Language-Tools-Version verwendet dagegen den eigenen UTC-Zeitstempel und die
-eigene Run-ID. Beide Werte werden im `release-manifest.json` getrennt geführt.
-
-Bei Push oder manuellem Start ohne Payload wird der bewegliche npm-Tag
-`@ilic/tools@snapshot` einmalig auf eine konkrete Version aufgelöst und für den
-gesamten Lauf verwendet. Ein späteres Verschieben des Tags beeinflusst diesen
-Lauf nicht mehr. Die fünf publizierten Language-Pakete referenzieren immer die
-exakte Compiler-Version und niemals `snapshot`, `workspace:*`, `file:` oder
-eine Versionsrange.
-
-Lokal existiert kein GitHub-OIDC-Trusted-Publisher-Kontext. `pnpm pack:verify`
-erzeugt lokale Tarballs aus den Geschwisterverzeichnissen und kann ohne npm-
-Publikation erfolgreich sein. Nicht gesetzte lokale Variablen erhalten
-Fallback-Werte; in GitHub Actions können dagegen leere Event-Felder gesetzt
-sein. Das Verifikationsskript behandelt leere Werte deshalb wie nicht gesetzte
-Werte. Ein lokaler Erfolg beweist somit weder die npm-Berechtigung noch die
-Übereinstimmung von Repository, Workflow-Datei und Provenance.
-
-## Lokal dieselben Gates ausführen
-
-Die drei Repositories müssen als Geschwisterverzeichnisse vorliegen. Das
-Compiler-Skript richtet die passende Emscripten-Umgebung bei Bedarf automatisch
-ein:
-
-```sh
-cd ../ilic-fork
-./scripts/build-wasm.sh
-
-cd ../interlis-language-tools
-corepack pnpm install --frozen-lockfile
-corepack pnpm check
-corepack pnpm --filter @ilic/language-service test:coverage
-corepack pnpm pack:verify
-corepack pnpm package:vsix
-corepack pnpm licenses:check
-corepack pnpm security:check
-```
-
-Für release-identische Versionsnamen können Zeitstempel und numerische
-Build-ID explizit gesetzt werden:
-
-```sh
-SNAPSHOT_TIMESTAMP=20260721120000 \
-SNAPSHOT_BUILD_ID=123456789 \
-corepack pnpm pack:verify
-```
-
-## Fehler- und Recovery-Modell
-
-- Vor erfolgreichem `build`-Job wird nichts publiziert.
-- Der Coverage-Bericht ist informativ; alle anderen Build-, Test-, Paket-,
-  Lizenz- und Security-Schritte blockieren.
-- npm besitzt keine Transaktion über sieben Pakete. Einen Teilfehler durch
-  erneutes Ausführen beheben; nichts automatisch unpublishen.
-- Bereits vorhandene exakte Versionen werden übersprungen. Unterschiedlicher
-  Inhalt darf nie unter derselben Version publiziert werden.
-- Ein fehlgeschlagener Web-IDE-Dispatch macht publizierte Pakete nicht
-  rückgängig. Nach Behebung des Tokens oder Ziel-Workflows wird der
-  Release-Train erneut ausgeführt.
-- Das manuelle Verschieben von `latest` und der einmalige Trusted-Publisher-
-  Bootstrap sind betriebliche Nacharbeiten und unter
-  [Release-Betrieb](release.md) beschrieben.
+- Vor einem vollständig grünen Build wird nichts publiziert.
+- Eine vorhandene npm-Version wird nur als idempotent akzeptiert, wenn ihr
+  `gitHead` dem erwarteten vollen Commit entspricht.
+- Bei einem Teilfehler denselben Commit erneut ausführen. Die Git-basierte
+  Version bleibt identisch und bereits publizierte Pakete werden validiert und
+  übersprungen.
+- Nie eine bestehende Version unpublishen oder einen Tag verschieben.
+- Der npm-Tag `snapshot` bezeichnet nur Vorabversionen; `latest` nur stabile
+  `X.Y.Z`-Versionen.

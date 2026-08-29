@@ -1,10 +1,11 @@
 # INTERLIS Language Tools
 
 Java-free INTERLIS 2.3/2.4 language tooling for VS Code Desktop, VS Code Web,
-Theia and browser-based Monaco IDEs. The public packages start on the
-`0.1.2-SNAPSHOT.<UTC timestamp>` line and consume either stable
-`@ilic/compiler-wasm@0.10.0` or an exact
-`0.10.0-SNAPSHOT.<UTC timestamp>[.<build-id>]`.
+Theia and browser-based Monaco IDEs. The next public snapshot line uses the
+deterministic form `0.1.2-snapshot.g<12-character Git SHA>`. Its compiler
+version and full source SHA are committed in `release/dependencies.lock.json`.
+The `0.10.0` values in source manifests are the future stable compiler base;
+they are not a claim that `0.10.0` is already the npm `latest` release.
 
 ## Architecture
 
@@ -71,14 +72,12 @@ interlis-web-ide/
 The complete local setup, prerequisites, WASM artifact flow and LSP/VS-Code
 workflow are described in [Local development](docs/local-development.md).
 
-Build the pinned compiler WASM once, then install and verify this workspace. The
-build script automatically installs and activates the pinned Emscripten SDK when
-it is not already available:
+Build the compiler revision recorded in the dependency lock once, then install
+and verify this workspace. The build script installs the pinned Emscripten SDK
+when necessary:
 
 ```sh
-export SNAPSHOT_TIMESTAMP=20260101000000
-export COMPILER_VERSION=0.10.0-SNAPSHOT.${SNAPSHOT_TIMESTAMP}
-export ILIC_WASM_VERSION=${COMPILER_VERSION}
+export ILIC_WASM_VERSION=$(node -p "require('./release/dependencies.lock.json').dependencies['@ilic/compiler-wasm'].version")
 
 cd ../ilic-fork
 ./scripts/build-wasm.sh
@@ -91,12 +90,11 @@ corepack pnpm pack:verify
 corepack pnpm package:vsix
 ```
 
-`pack:verify` defaults to the deterministic compiler snapshot
-`0.10.0-SNAPSHOT.20260101000000`. Stable compiler staging is supported only
-when `COMPILER_VERSION` is supplied explicitly. For another snapshot, set
-`SNAPSHOT_TIMESTAMP`, `COMPILER_VERSION`, and `ILIC_WASM_VERSION` to the same
-identity before rebuilding ilic. Workspace overrides keep all compiler
-packages local; registry dist-tags are never release truth.
+`pack:verify` reads the exact compiler package version from the committed lock.
+To adopt another compiler, run `release-metadata.mjs update-compiler` with its
+published version and full SHA, review the resulting lock/manifest changes,
+commit them, and only then publish a Language-Tools snapshot. Registry
+dist-tags are never release truth.
 
 For day-to-day extension development, open the `interlis-language-tools`
 repository root in VS Code, select either `INTERLIS Extension (Desktop)` or
@@ -127,19 +125,17 @@ corepack pnpm install --force --update-checksums
 corepack pnpm dev
 ```
 
-`pack:verify` installs all five language-tool packages plus
-`@ilic/repository-core`, `@ilic/tools` and `@ilic/compiler-wasm` in a clean
-consumer. Published manifests pin every
-internal dependency to one immutable timestamped version. Tarballs and VSIX
-files are written below `artifacts/` and are never committed.
+`pack:verify` installs all five staged language-tool packages in a clean
+consumer. Their compiler dependencies resolve to the immutable version in the
+lock. Every tarball contains `interlis-release.json` and a full `gitHead`.
+Tarballs and VSIX files are written below `artifacts/` and are never committed.
 
 ## Release
 
-CI always produces verified npm tarballs and a universal VSIX. npm publication
-uses GitHub OIDC trusted publishing and has no repository secret. Marketplace
-publication uses only `VSCE_PAT` and `OVSX_PAT`. The Open-VSX job runs after a
-successful `main` CI workflow and fails visibly when `OVSX_PAT` is missing. See
-the detailed
+CI always produces verified npm tarballs and a universal VSIX but publishes
+nothing. Snapshots are published only by manually starting the corresponding
+workflow; stable publication requires a new matching `vX.Y.Z` tag. npm uses
+GitHub OIDC trusted publishing and no npm repository secret. See the detailed
 [build and publication pipeline](docs/build-und-publikationspipeline.md),
 [release process](docs/release.md),
 [test strategy](docs/testing.md), [capability matrix](docs/capability-matrix.md)

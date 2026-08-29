@@ -57,13 +57,11 @@ context does not expose CacheStorage/offline navigation correctly. OPFS,
 recovery, ZIP, Git and the live language tools are still exercised in WebKit;
 offline navigation is exercised in Chromium and Firefox.
 
-The Java extension is not removed or disabled. The public packages remain on
-the `0.1.1-SNAPSHOT.*` line and the extension remains a `0.1.1` pre-release
-until Marketplace/Open VSX credentials and final installation smoke tests in
-external VS Code Web and Theia hosts have completed. npm snapshots use only the
-`snapshot` dist-tag in CI. During the pre-release bootstrap phase, `latest` is
-manually synchronized to the same snapshot with local npm web authentication as
-documented in the release process.
+The Java extension is not removed or disabled. The Language Tools remain
+pre-1.0 until installation smoke tests in external VS Code Web and Theia hosts
+have completed. npm snapshots use only the `snapshot` dist-tag; `latest` is
+reserved exclusively for a future stable release as documented in the release
+process.
 
 The user-visible completion, snippet and auto-close contracts in this table are
 documented in [Completion und Snippets](completion-und-snippets.md). Its code

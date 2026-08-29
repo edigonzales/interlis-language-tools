@@ -23,12 +23,6 @@ jobs:
         with:
           path: interlis-language-tools
           persist-credentials: false
-      - name: Checkout compiler packages
-        uses: actions/checkout@v6
-        with:
-          repository: edigonzales/ilic-fork
-          path: ilic-fork
-          persist-credentials: false
       - uses: pnpm/action-setup@v4
         with:
           version: 11.14.0
@@ -37,30 +31,37 @@ jobs:
           node-version: "22"
           cache: pnpm
           cache-dependency-path: interlis-language-tools/pnpm-lock.yaml
-      - name: Resolve compiler snapshot identity
-        working-directory: ilic-fork
+      - name: Verify and export committed dependency lock
+        id: lock
+        working-directory: interlis-language-tools
         shell: bash
         run: |
           set -euo pipefail
-          base_version=$(sed -nE 's/.*project\(ilic VERSION ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' CMakeLists.txt)
-          qualifier=$(sed -nE 's/.*set\(ILIC_VERSION_QUALIFIER "([^"]*)".*/\1/p' CMakeLists.txt)
-          if [[ -z "$base_version" || "$qualifier" != "SNAPSHOT" ]]; then
-            echo "CI package verification requires an ilic SNAPSHOT source; found ${base_version:-unknown}-${qualifier:-none}" >&2
-            exit 1
-          fi
-          snapshot_timestamp=20260101000000
-          compiler_version="${base_version}-SNAPSHOT.${snapshot_timestamp}"
-          compiler_sha=$(git rev-parse HEAD)
-          {
-            echo "SNAPSHOT_TIMESTAMP=$snapshot_timestamp"
-            echo "COMPILER_VERSION=$compiler_version"
-            echo "COMPILER_SHA=$compiler_sha"
-            echo "ILIC_WASM_VERSION=$compiler_version"
-          } >> "$GITHUB_ENV"
-          printf 'Compiler snapshot: %s\nCompiler SHA: %s\n' "$compiler_version" "$compiler_sha"
-      - name: Build pinned compiler WASM
+          node scripts/release-metadata.mjs check
+          node scripts/release-metadata.mjs export-github-output --output "$GITHUB_OUTPUT"
+      - name: Verify locked compiler packages on npm
+        env:
+          COMPILER_SHA: ${{ steps.lock.outputs.compiler_sha }}
+          COMPILER_VERSION: ${{ steps.lock.outputs.compiler_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for package_name in @ilic/repository-core @ilic/tools @ilic/compiler-wasm; do
+            test "$(npm view "$package_name@$COMPILER_VERSION" version)" = "$COMPILER_VERSION"
+            test "$(npm view "$package_name@$COMPILER_VERSION" gitHead)" = "$COMPILER_SHA"
+          done
+      - name: Checkout exact locked compiler packages
+        uses: actions/checkout@v6
+        with:
+          repository: edigonzales/ilic-fork
+          ref: ${{ steps.lock.outputs.compiler_sha }}
+          path: ilic-fork
+          persist-credentials: false
+      - name: Build exact locked compiler WASM
         shell: bash
         working-directory: ilic-fork
+        env:
+          ILIC_WASM_VERSION: ${{ steps.lock.outputs.compiler_version }}
         run: |
           set -euo pipefail
           emscripten_version=$(tr -d '[:space:]' < .emscripten-version)
@@ -94,6 +95,8 @@ jobs:
           retention-days: 14
       - name: Verify npm tarball consumers
         working-directory: interlis-language-tools
+        env:
+          SOURCE_SHA: ${{ github.sha }}
         run: pnpm pack:verify
       - name: Build and inspect universal VSIX
         working-directory: interlis-language-tools

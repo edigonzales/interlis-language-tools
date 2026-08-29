@@ -35,10 +35,11 @@ thresholds and the missing test coverage are tracked in the
 [`Coverage gate and test expansion`](../BACKLOG.md#coverage-gate-and-test-expansion)
 section of the backlog; publication must become gated again once those targets
 are met consistently.
-`check` includes deterministic version/rewrite tests using a fixed UTC
-timestamp. `pack:verify` stages and installs all eight public package tarballs
-in a clean consumer, runs the WASM compiler, and rejects moving internal
-dependency specifications. `package:vsix` unpacks the extension and asserts its
+`check` includes deterministic Git-based version and lock/rewrite tests.
+`pack:verify` stages and installs the five Language-Tools tarballs in a clean
+consumer, loads the WASM compiler, and rejects moving internal dependency
+specifications. It also verifies the full `gitHead` and embedded
+`interlis-release.json`. `package:vsix` unpacks the extension and asserts its
 identity, license, icon, WASM binary and Node/browser client and server entry
 points.
 
