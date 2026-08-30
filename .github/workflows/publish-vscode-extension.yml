@@ -1,46 +1,30 @@
 name: Publish VS Code extension
 
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
-    branches: [main]
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
-    inputs:
-      pre_release:
-        description: Publish as a Marketplace pre-release
-        required: true
-        default: true
-        type: boolean
 
 permissions:
   contents: read
 
+concurrency:
+  group: vscode-extension-publish-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     timeout-minutes: 35
-    env:
-      VSIX_PRE_RELEASE: ${{ (github.event_name == 'workflow_run' || inputs.pre_release) && '1' || '0' }}
-      CI_RUN_ID: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || github.run_id }}
-      CI_RUN_CREATED_AT: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.created_at || '' }}
     steps:
-      - name: Checkout language tools
+      - name: Checkout exact language-tools source
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
           path: interlis-language-tools
-          persist-credentials: false
-      - name: Checkout compiler packages
-        uses: actions/checkout@v6
-        with:
-          repository: edigonzales/ilic-fork
-          path: ilic-fork
+          fetch-depth: 0
+          fetch-tags: true
           persist-credentials: false
       - uses: pnpm/action-setup@v4
         with:
@@ -50,9 +34,35 @@ jobs:
           node-version: "22"
           cache: pnpm
           cache-dependency-path: interlis-language-tools/pnpm-lock.yaml
-      - name: Build compiler WASM
+      - name: Verify committed compiler lock
+        id: lock
+        working-directory: interlis-language-tools
+        run: |
+          node scripts/release-metadata.mjs check
+          node scripts/release-metadata.mjs export-github-output --output "$GITHUB_OUTPUT"
+      - name: Verify locked compiler packages on npm
+        env:
+          COMPILER_SHA: ${{ steps.lock.outputs.compiler_sha }}
+          COMPILER_VERSION: ${{ steps.lock.outputs.compiler_version }}
         shell: bash
+        run: |
+          set -euo pipefail
+          for package_name in @ilic/repository-core @ilic/tools @ilic/compiler-wasm; do
+            test "$(npm view "$package_name@$COMPILER_VERSION" version)" = "$COMPILER_VERSION"
+            test "$(npm view "$package_name@$COMPILER_VERSION" gitHead)" = "$COMPILER_SHA"
+          done
+      - name: Checkout exact locked compiler source
+        uses: actions/checkout@v6
+        with:
+          repository: edigonzales/ilic-fork
+          ref: ${{ steps.lock.outputs.compiler_sha }}
+          path: ilic-fork
+          persist-credentials: false
+      - name: Build exact locked compiler WASM
         working-directory: ilic-fork
+        env:
+          ILIC_WASM_VERSION: ${{ steps.lock.outputs.compiler_version }}
+        shell: bash
         run: |
           set -euo pipefail
           emscripten_version=$(tr -d '[:space:]' < .emscripten-version)
@@ -61,20 +71,33 @@ jobs:
           "$RUNNER_TEMP/emsdk/emsdk" activate "$emscripten_version"
           source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
           ./scripts/build-wasm.sh
-      - name: Select VSIX version
+      - name: Select deterministic VSIX version
         working-directory: interlis-language-tools
         shell: bash
         run: |
           set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           source_version=$(node -p "require('./apps/vscode-extension/package.json').version")
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_run" ]]; then
-            timestamp=$(date -u -d "$CI_RUN_CREATED_AT" +%Y%m%d%H%M%S)
-            version="${source_version}-SNAPSHOT.${timestamp}.${CI_RUN_ID}"
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            test "$GITHUB_REF_NAME" = "v$source_version"
+            channel=stable
+            pre_release=0
           else
-            version="$source_version"
+            channel=snapshot
+            pre_release=1
           fi
-          echo "VSIX_VERSION=$version" >> "$GITHUB_ENV"
-          echo "Packaging VSIX version $version"
+          node scripts/release-metadata.mjs manifest \
+            --source-sha "$GITHUB_SHA" \
+            --channel "$channel" \
+            --run-id "$GITHUB_RUN_ID" \
+            --built-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --toolchain "node-$(node -p 'process.versions.node')" \
+            --output artifacts/interlis-release.json
+          version=$(node -p "require('./artifacts/interlis-release.json').artifactVersion")
+          {
+            echo "VSIX_PRE_RELEASE=$pre_release"
+            echo "VSIX_VERSION=$version"
+          } >> "$GITHUB_ENV"
       - name: Build and verify extension
         working-directory: interlis-language-tools
         run: |
@@ -85,8 +108,10 @@ jobs:
           pnpm security:check
       - uses: actions/upload-artifact@v6
         with:
-          name: interlis-language-tools-vsix-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
-          path: interlis-language-tools/artifacts/interlis-language-tools.vsix
+          name: interlis-language-tools-vsix-${{ github.sha }}
+          path: |
+            interlis-language-tools/artifacts/interlis-language-tools.vsix
+            interlis-language-tools/artifacts/interlis-release.json
           if-no-files-found: error
 
   marketplace:
@@ -100,13 +125,11 @@ jobs:
           pattern: interlis-language-tools-vsix-*
           path: artifacts
           merge-multiple: true
-      # Temporary: keep Microsoft Marketplace publication disabled while the
-      # verified VSIX and Open VSX publication remain available.
       - name: Publish to VS Code Marketplace (temporarily disabled)
         if: ${{ false }}
         run: npx --yes @vscode/vsce@3.9.2 publish --packagePath artifacts/interlis-language-tools.vsix --pat "$VSCE_PAT"
-      - name: Preserve VSIX while Marketplace publication is disabled
-        run: echo "VS Code Marketplace publication is temporarily disabled; the verified VSIX remains available as an artifact."
+      - name: Preserve verified VSIX artifact
+        run: echo "VS Code Marketplace publication remains intentionally disabled."
 
   open-vsx:
     needs: build
@@ -122,5 +145,5 @@ jobs:
       - name: Require Open VSX credentials
         shell: bash
         run: test -n "$OVSX_PAT"
-      - name: Publish to Open VSX
+      - name: Publish immutable VSIX
         run: npx --yes ovsx@1.0.2 publish artifacts/interlis-language-tools.vsix --pat "$OVSX_PAT" --skip-duplicate

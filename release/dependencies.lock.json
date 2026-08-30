@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "project": "interlis-language-tools",
+  "artifactBaseVersion": "0.1.2",
+  "dependencies": {
+    "@ilic/repository-core": {
+      "version": "0.10.0-SNAPSHOT.20260826043335.32930660314",
+      "sourceSha": "e901af64247082b5164252b675d87bd7a2aa829d"
+    },
+    "@ilic/tools": {
+      "version": "0.10.0-SNAPSHOT.20260826043335.32930660314",
+      "sourceSha": "e901af64247082b5164252b675d87bd7a2aa829d"
+    },
+    "@ilic/compiler-wasm": {
+      "version": "0.10.0-SNAPSHOT.20260826043335.32930660314",
+      "sourceSha": "e901af64247082b5164252b675d87bd7a2aa829d"
+    }
+  }
+}

@@ -1,188 +1,39 @@
-name: Publish language-tools snapshots
+name: Publish language-tools packages
 
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
-    branches: [main]
-  repository_dispatch:
-    types: [release-train-requested]
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
-    inputs:
-      compiler_sha:
-        description: Optional ilic-fork commit SHA (40 hex); must be supplied with compiler_version
-        required: false
-        type: string
-      compiler_version:
-        description: Optional exact published compiler version, stable or snapshot; must be supplied with compiler_sha
-        required: false
-        type: string
-      language_tools_sha:
-        description: Optional language-tools commit SHA (40 hex characters)
-        required: false
-        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-train
+  group: language-tools-publish-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  resolve-refs:
-    name: Resolve coordinated source revisions
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'repository_dispatch' ||
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'push' &&
-       github.event.workflow_run.head_branch == 'main')
-    runs-on: ubuntu-latest
-    outputs:
-      compiler_sha: ${{ steps.resolve.outputs.compiler_sha }}
-      compiler_version: ${{ steps.resolve.outputs.compiler_version }}
-      language_tools_sha: ${{ steps.resolve.outputs.language_tools_sha }}
-    steps:
-      - name: Resolve exact source revisions
-        id: resolve
-        env:
-          EVENT_COMPILER_SHA: ${{ github.event.client_payload.compiler_sha }}
-          EVENT_COMPILER_VERSION: ${{ github.event.client_payload.compiler_version }}
-          EVENT_LANGUAGE_TOOLS_SHA: ${{ github.event.client_payload.language_tools_sha }}
-          EVENT_WORKFLOW_RUN_SHA: ${{ github.event.workflow_run.head_sha }}
-          INPUT_COMPILER_SHA: ${{ inputs.compiler_sha }}
-          INPUT_COMPILER_VERSION: ${{ inputs.compiler_version }}
-          INPUT_LANGUAGE_TOOLS_SHA: ${{ inputs.language_tools_sha }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          main_sha() {
-            git ls-remote "https://github.com/$1.git" refs/heads/main | awk 'NR == 1 { print $1 }'
-          }
-
-          compiler_sha="${INPUT_COMPILER_SHA:-${EVENT_COMPILER_SHA:-}}"
-          compiler_version="${INPUT_COMPILER_VERSION:-${EVENT_COMPILER_VERSION:-}}"
-          language_tools_sha="${INPUT_LANGUAGE_TOOLS_SHA:-${EVENT_LANGUAGE_TOOLS_SHA:-}}"
-
-          if [[ -n "$compiler_sha" && -z "$compiler_version" ]]; then
-            echo "compiler_version is required when compiler_sha is supplied" >&2
-            exit 1
-          fi
-          if [[ -n "$compiler_version" && -z "$compiler_sha" ]]; then
-            echo "compiler_sha is required when compiler_version is supplied" >&2
-            exit 1
-          fi
-
-          if [[ -z "$compiler_version" ]]; then
-            compiler_version=$(npm view @ilic/tools@snapshot version)
-          fi
-          if [[ -z "$compiler_sha" ]]; then
-            resolved_compiler_sha=$(npm view "@ilic/tools@$compiler_version" gitHead 2>/dev/null || true)
-            if [[ "$resolved_compiler_sha" =~ ^[0-9a-f]{40}$ ]]; then
-              compiler_sha="$resolved_compiler_sha"
-            else
-              echo "@ilic/tools@$compiler_version has no full gitHead; compiler_sha must be supplied explicitly" >&2
-              exit 1
-            fi
-          fi
-          if [[ -z "$language_tools_sha" ]]; then
-            if [[ "$GITHUB_EVENT_NAME" == "workflow_run" ]]; then
-              language_tools_sha="$EVENT_WORKFLOW_RUN_SHA"
-            else
-              language_tools_sha=$(main_sha edigonzales/interlis-language-tools)
-            fi
-          fi
-
-          for value in "$compiler_sha" "$language_tools_sha"; do
-            if [[ ! "$value" =~ ^[0-9a-f]{40}$ ]]; then
-              echo "Expected a full 40-character commit SHA, received: $value" >&2
-              exit 1
-            fi
-          done
-          if [[ ! "$compiler_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && ! "$compiler_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-SNAPSHOT\.[0-9]{14}(\.[0-9]+)?$ ]]; then
-            echo "Expected a stable X.Y.Z compiler or an exact compiler snapshot, received: $compiler_version" >&2
-            exit 1
-          fi
-
-          wait_for_published_version() {
-            local package_name="$1"
-            local expected_version="$2"
-            local max_attempts=12
-            local retry_delay=5
-            local attempt=1
-            local npm_response=""
-
-            while (( attempt <= max_attempts )); do
-              npm_response=$(npm view "$package_name@$expected_version" version 2>&1) || true
-              if [[ "$npm_response" == "$expected_version" ]]; then
-                return 0
-              fi
-
-              if (( attempt == max_attempts )); then
-                echo "$package_name@$expected_version is not available on npm after $max_attempts attempts" >&2
-                echo "Last npm response: ${npm_response:-<empty>}" >&2
-                return 1
-              fi
-
-              echo "Waiting for $package_name@$expected_version to become available on npm (attempt $attempt/$max_attempts)" >&2
-              sleep "$retry_delay"
-              attempt=$((attempt + 1))
-            done
-          }
-
-          for package_name in @ilic/repository-core @ilic/tools @ilic/compiler-wasm; do
-            wait_for_published_version "$package_name" "$compiler_version"
-            package_git_head=$(npm view "$package_name@$compiler_version" gitHead 2>/dev/null || true)
-            if [[ "$package_git_head" != "$compiler_sha" ]]; then
-              echo "$package_name@$compiler_version was built from ${package_git_head:-<missing>}, expected $compiler_sha" >&2
-              exit 1
-            fi
-          done
-
-          echo "compiler_sha=$compiler_sha" >> "$GITHUB_OUTPUT"
-          echo "compiler_version=$compiler_version" >> "$GITHUB_OUTPUT"
-          echo "language_tools_sha=$language_tools_sha" >> "$GITHUB_OUTPUT"
-          printf 'Compiler SHA: %s\nCompiler version: %s\nLanguage-tools SHA: %s\n' "$compiler_sha" "$compiler_version" "$language_tools_sha"
-
   build:
-    name: Build and verify coordinated packages
-    needs: resolve-refs
+    name: Build the committed release contract
     runs-on: ubuntu-latest
     timeout-minutes: 45
     outputs:
-      snapshot_version: ${{ steps.stage.outputs.snapshot_version }}
-      compiler_version: ${{ steps.stage.outputs.compiler_version }}
-      timestamp: ${{ steps.stage.outputs.timestamp }}
-      build_id: ${{ steps.stage.outputs.build_id }}
-      language_timestamp: ${{ steps.stage.outputs.language_timestamp }}
-      language_build_id: ${{ steps.stage.outputs.language_build_id }}
+      artifact_version: ${{ steps.contract.outputs.artifact_version }}
+      channel: ${{ steps.contract.outputs.channel }}
+      compiler_sha: ${{ steps.lock.outputs.compiler_sha }}
+      compiler_version: ${{ steps.lock.outputs.compiler_version }}
+      npm_dist_tag: ${{ steps.contract.outputs.npm_dist_tag }}
+      source_sha: ${{ steps.contract.outputs.source_sha }}
     steps:
-      - name: Checkout language tools
+      - name: Checkout exact language-tools source
         uses: actions/checkout@v6
         with:
-          ref: ${{ needs.resolve-refs.outputs.language_tools_sha }}
+          ref: ${{ github.sha }}
           path: interlis-language-tools
+          fetch-depth: 0
+          fetch-tags: true
           persist-credentials: false
-      - name: Checkout exact compiler source
-        uses: actions/checkout@v6
-        with:
-          repository: edigonzales/ilic-fork
-          ref: ${{ needs.resolve-refs.outputs.compiler_sha }}
-          path: ilic-fork
-          persist-credentials: false
-      - name: Install native dependencies
-        run: sudo apt-get update && sudo apt-get install --yes libcurl4-openssl-dev libxml2-dev ninja-build
-      - name: Configure native compiler
-        working-directory: ilic-fork
-        run: cmake -S . -B build/release-train -G Ninja -DCMAKE_BUILD_TYPE=Release
-      - name: Build and test native compiler
-        working-directory: ilic-fork
-        run: |
-          cmake --build build/release-train --parallel
-          ctest --test-dir build/release-train --output-on-failure
       - uses: pnpm/action-setup@v4
         with:
           version: 11.14.0
@@ -191,125 +42,133 @@ jobs:
           node-version: "24"
           cache: pnpm
           cache-dependency-path: interlis-language-tools/pnpm-lock.yaml
-      - name: Install pinned Emscripten SDK
+      - name: Verify and export committed dependency lock
+        id: lock
+        working-directory: interlis-language-tools
         shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/release-metadata.mjs check
+          node scripts/release-metadata.mjs export-github-output --output "$GITHUB_OUTPUT"
+      - name: Verify locked compiler packages on npm
+        env:
+          COMPILER_SHA: ${{ steps.lock.outputs.compiler_sha }}
+          COMPILER_VERSION: ${{ steps.lock.outputs.compiler_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for package_name in @ilic/repository-core @ilic/tools @ilic/compiler-wasm; do
+            test "$(npm view "$package_name@$COMPILER_VERSION" version)" = "$COMPILER_VERSION"
+            test "$(npm view "$package_name@$COMPILER_VERSION" gitHead)" = "$COMPILER_SHA"
+          done
+      - name: Resolve immutable package identity
+        id: contract
+        working-directory: interlis-language-tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_sha=$(git rev-parse HEAD)
+          test "$source_sha" = "$GITHUB_SHA"
+          source_version=$(node -p "require('./package.json').version")
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            test "$GITHUB_REF_NAME" = "v$source_version"
+            channel=stable
+            npm_dist_tag=latest
+          else
+            channel=snapshot
+            npm_dist_tag=snapshot
+          fi
+          built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          toolchain="node-$(node -p 'process.versions.node')"
+          node scripts/release-metadata.mjs manifest \
+            --source-sha "$source_sha" \
+            --channel "$channel" \
+            --run-id "$GITHUB_RUN_ID" \
+            --built-at "$built_at" \
+            --toolchain "$toolchain" \
+            --output artifacts/interlis-release.json
+          artifact_version=$(node -p "require('./artifacts/interlis-release.json').artifactVersion")
+          {
+            echo "artifact_version=$artifact_version"
+            echo "built_at=$built_at"
+            echo "channel=$channel"
+            echo "npm_dist_tag=$npm_dist_tag"
+            echo "source_sha=$source_sha"
+          } >> "$GITHUB_OUTPUT"
+      - name: Checkout exact locked compiler source
+        uses: actions/checkout@v6
+        with:
+          repository: edigonzales/ilic-fork
+          ref: ${{ steps.lock.outputs.compiler_sha }}
+          path: ilic-fork
+          persist-credentials: false
+      - name: Install native compiler dependencies
+        run: sudo apt-get update && sudo apt-get install --yes libcurl4-openssl-dev libxml2-dev ninja-build
+      - name: Build and test exact native compiler
         working-directory: ilic-fork
+        run: |
+          cmake -S . -B build/language-tools -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/language-tools --parallel
+          ctest --test-dir build/language-tools --output-on-failure
+      - name: Install pinned Emscripten SDK and build exact compiler WASM
+        working-directory: ilic-fork
+        env:
+          ILIC_WASM_VERSION: ${{ steps.lock.outputs.compiler_version }}
+        shell: bash
         run: |
           set -euo pipefail
           emscripten_version=$(tr -d '[:space:]' < .emscripten-version)
           git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
           "$RUNNER_TEMP/emsdk/emsdk" install "$emscripten_version"
           "$RUNNER_TEMP/emsdk/emsdk" activate "$emscripten_version"
-      - name: Build exact compiler WASM
-        shell: bash
-        working-directory: ilic-fork
-        env:
-          ILIC_WASM_VERSION: ${{ needs.resolve-refs.outputs.compiler_version }}
-        run: |
-          set -euo pipefail
           source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
           ./scripts/build-wasm.sh
-      - name: Install locked language-tool dependencies
+      - name: Install, lint, typecheck, test, and build language tools
         working-directory: interlis-language-tools
-        run: pnpm install --frozen-lockfile
-      - name: Lint, typecheck and test language tools
-        working-directory: interlis-language-tools
-        run: pnpm check
-      - name: Generate core coverage report (non-blocking)
-        continue-on-error: true
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm check
+      - name: Stage and verify exactly five package tarballs
         working-directory: interlis-language-tools
         env:
-          SKIP_PERFORMANCE_BUDGETS: "1"
-        run: pnpm --filter @ilic/language-service test:coverage
-      - name: Upload core coverage report
-        if: always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: interlis-language-service-coverage-${{ github.run_id }}
-          path: interlis-language-tools/packages/language-service/coverage
-          if-no-files-found: ignore
-          retention-days: 14
+          RELEASE_BUILT_AT: ${{ steps.contract.outputs.built_at }}
+          RELEASE_CHANNEL: ${{ steps.contract.outputs.channel }}
+          RELEASE_RUN_ID: ${{ github.run_id }}
+          SOURCE_SHA: ${{ steps.contract.outputs.source_sha }}
+        run: pnpm pack:verify
       - name: Check production licenses and vulnerabilities
         working-directory: interlis-language-tools
         run: pnpm licenses:check && pnpm security:check
-      - name: Select unique snapshot timestamp
-        id: stage_timestamp
-        shell: bash
-        run: echo "timestamp=$(date -u +%Y%m%d%H%M%S)" >> "$GITHUB_OUTPUT"
-      - name: Stage and verify all package tarballs
-        id: stage
+      - name: Collect publish-only artifacts
         working-directory: interlis-language-tools
-        env:
-          SNAPSHOT_TIMESTAMP: ${{ steps.stage_timestamp.outputs.timestamp }}
-          SNAPSHOT_BUILD_ID: ${{ github.run_id }}
-          COMPILER_VERSION: ${{ needs.resolve-refs.outputs.compiler_version }}
-          COMPILER_SHA: ${{ needs.resolve-refs.outputs.compiler_sha }}
         shell: bash
         run: |
           set -euo pipefail
-          pnpm pack:verify
-          echo "snapshot_version=$(node -e 'const m=require("./artifacts/npm/snapshot-manifest.json"); console.log(m.snapshotVersion)')" >> "$GITHUB_OUTPUT"
-          echo "compiler_version=$(node -e 'const m=require("./artifacts/npm/snapshot-manifest.json"); console.log(m.compilerVersion)')" >> "$GITHUB_OUTPUT"
-          echo "timestamp=$SNAPSHOT_TIMESTAMP" >> "$GITHUB_OUTPUT"
-          echo "build_id=$SNAPSHOT_BUILD_ID" >> "$GITHUB_OUTPUT"
-          echo "language_timestamp=$SNAPSHOT_TIMESTAMP" >> "$GITHUB_OUTPUT"
-          echo "language_build_id=$SNAPSHOT_BUILD_ID" >> "$GITHUB_OUTPUT"
-      - name: Create release manifest
-        working-directory: interlis-language-tools
-        env:
-          COMPILER_SHA: ${{ needs.resolve-refs.outputs.compiler_sha }}
-          COMPILER_VERSION: ${{ needs.resolve-refs.outputs.compiler_version }}
-          LANGUAGE_TOOLS_SHA: ${{ needs.resolve-refs.outputs.language_tools_sha }}
-          RELEASE_RUN_ID: ${{ github.run_id }}
-        run: |
-          jq \
-            --arg compilerSha "$COMPILER_SHA" \
-            --arg compilerVersion "$COMPILER_VERSION" \
-            --arg languageToolsSha "$LANGUAGE_TOOLS_SHA" \
-            --arg releaseRunId "$RELEASE_RUN_ID" \
-            '. + {
-              compilerSha: $compilerSha,
-              compilerChannel: (if ($compilerVersion | test("-SNAPSHOT")) then "snapshot" else "stable" end),
-              languageToolsSha: $languageToolsSha,
-              releaseRunId: $releaseRunId,
-              languageTimestamp: .timestamp,
-              languageBuildId: .buildId,
-              compilerTimestamp,
-              compilerBuildId
-            }' \
-            artifacts/npm/snapshot-manifest.json > artifacts/npm/release-manifest.json
-      - name: Upload verified release artifacts
-        uses: actions/upload-artifact@v6
+          mkdir -p publish-artifacts
+          cp artifacts/npm/*.tgz publish-artifacts/
+          cp artifacts/npm/package-manifest.json publish-artifacts/
+          cp artifacts/interlis-release.json publish-artifacts/
+          test "$(find publish-artifacts -name '*.tgz' | wc -l | tr -d ' ')" = 5
+      - uses: actions/upload-artifact@v6
         with:
-          name: interlis-release-${{ github.run_id }}
-          path: |
-            interlis-language-tools/artifacts/npm/*.tgz
-            interlis-language-tools/artifacts/npm/snapshot-manifest.json
-            interlis-language-tools/artifacts/npm/release-manifest.json
+          name: language-tools-release-${{ github.run_id }}
+          path: interlis-language-tools/publish-artifacts
           if-no-files-found: error
           retention-days: 14
 
   publish:
-    name: Publish coordinated npm packages
-    needs:
-      - resolve-refs
-      - build
+    name: Publish immutable npm packages
+    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
       id-token: write
-    outputs:
-      published: ${{ steps.manifest.outputs.published }}
     steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.resolve-refs.outputs.language_tools_sha }}
-          persist-credentials: false
       - uses: actions/download-artifact@v7
         with:
-          name: interlis-release-${{ github.run_id }}
-          path: artifacts/npm
+          name: language-tools-release-${{ github.run_id }}
+          path: artifacts
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
@@ -317,84 +176,61 @@ jobs:
           package-manager-cache: false
       - name: Install OIDC-capable npm
         run: npm install --global npm@11.18.0
-      - name: Publish packages in dependency order
+      - name: Validate artifact provenance
         env:
-          NPM_CONFIG_PROVENANCE: true
+          EXPECTED_CHANNEL: ${{ needs.build.outputs.channel }}
+          EXPECTED_SHA: ${{ needs.build.outputs.source_sha }}
+          EXPECTED_VERSION: ${{ needs.build.outputs.artifact_version }}
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "${{ needs.resolve-refs.outputs.language_tools_sha }}"
-
+          test "$(node -p "require('./artifacts/package-manifest.json').sourceSha")" = "$EXPECTED_SHA"
+          test "$(node -p "require('./artifacts/package-manifest.json').artifactVersion")" = "$EXPECTED_VERSION"
+          test "$(node -p "require('./artifacts/package-manifest.json').channel")" = "$EXPECTED_CHANNEL"
+          test "$(node -p "require('./artifacts/interlis-release.json').sourceSha")" = "$EXPECTED_SHA"
+      - name: Publish in dependency order without replacing a version
+        env:
+          EXPECTED_SHA: ${{ needs.build.outputs.source_sha }}
+          NPM_CONFIG_PROVENANCE: true
+          NPM_DIST_TAG: ${{ needs.build.outputs.npm_dist_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
           publish_if_missing() {
             local tarball="$1"
-            local expected_git_head="$2"
-            local package_name
-            local package_version
-            local existing_git_head
-            package_name=$(tar -xOf "$tarball" package/package.json | node -e 'let d=""; process.stdin.on("data", c => d += c).on("end", () => console.log(JSON.parse(d).name))')
-            package_version=$(tar -xOf "$tarball" package/package.json | node -e 'let d=""; process.stdin.on("data", c => d += c).on("end", () => console.log(JSON.parse(d).version))')
+            local package_name package_version existing_git_head packed_git_head
+            package_name=$(tar -xOf "$tarball" package/package.json | node -p 'JSON.parse(require("fs").readFileSync(0,"utf8")).name')
+            package_version=$(tar -xOf "$tarball" package/package.json | node -p 'JSON.parse(require("fs").readFileSync(0,"utf8")).version')
+            packed_git_head=$(tar -xOf "$tarball" package/package.json | node -p 'JSON.parse(require("fs").readFileSync(0,"utf8")).gitHead')
+            test "$packed_git_head" = "$EXPECTED_SHA"
             if npm view "$package_name@$package_version" version >/dev/null 2>&1; then
               existing_git_head=$(npm view "$package_name@$package_version" gitHead 2>/dev/null || true)
-              if [[ "$existing_git_head" != "$expected_git_head" ]]; then
-                echo "$package_name@$package_version has gitHead ${existing_git_head:-<missing>}, expected $expected_git_head" >&2
-                exit 1
-              fi
+              test "$existing_git_head" = "$EXPECTED_SHA"
               echo "Already published from the expected commit: $package_name@$package_version"
               return
             fi
-            npm publish "$tarball" --access public --tag snapshot
+            npm publish "$tarball" --access public --tag "$NPM_DIST_TAG"
           }
-
-          require_existing() {
-            local tarball="$1"
-            local expected_git_head="$2"
-            local package_name
-            local package_version
-            local existing_git_head
-            package_name=$(tar -xOf "$tarball" package/package.json | node -e 'let d=""; process.stdin.on("data", c => d += c).on("end", () => console.log(JSON.parse(d).name))')
-            package_version=$(tar -xOf "$tarball" package/package.json | node -e 'let d=""; process.stdin.on("data", c => d += c).on("end", () => console.log(JSON.parse(d).version))')
-            if ! npm view "$package_name@$package_version" version >/dev/null 2>&1; then
-              echo "$package_name@$package_version must be published by the compiler release before language tools" >&2
-              exit 1
-            fi
-            existing_git_head=$(npm view "$package_name@$package_version" gitHead 2>/dev/null || true)
-            if [[ "$existing_git_head" != "$expected_git_head" ]]; then
-              echo "$package_name@$package_version has gitHead ${existing_git_head:-<missing>}, expected $expected_git_head" >&2
-              exit 1
-            fi
-            echo "Verified upstream compiler package: $package_name@$package_version"
-          }
-
-          compiler_sha="${{ needs.resolve-refs.outputs.compiler_sha }}"
-          language_tools_sha="${{ needs.resolve-refs.outputs.language_tools_sha }}"
-          require_existing artifacts/npm/ilic-repository-core-snapshot.tgz "$compiler_sha"
-          require_existing artifacts/npm/ilic-tools-snapshot.tgz "$compiler_sha"
-          require_existing artifacts/npm/ilic-compiler-wasm-snapshot.tgz "$compiler_sha"
-          publish_if_missing artifacts/npm/ilic-language-service-snapshot.tgz "$language_tools_sha"
-          publish_if_missing artifacts/npm/ilic-monaco-adapter-snapshot.tgz "$language_tools_sha"
-          publish_if_missing artifacts/npm/ilic-diagram-snapshot.tgz "$language_tools_sha"
-          publish_if_missing artifacts/npm/ilic-docx-snapshot.tgz "$language_tools_sha"
-          publish_if_missing artifacts/npm/ilic-language-server-snapshot.tgz "$language_tools_sha"
-      - name: Validate publication manifest
-        id: manifest
-        shell: bash
-        run: |
-          set -euo pipefail
-          jq -e '.compilerSha and .languageToolsSha and .compilerVersion and .snapshotVersion and .languageTimestamp and .languageBuildId' artifacts/npm/release-manifest.json >/dev/null
-          echo 'published=true' >> "$GITHUB_OUTPUT"
-      - name: Dispatch coordinated release to Web IDE
+          publish_if_missing artifacts/ilic-language-service.tgz
+          publish_if_missing artifacts/ilic-monaco-adapter.tgz
+          publish_if_missing artifacts/ilic-diagram.tgz
+          publish_if_missing artifacts/ilic-docx.tgz
+          publish_if_missing artifacts/ilic-language-server.tgz
+      - name: Dispatch the explicitly published set to the Web IDE
         env:
           RELEASE_DISPATCH_TOKEN: ${{ secrets.RELEASE_DISPATCH_TOKEN }}
         shell: bash
         run: |
-          set -euo pipefail
           if [[ -z "$RELEASE_DISPATCH_TOKEN" ]]; then
-            echo "RELEASE_DISPATCH_TOKEN is required to deploy the coordinated Web IDE release" >&2
-            exit 1
+            echo "No Web IDE dispatch token configured; npm publication remains valid."
+            exit 0
           fi
-          payload=$(jq -c '{compiler_sha: .compilerSha, compiler_channel: .compilerChannel, language_tools_sha: .languageToolsSha, compiler_version: .compilerVersion, language_tools_version: .snapshotVersion, compiler_timestamp: .compilerTimestamp, compiler_build_id: (.compilerBuildId // ""), language_timestamp: .languageTimestamp, language_build_id: (.languageBuildId // ""), release_run_id: .releaseRunId}' artifacts/npm/release-manifest.json)
-          jq -e 'length <= 10' <<<"$payload" >/dev/null
-          jq -n --arg event "release-train-published" --argjson payload "$payload" '{event_type: $event, client_payload: $payload}' \
+          jq -n \
+            --arg compiler_sha '${{ needs.build.outputs.compiler_sha }}' \
+            --arg compiler_version '${{ needs.build.outputs.compiler_version }}' \
+            --arg language_tools_sha '${{ needs.build.outputs.source_sha }}' \
+            --arg language_tools_version '${{ needs.build.outputs.artifact_version }}' \
+            '{event_type:"release-train-published",client_payload:{compiler_sha:$compiler_sha,compiler_version:$compiler_version,language_tools_sha:$language_tools_sha,language_tools_version:$language_tools_version}}' \
             | curl --fail-with-body --silent --show-error \
                 -X POST \
                 -H "Accept: application/vnd.github+json" \
@@ -402,12 +238,3 @@ jobs:
                 -H "X-GitHub-Api-Version: 2022-11-28" \
                 https://api.github.com/repos/edigonzales/interlis-web-ide/dispatches \
                 --data-binary @-
-      - name: Write publication summary
-        if: success()
-        run: |
-          {
-            echo '## Coordinated npm snapshot published'
-            echo
-            jq -r '"- Compiler: `\(.compilerVersion)` (\(.compilerSha))"' artifacts/npm/release-manifest.json
-            jq -r '"- Language tools: `\(.snapshotVersion)` (\(.languageToolsSha))"' artifacts/npm/release-manifest.json
-          } >> "$GITHUB_STEP_SUMMARY"

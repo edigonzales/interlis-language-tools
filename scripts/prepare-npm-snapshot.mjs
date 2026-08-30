@@ -2,7 +2,6 @@
 
 import { spawnSync } from "node:child_process";
 import {
-  appendFile,
   cp,
   mkdir,
   readFile,
@@ -22,13 +21,12 @@ import {
 } from "node:path";
 import { pathToFileURL } from "node:url";
 
-const BASE_VERSION = "0.1.2";
-export const COMPILER_BASE_VERSION = "0.10.0";
-export const TEMPORARILY_ACCEPTED_SNAPSHOT_BASES = new Set([
-  "0.9.9",
-  "0.9.10",
-  COMPILER_BASE_VERSION,
-]);
+import {
+  assertStableDependencies,
+  loadDependencyLock,
+  snapshotVersion,
+} from "./release-metadata.mjs";
+
 const LANGUAGE_PACKAGES = [
   { id: "language-service", name: "@ilic/language-service" },
   { id: "monaco-adapter", name: "@ilic/monaco-adapter" },
@@ -36,182 +34,8 @@ const LANGUAGE_PACKAGES = [
   { id: "docx", name: "@ilic/docx" },
   { id: "language-server", name: "@ilic/language-server" },
 ];
-const COMPILER_PACKAGES = [
-  {
-    id: "repository-core",
-    name: "@ilic/repository-core",
-    compilerId: "repository_core",
-  },
-  { id: "tools", name: "@ilic/tools", compilerId: "tools" },
-  {
-    id: "compiler-wasm",
-    name: "@ilic/compiler-wasm",
-    compilerId: "compiler_wasm",
-  },
-];
-const INTERNAL_NAMES = new Set(LANGUAGE_PACKAGES.map(({ name }) => name));
-
-function twoDigits(value) {
-  return String(value).padStart(2, "0");
-}
-
-export function formatUtcTimestamp(date = new Date()) {
-  return (
-    `${date.getUTCFullYear()}${twoDigits(date.getUTCMonth() + 1)}` +
-    `${twoDigits(date.getUTCDate())}${twoDigits(date.getUTCHours())}` +
-    `${twoDigits(date.getUTCMinutes())}${twoDigits(date.getUTCSeconds())}`
-  );
-}
-
-export function validateTimestamp(timestamp) {
-  if (!/^\d{14}$/.test(timestamp)) {
-    throw new Error("Snapshot timestamp must use UTC format YYYYMMDDHHmmss");
-  }
-  const parts = [
-    Number(timestamp.slice(0, 4)),
-    Number(timestamp.slice(4, 6)),
-    Number(timestamp.slice(6, 8)),
-    Number(timestamp.slice(8, 10)),
-    Number(timestamp.slice(10, 12)),
-    Number(timestamp.slice(12, 14)),
-  ];
-  const date = new Date(
-    Date.UTC(parts[0], parts[1] - 1, parts[2], parts[3], parts[4], parts[5]),
-  );
-  if (parts[0] < 2000 || formatUtcTimestamp(date) !== timestamp) {
-    throw new Error(`Invalid UTC snapshot timestamp ${timestamp}`);
-  }
-}
-
-export function validateBuildId(buildId) {
-  if (buildId === undefined || buildId === null || buildId === "")
-    return undefined;
-  const normalized = String(buildId);
-  if (!/^\d+$/.test(normalized)) {
-    throw new Error("Snapshot build ID must contain only digits");
-  }
-  return normalized;
-}
-
-function snapshotVersion(baseVersion, timestamp, buildId) {
-  const normalizedBuildId = validateBuildId(buildId);
-  return `${baseVersion}-SNAPSHOT.${timestamp}${normalizedBuildId ? `.${normalizedBuildId}` : ""}`;
-}
-
-export function languageSnapshotVersion(timestamp, buildId) {
-  validateTimestamp(timestamp);
-  return snapshotVersion(BASE_VERSION, timestamp, buildId);
-}
-
-export function compilerSnapshotVersion(timestamp, buildId) {
-  validateTimestamp(timestamp);
-  return snapshotVersion(COMPILER_BASE_VERSION, timestamp, buildId);
-}
-
-export function parseCompilerVersion(version) {
-  if (typeof version !== "string") {
-    throw new Error(
-      `Compiler version must be X.Y.Z or X.Y.Z-SNAPSHOT.YYYYMMDDHHmmss[.buildId], received ${String(version)}`,
-    );
-  }
-  const stable = version.match(/^(\d+\.\d+\.\d+)$/);
-  if (stable) {
-    return { kind: "stable", baseVersion: stable[1], version };
-  }
-  const snapshot = version.match(
-    /^(\d+\.\d+\.\d+)-SNAPSHOT\.(\d{14})(?:\.(\d+))?$/,
-  );
-  if (!snapshot) {
-    throw new Error(
-      `Compiler version must be X.Y.Z or X.Y.Z-SNAPSHOT.YYYYMMDDHHmmss[.buildId], received ${version}`,
-    );
-  }
-  validateTimestamp(snapshot[2]);
-  return {
-    kind: "snapshot",
-    baseVersion: snapshot[1],
-    timestamp: snapshot[2],
-    buildId: snapshot[3],
-    version,
-  };
-}
-
-export function parseCompilerSnapshotVersion(version) {
-  const parsed = parseCompilerVersion(version);
-  if (parsed.kind !== "snapshot") {
-    throw new Error(
-      `Compiler version must be a snapshot, received ${version}`,
-    );
-  }
-  return { timestamp: parsed.timestamp, buildId: parsed.buildId };
-}
-
-export function validateCompilerVersionForSource(
-  compilerVersion,
-  checkedOutCompilerBaseVersion,
-) {
-  const parsed =
-    typeof compilerVersion === "string"
-      ? parseCompilerVersion(compilerVersion)
-      : compilerVersion;
-  if (parsed.kind === "stable" && parsed.baseVersion !== COMPILER_BASE_VERSION) {
-    throw new Error(
-      `Stable compiler version must be ${COMPILER_BASE_VERSION}, received ${parsed.version}`,
-    );
-  }
-  if (
-    parsed.kind === "snapshot" &&
-    !TEMPORARILY_ACCEPTED_SNAPSHOT_BASES.has(parsed.baseVersion)
-  ) {
-    throw new Error(
-      `Unsupported compiler snapshot base ${parsed.baseVersion}; expected ${[...TEMPORARILY_ACCEPTED_SNAPSHOT_BASES].join(" or ")}`,
-    );
-  }
-  if (parsed.baseVersion !== checkedOutCompilerBaseVersion) {
-    throw new Error(
-      `Compiler version ${parsed.version} has base ${parsed.baseVersion}, but the checked-out ilic source has base ${checkedOutCompilerBaseVersion}`,
-    );
-  }
-  return parsed;
-}
-
-export async function readCompilerBaseVersion(compilerProjectRoot) {
-  const cmakeText = await readFile(
-    resolve(compilerProjectRoot, "CMakeLists.txt"),
-    "utf8",
-  );
-  const matches = [
-    ...cmakeText.matchAll(
-      /project\s*\(\s*ilic\s+VERSION\s+(\d+\.\d+\.\d+)(?=\s|\))/gi,
-    ),
-  ];
-  if (matches.length !== 1) {
-    throw new Error(
-      `Expected exactly one project(ilic VERSION X.Y.Z ...) declaration in ${resolve(compilerProjectRoot, "CMakeLists.txt")}, found ${matches.length}`,
-    );
-  }
-  return matches[0][1];
-}
-
-export function validateFullSha(value, fieldName = "compiler SHA") {
-  if (!/^[0-9a-f]{40}$/.test(value ?? "")) {
-    throw new Error(`${fieldName} must be a full 40-character lowercase SHA`);
-  }
-  return value;
-}
-
-function readGitHead(repositoryRoot) {
-  const result = spawnSync("git", ["-C", repositoryRoot, "rev-parse", "HEAD"], {
-    encoding: "utf8",
-    stdio: "pipe",
-  });
-  if (result.status !== 0) {
-    throw new Error(
-      `Could not read compiler checkout SHA from ${repositoryRoot}: ${result.stderr.trim()}`,
-    );
-  }
-  return validateFullSha(result.stdout.trim(), "Checked-out compiler SHA");
-}
+const LANGUAGE_NAMES = new Set(LANGUAGE_PACKAGES.map(({ name }) => name));
+const FULL_SHA = /^[0-9a-f]{40}$/u;
 
 function isSameOrParent(parent, child) {
   const path = relative(parent, child);
@@ -250,10 +74,6 @@ function validatePublishPath(path, packageName) {
   }
 }
 
-async function readJson(path) {
-  return JSON.parse(await readFile(path, "utf8"));
-}
-
 async function copyPublishPath(source, destination, packageName) {
   let entry;
   try {
@@ -263,30 +83,6 @@ async function copyPublishPath(source, destination, packageName) {
   }
   await mkdir(dirname(destination), { recursive: true });
   await cp(source, destination, { recursive: entry.isDirectory() });
-}
-
-export function rewriteLanguageManifest(
-  manifest,
-  { snapshotVersion, compilerVersion },
-) {
-  if (manifest.version !== BASE_VERSION) {
-    throw new Error(
-      `${manifest.name} version ${manifest.version} does not match ${BASE_VERSION}`,
-    );
-  }
-  const dependencies = Object.fromEntries(
-    Object.entries(manifest.dependencies ?? {}).map(([name, version]) => {
-      if (INTERNAL_NAMES.has(name)) return [name, snapshotVersion];
-      if (
-        name === "@ilic/compiler-wasm" ||
-        name === "@ilic/tools" ||
-        name === "@ilic/repository-core"
-      )
-        return [name, compilerVersion];
-      return [name, version];
-    }),
-  );
-  return { ...manifest, version: snapshotVersion, dependencies };
 }
 
 function pack(directory, outputRoot, alias) {
@@ -305,109 +101,89 @@ function pack(directory, outputRoot, alias) {
   return { generated: resolve(outputRoot, packed.filename), alias };
 }
 
-export async function prepareNpmSnapshot({
+export function rewriteLanguageManifest(
+  manifest,
+  { artifactVersion, sourceSha, dependencies },
+) {
+  if (!FULL_SHA.test(sourceSha ?? "")) {
+    throw new Error("gitHead must be a full 40-character lowercase SHA");
+  }
+  const rewrittenDependencies = Object.fromEntries(
+    Object.entries(manifest.dependencies ?? {}).map(([name, version]) => {
+      if (LANGUAGE_NAMES.has(name)) return [name, artifactVersion];
+      if (dependencies[name]) return [name, dependencies[name].version];
+      return [name, version];
+    }),
+  );
+  return {
+    ...manifest,
+    version: artifactVersion,
+    gitHead: sourceSha,
+    files: [...new Set([...(manifest.files ?? []), "interlis-release.json"])],
+    dependencies: rewrittenDependencies,
+  };
+}
+
+export async function prepareNpmPackages({
   projectRoot = resolve(import.meta.dirname, ".."),
-  compilerProjectRoot = resolve(projectRoot, "../ilic-fork"),
   outputRoot = resolve(projectRoot, "artifacts/npm"),
-  timestamp = formatUtcTimestamp(),
-  buildId,
-  compilerVersion,
-  compilerSha,
+  sourceSha,
+  channel = "snapshot",
+  releaseManifestPath,
 } = {}) {
   projectRoot = resolve(projectRoot);
-  compilerProjectRoot = resolve(compilerProjectRoot);
   outputRoot = resolve(outputRoot);
-  validateTimestamp(timestamp);
-  const normalizedBuildId = validateBuildId(buildId);
-  // This function packages a snapshot by default. Stable compiler staging is
-  // still supported, but callers must opt into it with an explicit version.
-  compilerVersion ??= compilerSnapshotVersion(timestamp, normalizedBuildId);
-  validateOutputRoot(projectRoot, outputRoot);
-  const snapshotVersion = languageSnapshotVersion(timestamp, normalizedBuildId);
-  const checkedOutCompilerBaseVersion =
-    await readCompilerBaseVersion(compilerProjectRoot);
-  const parsedCompilerVersion = validateCompilerVersionForSource(
-    compilerVersion,
-    checkedOutCompilerBaseVersion,
-  );
-  let normalizedCompilerSha = null;
-  if (compilerSha !== undefined) {
-    normalizedCompilerSha = validateFullSha(compilerSha);
-    const checkedOutCompilerSha = readGitHead(compilerProjectRoot);
-    if (normalizedCompilerSha !== checkedOutCompilerSha) {
-      throw new Error(
-        `Compiler payload SHA ${normalizedCompilerSha} does not match checked-out compiler SHA ${checkedOutCompilerSha}`,
-      );
-    }
+  if (!FULL_SHA.test(sourceSha ?? "")) {
+    throw new Error("Packaging requires a full 40-character --source-sha");
   }
-
-  const workspaceManifest = await readJson(
-    resolve(projectRoot, "package.json"),
+  if (!new Set(["snapshot", "stable"]).has(channel)) {
+    throw new Error("Packaging channel must be snapshot or stable");
+  }
+  if (!releaseManifestPath)
+    throw new Error("Packaging requires --release-manifest");
+  validateOutputRoot(projectRoot, outputRoot);
+  const lock = await loadDependencyLock(projectRoot);
+  if (channel === "stable") assertStableDependencies(lock);
+  const artifactVersion =
+    channel === "snapshot"
+      ? snapshotVersion(lock.artifactBaseVersion, sourceSha)
+      : lock.artifactBaseVersion;
+  const releaseManifest = JSON.parse(
+    await readFile(resolve(releaseManifestPath), "utf8"),
   );
-  if (workspaceManifest.version !== BASE_VERSION) {
+  if (
+    releaseManifest.project !== "interlis-language-tools" ||
+    releaseManifest.artifactVersion !== artifactVersion ||
+    releaseManifest.sourceSha !== sourceSha ||
+    releaseManifest.channel !== channel ||
+    JSON.stringify(releaseManifest.dependencies) !==
+      JSON.stringify(lock.dependencies)
+  ) {
     throw new Error(
-      `Workspace version ${workspaceManifest.version} does not match ${BASE_VERSION}`,
+      "Release manifest does not match source SHA, channel, version, and dependency lock",
     );
   }
 
   await rm(outputRoot, { recursive: true, force: true });
   await mkdir(outputRoot, { recursive: true });
-
-  const compilerScript =
-    parsedCompilerVersion.kind === "stable"
-      ? "prepare-npm-release.mjs"
-      : "prepare-npm-snapshot.mjs";
-  const compilerModule = await import(
-    pathToFileURL(resolve(compilerProjectRoot, "scripts", compilerScript)).href
-  );
-  const compiler =
-    parsedCompilerVersion.kind === "stable"
-      ? await compilerModule.prepareNpmRelease({
-          projectRoot: compilerProjectRoot,
-          outputRoot: resolve(outputRoot, "staging/compiler"),
-          expectedVersion: compilerVersion,
-        })
-      : await compilerModule.prepareNpmSnapshot({
-          projectRoot: compilerProjectRoot,
-          outputRoot: resolve(outputRoot, "staging/compiler"),
-          timestamp: parsedCompilerVersion.timestamp,
-          buildId: parsedCompilerVersion.buildId,
-        });
-  const stagedCompilerVersion =
-    parsedCompilerVersion.kind === "stable"
-      ? compiler.releaseVersion
-      : compiler.snapshotVersion;
-  if (stagedCompilerVersion !== compilerVersion) {
-    throw new Error(
-      `Staged compiler version ${stagedCompilerVersion} does not match ${compilerVersion}`,
-    );
-  }
-
   const packageResults = {};
-  for (const spec of COMPILER_PACKAGES) {
-    const directory = compiler.directories[spec.compilerId];
-    const alias = resolve(outputRoot, `ilic-${spec.id}-snapshot.tgz`);
-    const packed = pack(directory, outputRoot, alias);
-    await rename(packed.generated, alias);
-    packageResults[spec.name] = {
-      version: compilerVersion,
-      tarball: alias,
-      stagingDirectory: directory,
-    };
-  }
-
   for (const spec of LANGUAGE_PACKAGES) {
     const source = resolve(projectRoot, `packages/${spec.id}`);
-    const manifest = await readJson(resolve(source, "package.json"));
-    if (manifest.name !== spec.name) {
+    const manifest = JSON.parse(
+      await readFile(resolve(source, "package.json"), "utf8"),
+    );
+    if (
+      manifest.name !== spec.name ||
+      manifest.version !== lock.artifactBaseVersion
+    ) {
       throw new Error(
-        `packages/${spec.id}/package.json must be named ${spec.name}`,
+        `${spec.name} source manifest differs from the committed lock`,
       );
     }
     if (!Array.isArray(manifest.files) || manifest.files.length === 0) {
       throw new Error(`${spec.name} must declare a non-empty files list`);
     }
-    const destination = resolve(outputRoot, `staging/language/${spec.id}`);
+    const destination = resolve(outputRoot, `staging/${spec.id}`);
     await mkdir(destination, { recursive: true });
     for (const path of manifest.files) {
       validatePublishPath(path, spec.name);
@@ -418,123 +194,71 @@ export async function prepareNpmSnapshot({
       );
     }
     await cp(resolve(projectRoot, "LICENSE"), resolve(destination, "LICENSE"));
+    await writeFile(
+      resolve(destination, "interlis-release.json"),
+      `${JSON.stringify(releaseManifest, null, 2)}\n`,
+    );
     const stagedManifest = rewriteLanguageManifest(manifest, {
-      snapshotVersion,
-      compilerVersion,
+      artifactVersion,
+      sourceSha,
+      dependencies: lock.dependencies,
     });
     await writeFile(
       resolve(destination, "package.json"),
       `${JSON.stringify(stagedManifest, null, 2)}\n`,
     );
-    const alias = resolve(outputRoot, `ilic-${spec.id}-snapshot.tgz`);
+    const alias = resolve(outputRoot, `ilic-${spec.id}.tgz`);
     const packed = pack(destination, outputRoot, alias);
     await rename(packed.generated, alias);
     packageResults[spec.name] = {
-      version: snapshotVersion,
+      version: artifactVersion,
       tarball: alias,
       stagingDirectory: destination,
     };
   }
 
-  const result = {
+  const packageManifest = {
     schemaVersion: 1,
-    timestamp,
-    buildId: normalizedBuildId ?? null,
-    snapshotVersion,
-    compilerVersion,
-    compilerVersionKind: parsedCompilerVersion.kind,
-    compilerBaseVersion: parsedCompilerVersion.baseVersion,
-    compilerSha: normalizedCompilerSha,
-    compilerTimestamp:
-      parsedCompilerVersion.kind === "snapshot"
-        ? parsedCompilerVersion.timestamp
-        : null,
-    compilerBuildId:
-      parsedCompilerVersion.kind === "snapshot"
-        ? (parsedCompilerVersion.buildId ?? null)
-        : null,
-    outputRoot,
-    packages: packageResults,
+    artifactVersion,
+    channel,
+    sourceSha,
+    gitHead: sourceSha,
+    dependencies: lock.dependencies,
+    packages: Object.fromEntries(
+      Object.entries(packageResults).map(([name, value]) => [
+        name,
+        { version: value.version, tarball: basename(value.tarball) },
+      ]),
+    ),
   };
   await writeFile(
-    resolve(outputRoot, "snapshot-manifest.json"),
-    `${JSON.stringify(
-      {
-        schemaVersion: result.schemaVersion,
-        timestamp,
-        buildId: result.buildId,
-        snapshotVersion,
-        compilerVersion,
-        compilerVersionKind: result.compilerVersionKind,
-        compilerBaseVersion: result.compilerBaseVersion,
-        compilerSha: result.compilerSha,
-        compilerTimestamp: result.compilerTimestamp,
-        compilerBuildId: result.compilerBuildId,
-        packages: Object.fromEntries(
-          Object.entries(packageResults).map(([name, value]) => [
-            name,
-            { version: value.version, tarball: basename(value.tarball) },
-          ]),
-        ),
-      },
-      null,
-      2,
-    )}\n`,
+    resolve(outputRoot, "package-manifest.json"),
+    `${JSON.stringify(packageManifest, null, 2)}\n`,
   );
-  return result;
+  return { ...packageManifest, outputRoot, packages: packageResults };
 }
 
 function parseArguments(argv) {
   const options = {};
-  let githubOutput;
-  for (let index = 0; index < argv.length; index += 1) {
+  for (let index = 0; index < argv.length; index += 2) {
     const argument = argv[index];
     const value = argv[index + 1];
-    if (
-      [
-        "--project-root",
-        "--compiler-project-root",
-        "--output",
-        "--timestamp",
-        "--build-id",
-        "--compiler-version",
-        "--compiler-sha",
-        "--github-output",
-      ].includes(argument)
-    ) {
-      if (!value) throw new Error(`${argument} requires a value`);
-      index += 1;
-      if (argument === "--project-root") options.projectRoot = resolve(value);
-      else if (argument === "--compiler-project-root") {
-        options.compilerProjectRoot = resolve(value);
-      } else if (argument === "--output") options.outputRoot = resolve(value);
-      else if (argument === "--timestamp") options.timestamp = value;
-      else if (argument === "--build-id") options.buildId = value;
-      else if (argument === "--compiler-version")
-        options.compilerVersion = value;
-      else if (argument === "--compiler-sha") options.compilerSha = value;
-      else githubOutput = value;
-    } else {
-      throw new Error(`Unknown argument ${argument}`);
-    }
+    if (!value) throw new Error(`${argument} requires a value`);
+    if (argument === "--project-root") options.projectRoot = resolve(value);
+    else if (argument === "--output") options.outputRoot = resolve(value);
+    else if (argument === "--source-sha") options.sourceSha = value;
+    else if (argument === "--channel") options.channel = value;
+    else if (argument === "--release-manifest")
+      options.releaseManifestPath = resolve(value);
+    else throw new Error(`Unknown argument ${argument}`);
   }
-  return { options, githubOutput };
+  return options;
 }
 
 async function main() {
-  const { options, githubOutput } = parseArguments(process.argv.slice(2));
-  const result = await prepareNpmSnapshot(options);
-  if (githubOutput) {
-    await appendFile(
-      githubOutput,
-      [
-        `snapshot_version=${result.snapshotVersion}`,
-        `compiler_version=${result.compilerVersion}`,
-        `artifact_directory=${result.outputRoot}`,
-        "",
-      ].join("\n"),
-    );
-  }
+  const result = await prepareNpmPackages(
+    parseArguments(process.argv.slice(2)),
+  );
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 }
 
