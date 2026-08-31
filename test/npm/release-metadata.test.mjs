@@ -105,5 +105,6 @@ test("publish workflow is manual for snapshots and tag-only for stable releases"
   assert.match(workflow, /workflow_dispatch:/u);
   assert.match(workflow, /tags:\s*\n\s*- ['"]v\*['"]/u);
   assert.doesNotMatch(workflow, /workflow_run:|repository_dispatch:/u);
+  assert.doesNotMatch(workflow, /RELEASE_DISPATCH_TOKEN|\/dispatches/u);
   assert.match(workflow, /--tag "\$NPM_DIST_TAG"/u);
 });

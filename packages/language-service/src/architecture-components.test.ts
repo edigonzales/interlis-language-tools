@@ -6,7 +6,7 @@ import { LanguageServiceEventHub } from "./events/language-service-event-hub.js"
 import { WorkerLifecycleTracker } from "./workers/worker-lifecycle-tracker.js";
 import { WorkerSourceMirror } from "./workers/worker-source-mirror.js";
 
-describe("P7 language-service boundaries", () => {
+describe("language-service architecture boundaries", () => {
   it("keeps document, workspace and repository source precedence explicit", () => {
     const registry = new SourceRegistry();
     registry.putWorkspaceSource("memory:///Model.ili", "workspace", 1);

@@ -1,26 +1,26 @@
-# ADR 0001: Repository and runtime boundaries
+# ADR 0001: Repository- und Laufzeitgrenzen
 
-Status: accepted
+Status: akzeptiert
 
-## Decision
+## Entscheidung
 
-`ilic-fork` owns the native compiler, WASM bindings and repository primitives.
-This repository owns all host-neutral language intelligence plus its LSP,
-Monaco, diagram, DOCX and VS Code adapters. The separately deployed
-`interlis-web-ide` consumes the public packages from this repository.
+`ilic-fork` verantwortet den nativen Compiler, die WASM-Bindings und die
+Repository-Primitiven. Dieses Repository enthält die hostunabhängige
+Sprachlogik sowie die Adapter für LSP, Monaco, Diagramm, DOCX und VS Code. Die
+separat deployte `interlis-web-ide` konsumiert die veröffentlichten Pakete.
 
-The language service is the architecture boundary. LSP is a protocol adapter,
-not the location of language business logic. Monaco invokes the same service
-directly inside a worker.
+Der Language Service ist die Architekturgrenze. LSP ist ein Protokolladapter,
+nicht der Ort der fachlichen Sprachlogik. Monaco ruft denselben Service direkt
+in einem Worker auf.
 
-The live diagram uses Sprotty with elkjs. It does not use a GLSP server or a
-WebSocket because the diagram is a read-only projection of a semantic
-snapshot.
+Das Live-Diagramm verwendet Sprotty und `elkjs`. Ein GLSP-Server und WebSocket
+sind unnötig, weil das Diagramm eine schreibgeschützte Projektion eines
+semantischen Snapshots ist.
 
-## Consequences
+## Konsequenzen
 
-- Unsaved documents are first-class inputs in every host.
-- Node and browser builds differ only in transport, filesystem and cache
-  adapters.
-- Cross-repository development uses generated package tarballs; no copied
-  source or Git submodules are allowed.
+- Ungespeicherte Dokumente sind in jedem Host vollwertige Eingaben.
+- Node- und Browser-Builds unterscheiden sich nur in Transport-, Dateisystem-
+  und Cache-Adaptern.
+- Repositoryübergreifende Entwicklung verwendet erzeugte Paket-Tarballs; Code-
+  Kopien und Git-Submodule sind ausgeschlossen.

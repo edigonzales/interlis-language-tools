@@ -1,59 +1,39 @@
-# INTERLIS Language Tools
+# INTERLIS Language Tools für VS Code
 
-Java-free INTERLIS 2.3/2.4 language intelligence for VS Code Desktop, VS Code
-Web and compatible Theia products.
+Javafreie Sprachunterstützung für INTERLIS 2.3 und 2.4 in VS Code Desktop,
+VS Code Web und kompatiblen Theia-Produkten.
 
-## Features
+## Funktionen
 
-- conservative live diagnostics in an independent editor worker, plus
-  authoritative open/save/manual-compile diagnostics;
-- snapshot-based completion, hover, definitions, references and safe rename
-  for current unsaved INTERLIS 2.3/2.4 documents;
-- document symbols, full-document and on-type formatting;
-- parser-aware suggestions, snippets, templates and INTERLIS syntax themes;
-- single-root, dependency-aware compilation with structured Problems and a
-  fully replaced CLI-style compiler transcript with final error/warning
-  summary; Debug remains append-only;
-- synchronized `elkjs` live UML diagram that refreshes open views of the saved
-  root and transitively affected roots after a valid save, while preserving
-  the last-good SVG and anchored viewport for stale or invalid models; includes
-  source navigation, layout settings and semantic SVG export. The optional
-  `diagram.rendering.target=INKSCAPE` mode previews libavoid-routed orthogonal
-  and polyline connectors before exporting them; Bézier splines remain static;
-- DOCX documentation export;
-- support for saved files, untitled buffers and browser-backed virtual files.
-- repository-aware `IMPORTS` completion and transitive model resolution;
-- Ctrl-click navigation into cached repository models (local read-only files on
-  Desktop and virtual read-only documents in VS Code Web).
+- konservative Live-Diagnostik sowie verbindliche Diagnostik beim Öffnen,
+  Speichern und manuellen Kompilieren;
+- Completion, Hover, Definition, Referenzen, Dokument-Symbole, Formatierung,
+  Snippets und sicherer Rename auf aktuellen, auch ungespeicherten Dokumenten;
+- transitive Repository-Auflösung und Ctrl-Klick auf schreibgeschützte
+  Repository-Modelle;
+- strukturierte Problems- und Compiler-Ausgabe;
+- synchronisiertes `elkjs`-UML-Diagramm mit letztem gültigem Stand,
+  Quellnavigation, Layout-Einstellungen und semantischem SVG-Export;
+- DOCX-Export sowie Unterstützung für Dateien, unbenannte Puffer und virtuelle
+  Browser-Dateisysteme.
 
-Desktop runs the bundled Node server. VS Code Web runs the browser-worker server
-from the same package. No Java runtime is downloaded or required.
+Desktop startet den gebündelten Node-Server, VS Code Web den Browser-Worker aus
+demselben Paket. Eine Java-Laufzeit wird weder benötigt noch heruntergeladen.
+Die Bedienung ist unter
+[Completion und Snippets](../../docs/completion-und-snippets.md) und
+[Live-Diagnostik und Dirty-Navigation](../../docs/live-diagnostik-und-dirty-navigation.md)
+beschrieben.
 
-The German guide
-[Completion, Snippets und automatisches Blockende](https://github.com/edigonzales/interlis-language-tools/blob/main/docs/completion-und-snippets.md)
-explains exactly where suggestions appear and what Enter, Tab and the cursor
-keys do, with MODEL, TOPIC, CLASS, STRUCTURE, DOMAIN, UNIT and VIEW TOPIC
-examples.
+## Koexistenz mit der Java-Extension
 
-The German guide
-[Live-Diagnostik und Dirty-Navigation](https://github.com/edigonzales/interlis-language-tools/blob/main/docs/live-diagnostik-und-dirty-navigation.md)
-explains which findings appear while typing, which Quick Fixes are offered,
-how qualified paths are navigated and when a rename is deliberately refused.
+Ist `edigonzales.interlis-editor` aktiv, meldet diese Extension den Konflikt und
+startet keinen zweiten Server. Sie deaktiviert oder entfernt nichts
+automatisch. Einstellungen und Befehle verwenden den Namensraum
+`interlisLanguageTools.*`; passende alte `interlisLsp.*`-Werte werden als
+Fallback gelesen. Java-, JAR-, JVM- und GLSP-Transporteinstellungen gehören
+nicht mehr zum Produkt.
 
-## Coexistence with the Java extension
-
-This extension conflicts safely with `edigonzales.interlis-editor`: when the
-Java extension is active, this extension reports the conflict and does not start
-a second server. Nothing is disabled automatically. See the repository's
-migration guide before replacing the Java extension in a production workflow.
-
-Settings and commands use the `interlisLanguageTools.*` namespace. Relevant old
-`interlisLsp.*` values are accepted as fallbacks; Java/JAR/JVM and GLSP transport
-settings are intentionally absent.
-
-The default repository setting is
-`%ILI_DIR;https://models.interlis.ch`. `%ILI_DIR` gives workspace models highest
-priority. Desktop caches repository metadata and models in the extension's
-global storage. Browser hosts temporarily use the documented CORS mirrors at
-`geo.so.ch` for the central INTERLIS and federal model repositories; other
-browser repositories must support CORS themselves.
+Das voreingestellte Modell-Repository ist
+`%ILI_DIR;https://models.interlis.ch`. Details zu Priorität, Cache und den
+temporären Browser-Mirrors stehen unter
+[Modell-Repositories](../../docs/model-repositories.md).

@@ -1,71 +1,63 @@
-# Model repositories
+# Modell-Repositories
 
-INTERLIS Language Tools resolves INTERLIS 2.3 and 2.4 imports in the host, not
-inside the synchronous WASM compiler. `@ilic/language-service` exposes the
-runtime-neutral `ModelRepository` contract; Node and browser hosts implement it
-with `RepositoryManager` from `@ilic/tools`.
+Die Language Tools lösen Importe von INTERLIS-2.3- und -2.4-Modellen im Host
+auf, nicht im synchronen WASM-Aufruf. `@ilic/language-service` definiert dazu
+das laufzeitneutrale `ModelRepository`; Node- und Browser-Hosts verwenden den
+`RepositoryManager` aus `@ilic/tools`.
 
-## Resolution order and source layers
+## Reihenfolge und Auflösung
 
-The effective compiler session contains three layers, in this order:
+Eine Compiler-Session sieht Quellen in dieser Priorität:
 
-1. an open editor buffer;
-2. a saved `.ili` source from `%ILI_DIR`;
-3. a downloaded repository source.
+1. offenen Editor-Puffer;
+2. gespeicherte `.ili`-Datei aus `%ILI_DIR`;
+3. heruntergeladene Repository-Datei.
 
-Closing an editor removes only its overlay, so the saved workspace or cached
-repository source becomes visible again. Repository order in
-`interlisLanguageTools.modelRepositories` is significant. Entries marked
-`browseOnly` are neither resolved nor offered by completion.
-
-The default setting is:
+Beim Schliessen eines Editors verschwindet nur dessen Overlay. Die Reihenfolge
+in `interlisLanguageTools.modelRepositories` ist verbindlich; Einträge mit
+`browseOnly` werden weder aufgelöst noch in der Completion angeboten.
+Voreinstellung:
 
 ```text
 %ILI_DIR;https://models.interlis.ch
 ```
 
-`%ILI_DIR` enables all `.ili` files in the current workspace. `%JAR_DIR` is a
-legacy Java-extension setting; it is ignored and produces one migration
-warning. HTTP(S) entries are handed to `@ilic/tools`. One unavailable catalog
-does not discard models obtained from another configured repository.
+`%ILI_DIR` umfasst die `.ili`-Dateien des Workspace. Das alte `%JAR_DIR` wird
+ignoriert und erzeugt einmalig einen Hinweis. Fällt ein Katalog aus, bleiben
+Modelle aus anderen Repositories und aus dem Cache verfügbar.
 
-When compilation reports missing models, the language service groups them by
-the INTERLIS version of the importing document, obtains the complete dependency
-closure and performs a final compile-and-analyze run. Only that final run is
-published. A final failure is reported at the exact model name
-in `IMPORTS`. Cached metadata and model files remain usable when their origin is
-temporarily unavailable.
+Bei fehlenden Imports lädt der Language Service die vollständige transitive
+Abhängigkeitshülle für die INTERLIS-Version des importierenden Dokuments. Nur
+der abschliessende Compile-and-Analyze-Lauf wird publiziert; verbleibende
+Fehler zeigen auf den exakten Modellnamen in `IMPORTS`.
 
-## Navigation and cache
+## Cache und Navigation
 
-VS Code Desktop stores the `@ilic/tools` cache below the extension's global
-storage and materializes navigable, read-only files below:
+VS Code Desktop speichert den Cache im globalen Extension-Speicher und legt
+navigierbare, schreibgeschützte Quellen unter diesem Schema ab:
 
 ```text
 repository-models/<ili-version>/<model>/<version>/<filename>.ili
 ```
 
-VS Code Web uses `BrowserCache` and virtual read-only URIs beginning with
-`interlis-repository:`. The extension retrieves their content through the
-`interlis/repositorySource` protocol request. Repository declarations can be
-opened with Ctrl-click, but Save and Rename never modify them.
+VS Code Web verwendet `BrowserCache` und schreibgeschützte
+`interlis-repository:`-URIs. Ctrl-Klick öffnet Repository-Modelle; Speichern und
+Rename verändern sie nie.
 
-## Temporary browser mirrors
+## Browser-Mirrors
 
-Until the canonical servers support cross-origin browser requests, browser
-hosts apply these isolated aliases:
+Solange die kanonischen Server keine passenden CORS-Header liefern, gelten nur
+in Browser-Adaptern diese temporären Aliase:
 
-- `https://models.interlis.ch` becomes both
-  `https://geo.so.ch/models/mirror/interlis.ch/` and
+- `https://models.interlis.ch` auf die Mirrors
+  `https://geo.so.ch/models/mirror/interlis.ch/` und
   `https://geo.so.ch/models/mirror/geoadmin/`;
-- `http(s)://models.geo.admin.ch` becomes
+- `http(s)://models.geo.admin.ch` auf
   `https://geo.so.ch/models/mirror/geoadmin/`.
 
-Aliases are deduplicated and `ilisite.xml` links are not followed for browser
-mirrors. Node/CLI consumers continue to use canonical URLs. Additional browser
-repositories must support CORS explicitly. Remove the alias mapping from the
-browser adapters once the original services expose suitable CORS headers.
+Node- und CLI-Clients verwenden weiterhin die Original-URLs. Zusätzliche
+Browser-Repositories müssen CORS erlauben. Die Aliase können entfernt werden,
+sobald die Originaldienste passende Header ausliefern.
 
-INTERLIS 1 compilation and syntax diagnostics remain available, but semantic
-repository editor features for INTERLIS 1 are intentionally outside this
-implementation. Mermaid, PlantUML, GraphML and HTML generation remain excluded.
+Semantische Repository-Editorfunktionen für INTERLIS 1 sind bewusst nicht
+vollständig. Mermaid, PlantUML, GraphML und HTML gehören nicht zum Umfang.

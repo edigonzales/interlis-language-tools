@@ -1,4 +1,4 @@
-# Diagnostics
+# Diagnostik
 
 `@ilic/language-service` behandelt Compiler-, Live-, Saved-Lint- und
 Repository-Diagnosen als strukturierte Daten. Identität und Deduplizierung

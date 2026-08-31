@@ -1,6 +1,6 @@
 # @ilic/diagram
 
-Read-only, interactive INTERLIS UML projection using Sprotty-compatible semantic
-models and `elkjs` layout. The optional `INKSCAPE` rendering target uses
-`libavoid-js` for live orthogonal and polyline connector geometry while keeping
-true Bézier splines static.
+Interaktive, schreibgeschützte INTERLIS-UML-Projektion aus
+Sprotty-kompatiblen semantischen Modellen mit `elkjs`-Layout. Das optionale
+Rendering-Ziel `INKSCAPE` verwendet `libavoid-js` für orthogonale und
+Polyline-Verbindungen; echte Bézier-Kurven bleiben unverändert.

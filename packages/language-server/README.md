@@ -1,3 +1,4 @@
 # @ilic/language-server
 
-Thin standard-LSP adapter around `@ilic/language-service`, with Node.js and browser Web Worker entry points.
+Schlanker Standard-LSP-Adapter um `@ilic/language-service` mit Einstiegspunkten
+für Node.js und Browser Web Worker.

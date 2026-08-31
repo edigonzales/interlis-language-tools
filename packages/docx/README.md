@@ -1,3 +1,4 @@
 # @ilic/docx
 
-Browser- and Node-compatible DOCX generation from the normalized INTERLIS semantic snapshot.
+DOCX-Erzeugung aus dem normalisierten semantischen INTERLIS-Snapshot für
+Browser und Node.js.

@@ -1,4 +1,5 @@
 # @ilic/language-service
 
-Runtime-neutral INTERLIS language intelligence shared by LSP, Monaco and browser IDE adapters.
-Unsaved documents are always authoritative; no temporary model or log files are created.
+Laufzeitneutrale INTERLIS-Sprachlogik für LSP-, Monaco- und Browser-IDE-Adapter.
+Ungespeicherte Dokumente sind verbindlich; temporäre Modell- oder Logdateien
+werden nicht erzeugt.

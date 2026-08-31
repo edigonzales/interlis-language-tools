@@ -1,3 +1,4 @@
 # @ilic/monaco-adapter
 
-Registers Monaco providers directly against the shared INTERLIS language service. No JSON-RPC server is started in the browser IDE.
+Registriert Monaco-Provider direkt beim gemeinsamen INTERLIS Language Service.
+In der Browser-IDE wird kein JSON-RPC-Server gestartet.
