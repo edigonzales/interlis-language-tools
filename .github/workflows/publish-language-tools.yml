@@ -209,8 +209,8 @@ jobs:
             fi
             npm publish "$tarball" --access public --tag "$NPM_DIST_TAG"
           }
-          publish_if_missing artifacts/ilic-language-service.tgz
-          publish_if_missing artifacts/ilic-monaco-adapter.tgz
-          publish_if_missing artifacts/ilic-diagram.tgz
-          publish_if_missing artifacts/ilic-docx.tgz
-          publish_if_missing artifacts/ilic-language-server.tgz
+          publish_if_missing ./artifacts/ilic-language-service.tgz
+          publish_if_missing ./artifacts/ilic-monaco-adapter.tgz
+          publish_if_missing ./artifacts/ilic-diagram.tgz
+          publish_if_missing ./artifacts/ilic-docx.tgz
+          publish_if_missing ./artifacts/ilic-language-server.tgz

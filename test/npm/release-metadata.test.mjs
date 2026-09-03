@@ -40,9 +40,7 @@ test("keeps the exact currently published compiler snapshot in one lock", async 
   );
   assert.deepEqual(
     [...identities],
-    [
-      "0.10.0-snapshot.gc601f1c9d88e@c601f1c9d88eb68f67991fd05fc4653884d104c7",
-    ],
+    ["0.10.0-snapshot.gc601f1c9d88e@c601f1c9d88eb68f67991fd05fc4653884d104c7"],
   );
   await syncDependencyFiles(root, true);
 });
@@ -107,4 +105,12 @@ test("publish workflow is manual for snapshots and tag-only for stable releases"
   assert.doesNotMatch(workflow, /workflow_run:|repository_dispatch:/u);
   assert.doesNotMatch(workflow, /RELEASE_DISPATCH_TOKEN|\/dispatches/u);
   assert.match(workflow, /--tag "\$NPM_DIST_TAG"/u);
+  assert.match(
+    workflow,
+    /publish_if_missing \.\/artifacts\/ilic-language-service\.tgz/u,
+  );
+  assert.match(
+    workflow,
+    /publish_if_missing \.\/artifacts\/ilic-language-server\.tgz/u,
+  );
 });
