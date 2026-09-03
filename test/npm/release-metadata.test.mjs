@@ -41,7 +41,7 @@ test("keeps the exact currently published compiler snapshot in one lock", async 
   assert.deepEqual(
     [...identities],
     [
-      "0.10.0-SNAPSHOT.20260826043335.32930660314@e901af64247082b5164252b675d87bd7a2aa829d",
+      "0.10.0-snapshot.gc601f1c9d88e@c601f1c9d88eb68f67991fd05fc4653884d104c7",
     ],
   );
   await syncDependencyFiles(root, true);
@@ -87,7 +87,7 @@ test("staged manifests use one language version and exact locked compiler versio
   assert.equal(rewritten.dependencies["@ilic/docx"], artifactVersion);
   assert.equal(
     rewritten.dependencies["@ilic/tools"],
-    "0.10.0-SNAPSHOT.20260826043335.32930660314",
+    "0.10.0-snapshot.gc601f1c9d88e",
   );
   assert.ok(rewritten.files.includes("interlis-release.json"));
 });

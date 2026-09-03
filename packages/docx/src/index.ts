@@ -9,6 +9,7 @@ import {
   LevelFormat,
   LevelSuffix,
   Packer,
+  PageOrientation,
   Paragraph,
   Table,
   TableCell,
@@ -30,13 +31,20 @@ type DocumentationModel = NonNullable<
 type DocumentationTopic = DocumentationModel["topics"][number];
 type DocumentationViewable = DocumentationModel["viewables"][number];
 type DocumentationEnumeration = DocumentationModel["enumerations"][number];
+type DocumentationRole = NonNullable<DocumentationViewable["roles"]>[number];
+type DocumentationUnique = NonNullable<
+  DocumentationViewable["uniqueness"]
+>[number];
+type DocumentationRowLike =
+  DocumentationViewable["rows"][number] | DocumentationRole;
 
 const FONT = "Arial";
 const FONT_SIZE = 22;
 const TITLE_SIZE = 36;
-const TABLE_WIDTH = 9000;
-const ATTRIBUTE_WIDTHS = [2250, 1500, 2250, 3000] as const;
-const ENUMERATION_WIDTHS = [3000, 6000] as const;
+const TABLE_WIDTH = 13500;
+const ATTRIBUTE_WIDTHS = [3000, 1500, 2500, 6500] as const;
+const ENUMERATION_WIDTHS = [3000, 3500, 7000] as const;
+const UNIQUE_WIDTHS = [1000, 10000, 2500] as const;
 const BLACK = "000000";
 const THIN_BORDER = {
   style: BorderStyle.SINGLE,
@@ -116,25 +124,31 @@ function table(rows: readonly TableRow[], widths: readonly number[]): Table {
   });
 }
 
-function attributeTable(viewable: DocumentationViewable): Table {
+function attributeTable(
+  sourceRows: readonly DocumentationRowLike[],
+  nameHeader = "Attributname",
+): Table {
   const rows = [
     new TableRow({
       tableHeader: true,
       children: [
-        cell("Attributname", ATTRIBUTE_WIDTHS[0], true),
+        cell(nameHeader, ATTRIBUTE_WIDTHS[0], true),
         cell("Kardinalität", ATTRIBUTE_WIDTHS[1], true),
         cell("Typ", ATTRIBUTE_WIDTHS[2], true),
         cell("Beschreibung", ATTRIBUTE_WIDTHS[3], true),
       ],
     }),
-    ...viewable.rows.map(
+    ...sourceRows.map(
       (row) =>
         new TableRow({
           cantSplit: true,
           children: [
             cell(row.name, ATTRIBUTE_WIDTHS[0]),
             cell(row.cardinality, ATTRIBUTE_WIDTHS[1]),
-            cell(row.type, ATTRIBUTE_WIDTHS[2]),
+            cell(
+              "range" in row && row.range?.trim() ? row.range : row.type,
+              ATTRIBUTE_WIDTHS[2],
+            ),
             cell(row.description ?? "", ATTRIBUTE_WIDTHS[3]),
           ],
         }),
@@ -149,7 +163,8 @@ function enumerationTable(enumeration: DocumentationEnumeration): Table {
       tableHeader: true,
       children: [
         cell("Wert", ENUMERATION_WIDTHS[0], true),
-        cell("Beschreibung", ENUMERATION_WIDTHS[1], true),
+        cell("Anzeigename", ENUMERATION_WIDTHS[1], true),
+        cell("Beschreibung", ENUMERATION_WIDTHS[2], true),
       ],
     }),
     ...enumeration.entries.map(
@@ -158,7 +173,8 @@ function enumerationTable(enumeration: DocumentationEnumeration): Table {
           cantSplit: true,
           children: [
             cell(entry.value, ENUMERATION_WIDTHS[0]),
-            cell(entry.documentation ?? "", ENUMERATION_WIDTHS[1]),
+            cell(entry.displayName ?? "", ENUMERATION_WIDTHS[1]),
+            cell(entry.documentation ?? "", ENUMERATION_WIDTHS[2]),
           ],
         }),
     ),
@@ -168,13 +184,60 @@ function enumerationTable(enumeration: DocumentationEnumeration): Table {
 
 function viewableTitle(viewable: DocumentationViewable): string {
   const kind =
-    viewable.kind === "structure"
-      ? "Structure"
-      : viewable.kind === "view"
-        ? "View"
-        : "Class";
+    viewable.kind === "association"
+      ? "Association"
+      : viewable.kind === "structure"
+        ? "Structure"
+        : viewable.kind === "view"
+          ? "View"
+          : "Class";
   const stereotype = viewable.isAbstract ? `Abstract ${kind}` : kind;
   return `${viewable.name} (${stereotype})`;
+}
+
+function uniqueDefinition(unique: DocumentationUnique): string {
+  const scope =
+    unique.scope.toUpperCase() + (unique.perBasket ? ", per Basket" : "");
+  let result = `UNIQUE (${scope}) `;
+  if (unique.prefix?.trim()) result += `${unique.prefix.trim()} : `;
+  result +=
+    unique.elements.length > 0
+      ? unique.elements.join(", ")
+      : "[keine Schlüsselattribute]";
+  if (unique.where?.trim()) result += ` WHERE ${unique.where.trim()}`;
+  return `${result};`;
+}
+
+function uniqueOrigin(unique: DocumentationUnique): string {
+  if (unique.origin !== "inherited") return "direkt";
+  return unique.inheritedFrom?.trim()
+    ? `geerbt von ${unique.inheritedFrom.trim()}`
+    : "geerbt";
+}
+
+function uniquenessTable(uniqueness: readonly DocumentationUnique[]): Table {
+  const rows = [
+    new TableRow({
+      tableHeader: true,
+      children: [
+        cell("Nr.", UNIQUE_WIDTHS[0], true),
+        cell("UNIQUE-Definition", UNIQUE_WIDTHS[1], true),
+        cell("Herkunft", UNIQUE_WIDTHS[2], true),
+      ],
+    }),
+    ...uniqueness.map(
+      (unique, index) =>
+        new TableRow({
+          cantSplit: true,
+          children: [
+            cell(`U${index + 1}`, UNIQUE_WIDTHS[0]),
+            cell(uniqueDefinition(unique), UNIQUE_WIDTHS[1]),
+            cell(uniqueOrigin(unique), UNIQUE_WIDTHS[2]),
+          ],
+        }),
+    ),
+  ];
+  return table(rows, UNIQUE_WIDTHS);
 }
 
 function renderViewable(
@@ -185,7 +248,21 @@ function renderViewable(
   ];
   const description = documentationParagraph(viewable.documentation);
   if (description) result.push(description);
-  result.push(attributeTable(viewable), paragraph());
+  if (viewable.kind === "association") {
+    result.push(
+      attributeTable(viewable.roles ?? [], "Rollenname"),
+      paragraph(),
+    );
+    if (viewable.rows.length > 0) {
+      result.push(attributeTable(viewable.rows), paragraph());
+    }
+  } else {
+    result.push(attributeTable(viewable.rows), paragraph());
+  }
+  if (viewable.uniqueness && viewable.uniqueness.length > 0) {
+    result.push(paragraph("UNIQUE", { bold: true }));
+    result.push(uniquenessTable(viewable.uniqueness), paragraph());
+  }
   return result;
 }
 
@@ -202,7 +279,9 @@ function renderEnumeration(
 }
 
 function renderTopic(topic: DocumentationTopic): Array<Paragraph | Table> {
-  const result: Array<Paragraph | Table> = [heading(`${topic.name} (Topic)`, 0)];
+  const result: Array<Paragraph | Table> = [
+    heading(`${topic.name} (Topic)`, 0),
+  ];
   const description = documentationParagraph(topic.documentation);
   if (description) result.push(description);
   for (const viewable of topic.viewables)
@@ -272,7 +351,11 @@ export async function generateDocx(
       {
         properties: {
           page: {
-            size: { width: 11906, height: 16838 },
+            size: {
+              width: 11906,
+              height: 16838,
+              orientation: PageOrientation.LANDSCAPE,
+            },
             margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 },
           },
         },

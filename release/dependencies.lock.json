@@ -4,16 +4,16 @@
   "artifactBaseVersion": "0.1.2",
   "dependencies": {
     "@ilic/repository-core": {
-      "version": "0.10.0-SNAPSHOT.20260826043335.32930660314",
-      "sourceSha": "e901af64247082b5164252b675d87bd7a2aa829d"
+      "version": "0.10.0-snapshot.gc601f1c9d88e",
+      "sourceSha": "c601f1c9d88eb68f67991fd05fc4653884d104c7"
     },
     "@ilic/tools": {
-      "version": "0.10.0-SNAPSHOT.20260826043335.32930660314",
-      "sourceSha": "e901af64247082b5164252b675d87bd7a2aa829d"
+      "version": "0.10.0-snapshot.gc601f1c9d88e",
+      "sourceSha": "c601f1c9d88eb68f67991fd05fc4653884d104c7"
     },
     "@ilic/compiler-wasm": {
-      "version": "0.10.0-SNAPSHOT.20260826043335.32930660314",
-      "sourceSha": "e901af64247082b5164252b675d87bd7a2aa829d"
+      "version": "0.10.0-snapshot.gc601f1c9d88e",
+      "sourceSha": "c601f1c9d88eb68f67991fd05fc4653884d104c7"
     }
   }
 }

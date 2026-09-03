@@ -62,6 +62,18 @@ const snapshot: SemanticSnapshot = {
                 cardinality: "1",
                 type: "Text",
                 description: "A name",
+                range: "TEXT*10",
+              },
+            ],
+            uniqueness: [
+              {
+                scope: "global",
+                perBasket: false,
+                prefix: "",
+                elements: ["Name"],
+                where: "",
+                origin: "direct",
+                inheritedFrom: "",
               },
             ],
           },
@@ -69,14 +81,61 @@ const snapshot: SemanticSnapshot = {
         enumerations: [
           {
             name: "State",
-            entries: [{ value: "open", documentation: "Open state" }],
+            entries: [
+              {
+                value: "open",
+                displayName: "Open",
+                documentation: "Open state",
+              },
+            ],
           },
         ],
         topics: [
           {
             name: "Data",
             documentation: "Topic documentation",
-            viewables: [],
+            viewables: [
+              {
+                name: "Link",
+                kind: "association",
+                isAbstract: false,
+                documentation: "A link",
+                roles: [
+                  {
+                    name: "left",
+                    cardinality: "1",
+                    type: "Thing",
+                    description: "Left role",
+                  },
+                  {
+                    name: "right",
+                    cardinality: "0..*",
+                    type: "Thing",
+                    description: "Right role",
+                  },
+                ],
+                rows: [
+                  {
+                    name: "Code",
+                    cardinality: "0..1",
+                    type: "Text",
+                    description: "A code",
+                    range: "TEXT*5",
+                  },
+                ],
+                uniqueness: [
+                  {
+                    scope: "local",
+                    perBasket: false,
+                    prefix: "left",
+                    elements: ["Code"],
+                    where: 'Code == "x"',
+                    origin: "inherited",
+                    inheritedFrom: "Model.Data.BaseLink",
+                  },
+                ],
+              },
+            ],
             enumerations: [],
           },
         ],
@@ -108,19 +167,33 @@ describe("DOCX generation", () => {
     expect(documentXml).toContain("Model.ili");
     expect(documentXml).toContain("Data (Topic)");
     expect(documentXml).toContain("Attributname");
+    expect(documentXml).toContain("Rollenname");
     expect(documentXml).toContain("Wert");
+    expect(documentXml).toContain("Anzeigename");
+    expect(documentXml).toContain("UNIQUE-Definition");
+    expect(documentXml).toContain("TEXT*10");
+    expect(documentXml).toContain("Open");
+    expect(documentXml).toContain("UNIQUE (GLOBAL) Name;");
+    expect(documentXml).toContain(
+      "UNIQUE (LOCAL) left : Code WHERE Code == &quot;x&quot;;",
+    );
+    expect(documentXml).toContain("geerbt von Model.Data.BaseLink");
     expect(documentXml).not.toContain("Model elements");
     expect(documentXml).not.toContain("Example warning");
     expect(stylesXml).toContain("Arial");
     expect(stylesXml).not.toContain("2E74B5");
     expect(numberingXml).toContain("%1.%2");
-    expect(documentXml).toContain('w:w="9000"');
-    expect(documentXml).toContain('w:w="2250"');
-    expect(documentXml).toContain('w:w="1500"');
+    expect(documentXml).toContain('w:w="13500"');
+    expect(documentXml).toContain('w:w="10000"');
     expect(documentXml).toContain('w:w="3000"');
+    expect(documentXml).toContain('w:w="1500"');
+    expect(documentXml).toContain('w:w="2500"');
+    expect(documentXml).toContain('w:w="6500"');
+    expect(documentXml).toContain('w:w="7000"');
     expect(documentXml).toContain('w:type="fixed"');
     expect(documentXml).not.toContain('w:type="pct"');
-    expect(documentXml).toContain('w:pgSz w:w="11906" w:h="16838"');
+    expect(documentXml).toContain('w:pgSz w:w="16838" w:h="11906"');
+    expect(documentXml).toContain('w:orient="landscape"');
   });
 
   it("rejects snapshots without the structured documentation projection", async () => {
